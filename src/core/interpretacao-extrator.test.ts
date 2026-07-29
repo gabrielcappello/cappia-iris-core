@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { INTENCOES_PERMITIDAS } from './aplicar-dados.ts';
 import { EntradaInvalidaError, InterpretacaoInvalidaError } from './erros.ts';
 import { extrairAlteracoes } from './interpretacao-extrator.ts';
 import { INSTRUCOES_EXTRATOR } from './interpretacao-instrucoes.ts';
@@ -57,6 +58,13 @@ test('teste15: duvida real gera alteracoes vazio, que e uma saida valida', async
 
 test('teste16: as instrucoes registram explicitamente que periodo nao e inferido de horario', () => {
   assert.ok(INSTRUCOES_EXTRATOR.includes('nunca e inferido a partir de um horario'));
+
+  const fraseEmissaoIntencao =
+    'Emita intencao = novo_agendamento somente quando a janela atual expressar um pedido de marcar um novo atendimento; a mera mencao ou correcao de procedimento, dentista, data, periodo ou horario nao emite intencao.';
+  const ocorrencias = INSTRUCOES_EXTRATOR.split(fraseEmissaoIntencao).length - 1;
+  assert.equal(ocorrencias, 1, 'a regra de emissao de intencao deve aparecer exatamente uma vez em INSTRUCOES_EXTRATOR');
+
+  assert.deepEqual(INTENCOES_PERMITIDAS, ['novo_agendamento'], 'novo_agendamento continua sendo o unico valor permitido para intencao');
 });
 
 test('teste17: campo nao mencionado fica ausente da saida interpretada', async () => {

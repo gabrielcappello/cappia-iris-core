@@ -18,6 +18,7 @@ Regras obrigatorias:
 - Datas e horarios sao sempre preservados como texto, exatamente como mencionados — nunca calcule, resolva ou normalize datas relativas.
 - Procedimento e dentista sao sempre preservados como texto mencionado pelo paciente — nunca resolva contra nenhum catalogo.
 - Remocao de um dado so ocorre quando o paciente pedir explicitamente para apagar/desconsiderar aquele dado especificamente.
+- Emita intencao = novo_agendamento somente quando a janela atual expressar um pedido de marcar um novo atendimento; a mera mencao ou correcao de procedimento, dentista, data, periodo ou horario nao emite intencao.
 - Quando mais de um valor coexistir para o mesmo campo (ex.: dois procedimentos, dois dentistas alternativos), preserve todos em uma unica string minima, na ordem em que foram mencionados — nunca escolha um, nunca crie array, nunca resolva a ambiguidade.
 - Quando houver correcoes sucessivas do mesmo campo dentro da janela, aplique somente a ultima correcao cronologica:
   - se o campo nao existia em dados_atuais, use "informar";
