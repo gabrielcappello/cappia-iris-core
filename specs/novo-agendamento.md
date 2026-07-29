@@ -439,7 +439,43 @@ Nenhum agendamento deve ser criado antes da confirmação explícita relacionada
 
 Respostas ambíguas não autorizam a criação.
 
-Se o paciente corrigir algum dado, atualizar o estado e apresentar um novo resumo antes de pedir confirmação novamente.
+### Correção cadastral
+
+Quando o paciente corrigir:
+
+- nome;
+- CPF;
+- data de nascimento;
+- e-mail;
+
+o Core deve:
+
+- atualizar o dado;
+- manter o horário já escolhido;
+- apresentar um novo resumo;
+- solicitar novamente a confirmação explícita.
+
+### Alteração do agendamento
+
+Quando o paciente alterar:
+
+- procedimento;
+- dentista;
+- data;
+- período;
+- horário;
+
+o Core deve:
+
+- invalidar o horário escolhido;
+- invalidar o resumo e a confirmação anteriores;
+- retornar ao fluxo de disponibilidade;
+- recalcular opções reais conforme os novos critérios;
+- apresentar horários disponíveis;
+- aguardar uma nova escolha;
+- somente depois apresentar um novo resumo e solicitar nova confirmação.
+
+Não reutilizar disponibilidade, escolha ou confirmação anteriores.
 
 ---
 
@@ -606,9 +642,10 @@ Transições obrigatórias:
 - `executando → concluido`: após criação técnica bem-sucedida;
 - `executando → aguardando_escolha`: se o horário ficar indisponível na revalidação;
 - qualquer estado ativo → `atendimento`: em desistência explícita;
-- alteração de procedimento, dentista, data ou horário após existir uma escolha registrada: invalidar a escolha anterior e retornar para `aguardando_escolha`.
+- correção cadastral durante `aguardando_confirmacao`: permanecer em `aguardando_confirmacao`, atualizar os dados e apresentar novo resumo;
+- alteração de procedimento, dentista, data, período ou horário após existir escolha registrada: invalidar a escolha e retornar para `aguardando_escolha`, após nova consulta de disponibilidade e apresentação de opções reais.
 
-Essa última regra aplica-se durante `aguardando_escolha`, `coletando_cadastro` e `aguardando_confirmacao`.
+Essa última regra (alteração de procedimento, dentista, data, período ou horário) aplica-se durante `aguardando_escolha`, `coletando_cadastro` e `aguardando_confirmacao`. A correção cadastral durante `aguardando_confirmacao` não invalida a escolha nem retorna para `aguardando_escolha` — permanece nesse mesmo estado, conforme regra acima.
 
 Quando o horário ficar indisponível na revalidação:
 
