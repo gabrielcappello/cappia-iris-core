@@ -89,13 +89,23 @@ const CATEGORIAS_REPETIVEIS = new Set<CategoriaErroModelo>([
   'resposta_vazia',
 ]);
 
-// So pode conter: categoria, codigo tecnico fixo, numero de tentativas
-// realmente iniciadas, duracao, modelo (sempre a constante aprovada),
-// status HTTP quando existir, e um retryAfterMs JA CONVERTIDO para
-// milissegundos (nunca o texto bruto do header) usado internamente pelo
-// orquestrador de retry. Nunca mensagem do paciente, dados_atuais,
-// resposta bruta, valores interpretados, PII, chave ou corpo bruto de
-// erro da API.
+// Chave interna (nunca exportada) usada para guardar o Retry-After ja
+// convertido para milissegundos, sem torna-lo parte da interface publica
+// do erro -- ver ErroClienteModeloOpenAI abaixo.
+const CHAVE_RETRY_AFTER_MS = Symbol('retryAfterMs');
+
+// A interface publica/enumeravel so pode conter: categoria, codigo
+// tecnico fixo, numero de tentativas realmente iniciadas, duracao,
+// modelo (sempre a constante aprovada), e status HTTP quando existir.
+// Nunca mensagem do paciente, dados_atuais, resposta bruta, valores
+// interpretados, PII, chave ou corpo bruto de erro da API.
+//
+// O valor de Retry-After (ja convertido para milissegundos, nunca o
+// texto bruto do header) e guardado como propriedade NAO ENUMERAVEL
+// (Object.defineProperty), associada a uma chave Symbol interna deste
+// modulo -- nao aparece em JSON.stringify, nao aparece em Object.keys,
+// nao faz parte do tipo publico da classe. So e lido internamente por
+// obterRetryAfterMs(), usado pelo orquestrador de retry.
 export class ErroClienteModeloOpenAI extends Error {
   categoria: CategoriaErroModelo;
   codigo: string;
@@ -103,7 +113,6 @@ export class ErroClienteModeloOpenAI extends Error {
   duracaoMs: number;
   modelo: string;
   statusHttp: number | null;
-  retryAfterMs: number | null;
 
   constructor(
     categoria: CategoriaErroModelo,
@@ -122,8 +131,18 @@ export class ErroClienteModeloOpenAI extends Error {
     this.duracaoMs = duracaoMs;
     this.modelo = modelo;
     this.statusHttp = statusHttp;
-    this.retryAfterMs = retryAfterMs;
+
+    Object.defineProperty(this, CHAVE_RETRY_AFTER_MS, {
+      value: retryAfterMs,
+      enumerable: false,
+      writable: false,
+      configurable: false,
+    });
   }
+}
+
+function obterRetryAfterMs(erro: ErroClienteModeloOpenAI): number | null {
+  return (erro as unknown as Record<symbol, number | null>)[CHAVE_RETRY_AFTER_MS] ?? null;
 }
 
 // Erro de configuracao, lancado sincronamente em criarClienteModeloOpenAI,
@@ -245,12 +264,15 @@ interface ContextoChamada {
 
 // Estrutura fixa: tentativa 1 sempre com o timeout completo (o orcamento
 // total ja garante isso, validado na configuracao). Se falhar de forma
-// repetivel e houver orcamento para espera + uma tentativa completa,
-// tentativa 2 tambem com o timeout completo -- NUNCA reduzido. Se nao
-// houver orcamento, ou se a tentativa 2 tambem falhar, o erro (com
-// `tentativas` refletindo exatamente quantas tentativas realmente
-// comecaram) e devolvido. Nunca ha uma terceira tentativa -- nao existe
-// nenhum laco que permita isso.
+// repetivel, o orcamento e validado DUAS vezes antes da tentativa 2: uma
+// vez antes de esperar (para decidir se vale a pena esperar) e outra vez
+// IMEDIATAMENTE APOS a espera (para garantir que o tempo realmente gasto
+// esperando -- que pode nao ser exatamente o previsto -- ainda deixa
+// timeoutPorTentativaMs inteiro disponivel). Se qualquer uma das duas
+// checagens falhar, a tentativa 2 nunca inicia (nenhum fetch), e o erro
+// da tentativa 1 e devolvido com tentativas=1. Tentativa 2, quando
+// ocorre, sempre recebe o timeout completo -- nunca reduzido. Nunca ha
+// uma terceira tentativa -- nao existe nenhum laco que permita isso.
 async function executarComRetry(contexto: ContextoChamada): Promise<unknown> {
   const inicioTotal = Date.now();
 
@@ -260,11 +282,10 @@ async function executarComRetry(contexto: ContextoChamada): Promise<unknown> {
     if (!(erroTentativa1 instanceof ErroClienteModeloOpenAI)) throw erroTentativa1;
     if (!CATEGORIAS_REPETIVEIS.has(erroTentativa1.categoria)) throw erroTentativa1;
 
-    const esperaAplicavel = Math.max(contexto.esperaEntreTentativasMs, erroTentativa1.retryAfterMs ?? 0);
-    const restante = contexto.prazoTotalMs - (Date.now() - inicioTotal);
-    const orcamentoNecessario = esperaAplicavel + contexto.timeoutPorTentativaMs;
+    const esperaAplicavel = Math.max(contexto.esperaEntreTentativasMs, obterRetryAfterMs(erroTentativa1) ?? 0);
 
-    if (restante < orcamentoNecessario) {
+    const restanteAntesDeEsperar = contexto.prazoTotalMs - (Date.now() - inicioTotal);
+    if (restanteAntesDeEsperar < esperaAplicavel + contexto.timeoutPorTentativaMs) {
       // Orcamento insuficiente para espera + uma tentativa completa:
       // nao inicia a segunda tentativa, devolve o ultimo erro sanitizado.
       throw erroTentativa1;
@@ -272,6 +293,15 @@ async function executarComRetry(contexto: ContextoChamada): Promise<unknown> {
 
     if (esperaAplicavel > 0) {
       await aguardar(esperaAplicavel);
+    }
+
+    // Revalidacao apos a espera: o tempo real de espera pode nao
+    // corresponder exatamente ao previsto (jitter do event loop). So
+    // inicia a tentativa 2 se ainda sobrar timeoutPorTentativaMs INTEIRO
+    // -- nunca reduz o timeout da tentativa 2 para compensar.
+    const restanteAposEsperar = contexto.prazoTotalMs - (Date.now() - inicioTotal);
+    if (restanteAposEsperar < contexto.timeoutPorTentativaMs) {
+      throw erroTentativa1;
     }
 
     // Tentativa 2 -- sempre com o timeout completo, nunca reduzido.
@@ -290,10 +320,11 @@ async function executarUmaTentativa(
   timeoutMs: number,
   inicioTotal: number
 ): Promise<unknown> {
+  const inicioTentativa = Date.now();
   const controlador = new AbortController();
   const timer = setTimeout(() => controlador.abort(), timeoutMs);
   try {
-    return await processarTentativa(contexto, tentativa, inicioTotal, controlador.signal);
+    return await processarTentativa(contexto, tentativa, inicioTotal, inicioTentativa, timeoutMs, controlador.signal);
   } catch (erro) {
     if (erro instanceof ErroClienteModeloOpenAI) throw erro;
 
@@ -312,6 +343,8 @@ async function processarTentativa(
   contexto: ContextoChamada,
   tentativa: number,
   inicioTotal: number,
+  inicioTentativa: number,
+  timeoutTentativaMs: number,
   signal: AbortSignal
 ): Promise<unknown> {
   const instrucoesPortatil = construirInstrucoesPortatil(contexto.entrada.instrucoes);
@@ -398,6 +431,12 @@ async function processarTentativa(
   // (em executarUmaTentativa) permanece ativo durante esta leitura.
   const textoCorpo = await resposta.text();
 
+  // Checagem explicita do prazo da tentativa, logo apos a leitura
+  // integral do corpo: o AbortController nao interrompe processamento
+  // sincrono (JSON.parse, classificacao, conversao) que aconteca DEPOIS
+  // da leitura terminar -- entao verificamos aqui por conta propria.
+  verificarPrazoDaTentativa(tentativa, inicioTentativa, timeoutTentativaMs, duracao(), contexto.modelo);
+
   if (textoCorpo === '') {
     // Corpo HTTP com zero bytes: unico caso, junto com output_text vazio
     // mais abaixo, classificado como resposta_vazia (repetivel).
@@ -431,8 +470,8 @@ async function processarTentativa(
   const envelope = corpoResposta as Record<string, unknown>;
 
   // Recusa/filtro precisa ser detectada ANTES de qualquer classificacao
-  // generica de truncamento -- examina todos os itens de output, todos os
-  // itens de content, e incomplete_details quando presente.
+  // generica de status/truncamento -- examina todos os itens de output,
+  // todos os itens de content, e incomplete_details quando presente.
   if (detectarRecusaOuFiltro(envelope)) {
     throw new ErroClienteModeloOpenAI(
       'recusa_ou_filtro',
@@ -444,9 +483,24 @@ async function processarTentativa(
     );
   }
 
+  // status precisa ser exatamente a string "completed" para a resposta
+  // ser aceita. Ausente, null ou de tipo diferente de string -> envelope
+  // estruturalmente incompatível (resposta_nao_estruturada, sem retry).
+  // Presente como string mas diferente de "completed" -> truncamento
+  // (resposta_truncada, sem retry, codigo fixo -- nunca interpola o
+  // valor externo).
   const status = envelope.status;
-  if (typeof status === 'string' && status !== 'completed') {
-    // Codigo fixo -- nunca interpola o valor externo de `status`.
+  if (status === undefined || status === null || typeof status !== 'string') {
+    throw new ErroClienteModeloOpenAI(
+      'resposta_nao_estruturada',
+      'status_ausente_ou_invalido',
+      tentativa,
+      duracao(),
+      contexto.modelo,
+      resposta.status
+    );
+  }
+  if (status !== 'completed') {
     throw new ErroClienteModeloOpenAI('resposta_truncada', 'resposta_incompleta', tentativa, duracao(), contexto.modelo, resposta.status);
   }
 
@@ -523,12 +577,46 @@ async function processarTentativa(
     );
   }
 
+  let alteracoesInternas: AlteracoesDados;
   try {
-    const alteracoesInternas = converterParaContratoInterno(objetoPortatil);
-    return { alteracoes: alteracoesInternas };
+    alteracoesInternas = converterParaContratoInterno(objetoPortatil);
   } catch (erroConversao) {
     const codigo = erroConversao instanceof ErroConversaoPortatil ? erroConversao.codigo : 'objeto_portatil_invalido';
     throw new ErroClienteModeloOpenAI('resposta_invalida', codigo, tentativa, duracao(), contexto.modelo, resposta.status);
+  }
+
+  // Ultima checagem, imediatamente antes de aceitar como sucesso: o
+  // prazo da tentativa (parse/classificacao/conversao tambem sao
+  // processamento sincrono, nao interrompido pelo AbortController) e o
+  // prazo total.
+  verificarPrazoDaTentativa(tentativa, inicioTentativa, timeoutTentativaMs, duracao(), contexto.modelo);
+  verificarPrazoTotal(tentativa, inicioTotal, contexto.prazoTotalMs, contexto.modelo);
+
+  return { alteracoes: alteracoesInternas };
+}
+
+// AbortController so cancela I/O pendente (fetch/leitura do corpo) -- nao
+// interrompe processamento sincrono que aconteca depois. Por isso, alem
+// do timeout via AbortController, verificamos explicitamente o relogio
+// de parede em dois pontos: logo apos a leitura integral do corpo, e
+// logo antes de aceitar a resposta como sucesso.
+function verificarPrazoDaTentativa(
+  tentativa: number,
+  inicioTentativa: number,
+  timeoutTentativaMs: number,
+  duracaoTotal: number,
+  modelo: string
+): void {
+  const decorridoNaTentativa = Date.now() - inicioTentativa;
+  if (decorridoNaTentativa > timeoutTentativaMs) {
+    throw new ErroClienteModeloOpenAI('timeout', 'prazo_da_tentativa_excedido_apos_leitura', tentativa, duracaoTotal, modelo);
+  }
+}
+
+function verificarPrazoTotal(tentativa: number, inicioTotal: number, prazoTotalMs: number, modelo: string): void {
+  const decorridoTotal = Date.now() - inicioTotal;
+  if (decorridoTotal > prazoTotalMs) {
+    throw new ErroClienteModeloOpenAI('timeout', 'prazo_total_excedido_apos_processamento', tentativa, decorridoTotal, modelo);
   }
 }
 
@@ -566,16 +654,27 @@ function detectarRecusaOuFiltro(envelope: Record<string, unknown>): boolean {
   return false;
 }
 
-// Interpreta o header Retry-After em segundos ou em formato de data HTTP,
-// devolvendo sempre um numero de milissegundos ja convertido (nunca o
-// texto bruto). Valor invalido ou ausente -> null (o chamador usa somente
-// esperaEntreTentativasMs nesse caso).
+// Delta-seconds so e aceito quando o header corresponder integralmente a
+// um numero inteiro nao negativo (sem sinal, sem decimal, sem notacao
+// exponencial, sem espacos). Qualquer outro formato numerico cai para a
+// tentativa de data HTTP; se essa tambem falhar, o valor e ignorado.
+const REGEX_RETRY_AFTER_SEGUNDOS_INTEIROS = /^[0-9]+$/;
+
+// Interpreta o header Retry-After em segundos (formato estrito acima) ou
+// em formato de data HTTP, devolvendo sempre um numero de milissegundos
+// ja convertido (nunca o texto bruto). Valor invalido, ausente, ou que
+// gere milissegundos nao finitos / maiores que Number.MAX_SAFE_INTEGER ->
+// null (o chamador usa somente esperaEntreTentativasMs nesse caso).
 function interpretarRetryAfter(valorHeader: string | null): number | null {
   if (!valorHeader) return null;
 
-  const comoSegundos = Number(valorHeader);
-  if (Number.isFinite(comoSegundos) && comoSegundos >= 0) {
-    return Math.round(comoSegundos * 1000);
+  if (REGEX_RETRY_AFTER_SEGUNDOS_INTEIROS.test(valorHeader)) {
+    const comoSegundos = Number(valorHeader);
+    const comoMs = comoSegundos * 1000;
+    if (Number.isFinite(comoMs) && comoMs <= Number.MAX_SAFE_INTEGER) {
+      return Math.round(comoMs);
+    }
+    return null;
   }
 
   const comoData = Date.parse(valorHeader);

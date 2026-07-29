@@ -178,6 +178,27 @@ function fetchComCorpoQueNuncaTermina(): typeof fetch {
   }) as unknown as typeof fetch;
 }
 
+// fetch() so resolve apos `atrasoMs` reais, ignorando completamente o
+// sinal de abort (simula um cliente HTTP que nao propaga abort para a
+// leitura do corpo) -- usado para provar que a checagem explicita de
+// prazo (nao o AbortController) e o que rejeita sucesso tardio.
+function fetchComLeituraLentaIgnorandoAbort(atrasoMs: number, alteracoesPortatil: unknown[] = []): typeof fetch {
+  return (async () => {
+    await new Promise((resolve) => setTimeout(resolve, atrasoMs));
+    return respostaSucesso(alteracoesPortatil);
+  }) as unknown as typeof fetch;
+}
+
+function respostaSemStatus() {
+  const corpo = { output: [] };
+  return new Response(JSON.stringify(corpo), { status: 200 });
+}
+
+function respostaComStatusInvalido(status: unknown) {
+  const corpo = { status, output: [] };
+  return new Response(JSON.stringify(corpo), { status: 200 });
+}
+
 function entradaValida(overrides: Record<string, unknown> = {}) {
   return {
     instrucoes: INSTRUCOES_EXTRATOR,
@@ -894,4 +915,326 @@ test('extra: executar() bem-sucedido devolve o mapa interno pronto para validarS
       cpf: { acao: 'remover' },
     },
   });
+});
+
+// =====================================================================
+// Rodada 3 -- cinco fronteiras corrigidas apos revisao do Codex sobre o
+// commit aeec23c: revalidacao do orcamento apos a espera; Retry-After
+// interno e nao serializavel; nao aceitar sucesso apos o prazo; formato
+// estrito de Retry-After em segundos; exigir status "completed".
+// =====================================================================
+
+// --- Correcao 1: revalidar o orcamento apos a espera ---
+
+test('correcao1: revalidacao apos a espera bloqueia a segunda tentativa quando o tempo realmente gasto excede o orcamento (tentativas=1, sem segundo fetch)', async () => {
+  // Escala deliberadamente maior (espera de ~1000ms via Retry-After) para
+  // que o overshoot real e proporcionalmente pequeno do setTimeout (tipicamente
+  // 10-20ms sobre 1000ms, ja observado de forma estavel no teste 22) seja
+  // consistentemente maior que a margem apertada deixada em prazoTotalMs --
+  // isso torna o teste robusto, sem depender de uma janela de poucos
+  // milissegundos. prazoTotalMs=1205 passa a checagem PRE-espera (que usa
+  // 1000ms de espera + 200ms de timeout = 1200, com ~5ms de folga para a
+  // tentativa 1 quase instantanea) mas nao sobrevive a checagem POS-espera
+  // uma vez que a espera real ultrapassa 1000ms.
+  const timeoutPorTentativaMs = 200;
+  const prazoTotalMs = 1205;
+
+  const { fetchFalso, chamadas } = criarFetchFalso([
+    () => respostaErroHttp(429, {}, { 'Retry-After': '1' }),
+    () => respostaSucesso([]),
+  ]);
+
+  const inicio = Date.now();
+  const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs, esperaEntreTentativasMs: 5, prazoTotalMs });
+
+  let erro: unknown;
+  try {
+    await cliente.executar(entradaValida());
+  } catch (e) {
+    erro = e;
+  }
+  const duracao = Date.now() - inicio;
+
+  assertCategoria(erro, 'limite_taxa');
+  assert.equal(erro.tentativas, 1, 'a segunda tentativa nao deveria ter iniciado');
+  assert.equal(chamadas.length, 1, 'nenhum segundo fetch deveria ocorrer');
+  assert.ok(
+    duracao >= 950,
+    `a espera pelo Retry-After deveria ter efetivamente ocorrido antes da rejeicao (duracao=${duracao}ms) -- prova que a checagem PRE-espera passou e foi a checagem POS-espera que bloqueou`
+  );
+});
+
+test('correcao1b: com orcamento generoso, a revalidacao apos a espera nao bloqueia a segunda tentativa (regressao)', async () => {
+  const { fetchFalso, chamadas } = criarFetchFalso([() => respostaErroHttp(503, {}), () => respostaSucesso([])]);
+  const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs: 40, esperaEntreTentativasMs: 5, prazoTotalMs: 5000 });
+  const resultado = await cliente.executar(entradaValida());
+  assert.deepEqual(resultado, { alteracoes: {} });
+  assert.equal(chamadas.length, 2);
+});
+
+// --- Correcao 2: Retry-After interno e nao serializavel ---
+
+test('correcao2a: retryAfterMs nunca aparece em JSON.stringify nem em Object.keys do erro publico', async () => {
+  const { fetchFalso, chamadas } = criarFetchFalso([() => respostaErroHttp(429, {}, { 'Retry-After': '3600' })]);
+  const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 100, prazoTotalMs: 200 });
+  let erro: unknown;
+  try {
+    await cliente.executar(entradaValida());
+  } catch (e) {
+    erro = e;
+  }
+  assertCategoria(erro, 'limite_taxa');
+  assert.equal(chamadas.length, 1);
+  assert.ok(!('retryAfterMs' in (erro as object)));
+  assert.ok(!Object.keys(erro as object).includes('retryAfterMs'));
+  assert.ok(!JSON.stringify(erro).includes('retryAfterMs'));
+});
+
+test('correcao2b: erro publico expoe somente os campos aprovados (categoria, codigo, tentativas, duracaoMs, modelo, statusHttp)', async () => {
+  const { fetchFalso } = criarFetchFalso([() => respostaErroHttp(401, {})]);
+  const cliente = criarCliente({ fetch: fetchFalso });
+  let erro: unknown;
+  try {
+    await cliente.executar(entradaValida());
+  } catch (e) {
+    erro = e;
+  }
+  assertCategoria(erro, 'autenticacao');
+  const camposAprovados = ['categoria', 'codigo', 'tentativas', 'duracaoMs', 'modelo', 'statusHttp'];
+  const chaves = Object.keys(erro as object);
+  for (const campo of camposAprovados) {
+    assert.ok(chaves.includes(campo), `campo aprovado ausente: ${campo}`);
+  }
+  // 'name' e um campo padrao de qualquer instancia de Error, atribuido
+  // igualmente por todas as classes de erro deste projeto -- nao faz
+  // parte do contrato de dados especifico deste erro, entao e o unico
+  // campo tolerado alem dos aprovados.
+  const chavesInesperadas = chaves.filter((chave) => chave !== 'name' && !camposAprovados.includes(chave));
+  assert.deepEqual(chavesInesperadas, []);
+});
+
+test('correcao2c: retryAfterMs nao aparece em for...in sobre o erro', async () => {
+  const { fetchFalso } = criarFetchFalso([() => respostaErroHttp(429, {}, { 'Retry-After': '3600' })]);
+  const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 100, prazoTotalMs: 200 });
+  let erro: unknown;
+  try {
+    await cliente.executar(entradaValida());
+  } catch (e) {
+    erro = e;
+  }
+  assertCategoria(erro, 'limite_taxa');
+  const chavesViaForIn: string[] = [];
+  for (const chave in erro as object) chavesViaForIn.push(chave);
+  assert.ok(!chavesViaForIn.includes('retryAfterMs'));
+});
+
+test('correcao2d: retryAfterMs nao aparece mesmo quando o erro esta aninhado dentro de outro objeto serializado', async () => {
+  const { fetchFalso } = criarFetchFalso([() => respostaErroHttp(429, {}, { 'Retry-After': '3600' })]);
+  const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 100, prazoTotalMs: 200 });
+  let erro: unknown;
+  try {
+    await cliente.executar(entradaValida());
+  } catch (e) {
+    erro = e;
+  }
+  assertCategoria(erro, 'limite_taxa');
+  const envelope = { contexto: 'teste', erroOcorrido: erro };
+  assert.ok(!JSON.stringify(envelope).includes('retryAfterMs'));
+  assert.ok(!JSON.stringify(envelope).includes('3600'));
+});
+
+// --- Correcao 3: nao aceitar sucesso apos o prazo ---
+
+test('correcao3a: leitura termina mas ultrapassa o prazo da tentativa -- checagem explicita rejeita mesmo sem o AbortController interromper', async () => {
+  const cliente = criarCliente({
+    fetch: fetchComLeituraLentaIgnorandoAbort(45),
+    timeoutPorTentativaMs: 30,
+    esperaEntreTentativasMs: 5,
+    prazoTotalMs: 60, // insuficiente para uma segunda tentativa apos a primeira consumir ~45ms
+  });
+  let erro: unknown;
+  try {
+    await cliente.executar(entradaValida());
+  } catch (e) {
+    erro = e;
+  }
+  assertCategoria(erro, 'timeout');
+  assert.equal(erro.tentativas, 1);
+});
+
+test('correcao3b: sucesso nao e aceito quando o prazo total ja foi ultrapassado no momento do processamento final', async () => {
+  const tempoUnico = 30;
+  const cliente = criarCliente({
+    fetch: fetchComLeituraLentaIgnorandoAbort(45),
+    timeoutPorTentativaMs: tempoUnico,
+    esperaEntreTentativasMs: 5,
+    prazoTotalMs: tempoUnico, // prazo total igual ao timeout de uma unica tentativa -- configuracao legal mais apertada
+  });
+  let erro: unknown;
+  try {
+    await cliente.executar(entradaValida());
+  } catch (e) {
+    erro = e;
+  }
+  assertCategoria(erro, 'timeout');
+  assert.equal(erro.tentativas, 1, 'sem orcamento algum para uma segunda tentativa nesta configuracao');
+});
+
+test('correcao3c: resposta rapida dentro do prazo continua sendo aceita normalmente (as novas checagens nao geram falso positivo)', async () => {
+  const { fetchFalso } = criarFetchFalso([() => respostaSucesso([{ campo: 'nome', acao: 'informar', valor: 'Joao' }])]);
+  const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs: 5000, esperaEntreTentativasMs: 5, prazoTotalMs: 5000 });
+  const resultado = await cliente.executar(entradaValida());
+  assert.deepEqual(resultado, { alteracoes: { nome: { acao: 'informar', valor: 'Joao' } } });
+});
+
+// --- Correcao 4: Retry-After em segundos so no formato estrito ^[0-9]+$ ---
+
+test('correcao4: formatos numericos invalidos (decimal, sinal, espacos, notacao exponencial, Infinity, NaN) sao ignorados, com fallback para esperaEntreTentativasMs', async () => {
+  // ' 5'/'5 ' nao entram aqui: Headers normaliza (retira) OWS nas bordas
+  // do valor do header por conta propria, entao esses dois casos nunca
+  // chegariam com espaco ate o nosso codigo. '5 0' cobre espaco INTERNO,
+  // que Headers preserva.
+  const valoresInvalidos = ['1.5', '+5', '-5', '5 0', '1e10', '1E3', 'Infinity', '-Infinity', 'NaN'];
+
+  for (const valorInvalido of valoresInvalidos) {
+    const { fetchFalso, chamadas } = criarFetchFalso([
+      () => respostaErroHttp(429, {}, { 'Retry-After': valorInvalido }),
+      () => respostaSucesso([]),
+    ]);
+    const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 15, timeoutPorTentativaMs: 200, prazoTotalMs: 5000 });
+    const inicio = Date.now();
+    await cliente.executar(entradaValida());
+    const duracao = Date.now() - inicio;
+    assert.equal(chamadas.length, 2, `Retry-After=${valorInvalido} deveria permitir a segunda tentativa (fallback)`);
+    assert.ok(duracao < 200, `Retry-After=${valorInvalido} nao deveria ser tratado como segundos validos (levou ${duracao}ms)`);
+  }
+});
+
+test('correcao4b: Retry-After em segundos cujo valor convertido ultrapassa Number.MAX_SAFE_INTEGER e ignorado', async () => {
+  const segundosEnormes = '9999999999999999999999'; // digitos puros, finito, mas muito maior que MAX_SAFE_INTEGER
+  const { fetchFalso, chamadas } = criarFetchFalso([
+    () => respostaErroHttp(429, {}, { 'Retry-After': segundosEnormes }),
+    () => respostaSucesso([]),
+  ]);
+  const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 15, timeoutPorTentativaMs: 200, prazoTotalMs: 5000 });
+  const inicio = Date.now();
+  await cliente.executar(entradaValida());
+  const duracao = Date.now() - inicio;
+  assert.equal(chamadas.length, 2);
+  assert.ok(duracao < 200, `Retry-After absurdamente grande nao deveria travar a segunda tentativa (levou ${duracao}ms)`);
+});
+
+test('correcao4c: Retry-After em segundos puros continua sendo aceito (regressao, inclui zero)', async () => {
+  const { fetchFalso, chamadas } = criarFetchFalso([() => respostaErroHttp(429, {}, { 'Retry-After': '0' }), () => respostaSucesso([])]);
+  const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 200, prazoTotalMs: 5000 });
+  await cliente.executar(entradaValida());
+  assert.equal(chamadas.length, 2);
+});
+
+test('correcao4d: Retry-After com digitos suficientes para estourar para Infinity e ignorado', async () => {
+  const segundosQueEstouram = '9'.repeat(320);
+  const { fetchFalso, chamadas } = criarFetchFalso([
+    () => respostaErroHttp(429, {}, { 'Retry-After': segundosQueEstouram }),
+    () => respostaSucesso([]),
+  ]);
+  const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 200, prazoTotalMs: 5000 });
+  const inicio = Date.now();
+  await cliente.executar(entradaValida());
+  const duracao = Date.now() - inicio;
+  assert.equal(chamadas.length, 2);
+  assert.ok(duracao < 200);
+});
+
+test('correcao4e: Retry-After com zeros a esquerda (ex.: "003") corresponde ao formato estrito e e aceito', async () => {
+  const { fetchFalso, chamadas } = criarFetchFalso([() => respostaErroHttp(429, {}, { 'Retry-After': '003' }), () => respostaSucesso([])]);
+  const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 200, prazoTotalMs: 4000 });
+  await cliente.executar(entradaValida());
+  const intervalo = chamadas[1].momento - chamadas[0].momento;
+  assert.ok(intervalo >= 2900, `"003" deveria ser interpretado como 3000ms, esperou ${intervalo}ms`);
+});
+
+// --- Correcao 5: exigir status "completed" ---
+
+test('correcao5a: status ausente gera resposta_nao_estruturada, sem retry', async () => {
+  const { fetchFalso, chamadas } = criarFetchFalso([() => respostaSemStatus(), () => respostaSucesso([])]);
+  const cliente = criarCliente({ fetch: fetchFalso });
+  let erro: unknown;
+  try {
+    await cliente.executar(entradaValida());
+  } catch (e) {
+    erro = e;
+  }
+  assertCategoria(erro, 'resposta_nao_estruturada');
+  assert.equal(chamadas.length, 1);
+});
+
+test('correcao5b: status null gera resposta_nao_estruturada, sem retry', async () => {
+  const { fetchFalso, chamadas } = criarFetchFalso([() => respostaComStatusInvalido(null), () => respostaSucesso([])]);
+  const cliente = criarCliente({ fetch: fetchFalso });
+  let erro: unknown;
+  try {
+    await cliente.executar(entradaValida());
+  } catch (e) {
+    erro = e;
+  }
+  assertCategoria(erro, 'resposta_nao_estruturada');
+  assert.equal(chamadas.length, 1);
+});
+
+test('correcao5c: status de tipo diferente de string (numero, booleano, array, objeto) gera resposta_nao_estruturada, sem retry', async () => {
+  for (const statusInvalido of [42, true, ['completed'], { valor: 'completed' }]) {
+    const { fetchFalso, chamadas } = criarFetchFalso([() => respostaComStatusInvalido(statusInvalido), () => respostaSucesso([])]);
+    const cliente = criarCliente({ fetch: fetchFalso });
+    let erro: unknown;
+    try {
+      await cliente.executar(entradaValida());
+    } catch (e) {
+      erro = e;
+    }
+    assertCategoria(erro, 'resposta_nao_estruturada');
+    assert.equal(chamadas.length, 1, `status=${JSON.stringify(statusInvalido)} nao deveria permitir retry`);
+  }
+});
+
+test('correcao5d: status string diferente de "completed" continua gerando resposta_truncada, sem retry', async () => {
+  const { fetchFalso, chamadas } = criarFetchFalso([() => respostaComStatusInvalido('in_progress'), () => respostaSucesso([])]);
+  const cliente = criarCliente({ fetch: fetchFalso });
+  let erro: unknown;
+  try {
+    await cliente.executar(entradaValida());
+  } catch (e) {
+    erro = e;
+  }
+  assertCategoria(erro, 'resposta_truncada');
+  assert.equal(chamadas.length, 1);
+});
+
+test('correcao5e: recusa/filtro tem prioridade mesmo quando status tambem esta ausente ou invalido', async () => {
+  const corpoComRecusaEStatusAusente = { output: [{ type: 'refusal', refusal: 'motivo interno' }] };
+  const { fetchFalso, chamadas } = criarFetchFalso([
+    () => new Response(JSON.stringify(corpoComRecusaEStatusAusente), { status: 200 }),
+    () => respostaSucesso([]),
+  ]);
+  const cliente = criarCliente({ fetch: fetchFalso });
+  let erro: unknown;
+  try {
+    await cliente.executar(entradaValida());
+  } catch (e) {
+    erro = e;
+  }
+  assertCategoria(erro, 'recusa_ou_filtro');
+  assert.equal(chamadas.length, 1);
+});
+
+// --- garantia geral combinada ---
+
+test('correcao-geral: no maximo duas tentativas mesmo combinando Retry-After valido e orcamento generoso', async () => {
+  const { fetchFalso, chamadas } = criarFetchFalso([
+    () => respostaErroHttp(429, {}, { 'Retry-After': '0' }),
+    () => respostaErroHttp(429, {}, { 'Retry-After': '0' }),
+    () => respostaSucesso([]),
+  ]);
+  const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 200, prazoTotalMs: 5000 });
+  await assert.rejects(() => cliente.executar(entradaValida()));
+  assert.equal(chamadas.length, 2);
 });
