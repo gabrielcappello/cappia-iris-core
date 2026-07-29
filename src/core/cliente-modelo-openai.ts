@@ -15,11 +15,12 @@ export const MODELO_GPT_4_1_MINI = 'gpt-4.1-mini-2025-04-14';
 
 const URL_RESPONSES = 'https://api.openai.com/v1/responses';
 const MAX_OUTPUT_TOKENS = 512;
-const MAX_TENTATIVAS = 2;
 
-const TIMEOUT_POR_TENTATIVA_MS_PADRAO = 8000;
-const PRAZO_TOTAL_MS_PADRAO = 18000;
-const ESPERA_ENTRE_TENTATIVAS_MS_PADRAO = 500;
+// Valores de referencia aprovados -- nunca usados como default silencioso.
+// O chamador deve fornecer os tres tempos explicitamente em toda chamada.
+export const TIMEOUT_POR_TENTATIVA_MS_APROVADO = 8000;
+export const PRAZO_TOTAL_MS_APROVADO = 18000;
+export const ESPERA_ENTRE_TENTATIVAS_MS_APROVADO = 500;
 
 // --- Schema portatil aprovado (identico ao usado no smoke test e no
 // avaliador semantico -- unica forma ja validada contra o Structured
@@ -77,6 +78,10 @@ export type CategoriaErroModelo =
   | 'recusa_ou_filtro'
   | 'resposta_invalida';
 
+// resposta_vazia e repetivel (pode ser um hiccup transitorio do provedor).
+// Todas as demais categorias de conteudo/estrutura invalida NUNCA repetem
+// -- repetir uma resposta estruturalmente invalida so reproduziria o
+// mesmo resultado.
 const CATEGORIAS_REPETIVEIS = new Set<CategoriaErroModelo>([
   'limite_taxa',
   'indisponibilidade',
@@ -84,10 +89,13 @@ const CATEGORIAS_REPETIVEIS = new Set<CategoriaErroModelo>([
   'resposta_vazia',
 ]);
 
-// So pode conter: categoria, codigo tecnico, numero de tentativas,
-// duracao, modelo, status HTTP quando existir. Nunca mensagem do
-// paciente, dados_atuais, resposta bruta, valores interpretados, PII,
-// chave ou corpo bruto de erro da API.
+// So pode conter: categoria, codigo tecnico fixo, numero de tentativas
+// realmente iniciadas, duracao, modelo (sempre a constante aprovada),
+// status HTTP quando existir, e um retryAfterMs JA CONVERTIDO para
+// milissegundos (nunca o texto bruto do header) usado internamente pelo
+// orquestrador de retry. Nunca mensagem do paciente, dados_atuais,
+// resposta bruta, valores interpretados, PII, chave ou corpo bruto de
+// erro da API.
 export class ErroClienteModeloOpenAI extends Error {
   categoria: CategoriaErroModelo;
   codigo: string;
@@ -95,6 +103,7 @@ export class ErroClienteModeloOpenAI extends Error {
   duracaoMs: number;
   modelo: string;
   statusHttp: number | null;
+  retryAfterMs: number | null;
 
   constructor(
     categoria: CategoriaErroModelo,
@@ -102,7 +111,8 @@ export class ErroClienteModeloOpenAI extends Error {
     tentativas: number,
     duracaoMs: number,
     modelo: string,
-    statusHttp: number | null = null
+    statusHttp: number | null = null,
+    retryAfterMs: number | null = null
   ) {
     super(`cliente de modelo OpenAI: categoria=${categoria} codigo=${codigo} tentativas=${tentativas}`);
     this.name = 'ErroClienteModeloOpenAI';
@@ -112,6 +122,19 @@ export class ErroClienteModeloOpenAI extends Error {
     this.duracaoMs = duracaoMs;
     this.modelo = modelo;
     this.statusHttp = statusHttp;
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+// Erro de configuracao, lancado sincronamente em criarClienteModeloOpenAI,
+// antes de qualquer rede. So pode conter o nome do campo e uma mensagem
+// fixa -- nunca o valor arbitrario recebido do chamador.
+export class ErroConfiguracaoClienteModeloOpenAI extends Error {
+  campo: string;
+  constructor(campo: string, mensagem: string) {
+    super(mensagem);
+    this.name = 'ErroConfiguracaoClienteModeloOpenAI';
+    this.campo = campo;
   }
 }
 
@@ -130,30 +153,26 @@ export interface ConfiguracaoClienteModeloOpenAI {
   chaveApi: string;
   modelo: string;
   fetch?: typeof fetch;
-  timeoutPorTentativaMs?: number;
-  prazoTotalMs?: number;
-  esperaEntreTentativasMs?: number;
+  timeoutPorTentativaMs: number;
+  prazoTotalMs: number;
+  esperaEntreTentativasMs: number;
 }
 
 /**
  * Cria um ClienteModeloEstruturado concreto para a OpenAI Responses API.
- * Nenhuma chamada e feita na criacao -- so na primeira invocacao de
- * `executar()`. Config injetada, nunca lida de process.env.
+ * Toda a configuracao e validada sincronamente aqui, antes de qualquer
+ * rede -- se algo for invalido, a criacao falha e `executar()` nunca
+ * chega a existir. Config injetada, nunca lida de process.env.
  */
 export function criarClienteModeloOpenAI(configuracao: ConfiguracaoClienteModeloOpenAI): ClienteModeloEstruturado {
-  if (!configuracao.chaveApi || configuracao.chaveApi.trim() === '') {
-    throw new Error('criarClienteModeloOpenAI: chaveApi e obrigatoria');
-  }
-  if (!configuracao.modelo || configuracao.modelo.trim() === '') {
-    throw new Error('criarClienteModeloOpenAI: modelo e obrigatorio');
-  }
+  validarConfiguracao(configuracao);
 
   const chaveApi = configuracao.chaveApi;
-  const modelo = configuracao.modelo;
+  const modelo = MODELO_GPT_4_1_MINI; // sempre a constante -- validarConfiguracao ja garantiu que configuracao.modelo e igual a ela.
   const fetchInjetado = configuracao.fetch ?? fetch;
-  const timeoutPorTentativaMs = configuracao.timeoutPorTentativaMs ?? TIMEOUT_POR_TENTATIVA_MS_PADRAO;
-  const prazoTotalMs = configuracao.prazoTotalMs ?? PRAZO_TOTAL_MS_PADRAO;
-  const esperaEntreTentativasMs = configuracao.esperaEntreTentativasMs ?? ESPERA_ENTRE_TENTATIVAS_MS_PADRAO;
+  const timeoutPorTentativaMs = configuracao.timeoutPorTentativaMs;
+  const prazoTotalMs = configuracao.prazoTotalMs;
+  const esperaEntreTentativasMs = configuracao.esperaEntreTentativasMs;
 
   return {
     async executar(entrada: { instrucoes: string; schema: object; payload: EntradaInterpretacao }): Promise<unknown> {
@@ -170,6 +189,50 @@ export function criarClienteModeloOpenAI(configuracao: ConfiguracaoClienteModelo
   };
 }
 
+function validarConfiguracao(configuracao: ConfiguracaoClienteModeloOpenAI): void {
+  if (typeof configuracao.chaveApi !== 'string' || configuracao.chaveApi.trim() === '') {
+    throw new ErroConfiguracaoClienteModeloOpenAI('chaveApi', 'chaveApi deve ser uma string nao vazia');
+  }
+
+  if (configuracao.modelo !== MODELO_GPT_4_1_MINI) {
+    throw new ErroConfiguracaoClienteModeloOpenAI(
+      'modelo',
+      `modelo deve ser exatamente a constante aprovada MODELO_GPT_4_1_MINI (${MODELO_GPT_4_1_MINI})`
+    );
+  }
+
+  if (configuracao.fetch !== undefined && typeof configuracao.fetch !== 'function') {
+    throw new ErroConfiguracaoClienteModeloOpenAI('fetch', 'fetch, quando fornecido, deve ser uma funcao');
+  }
+
+  exigirInteiroExplicito(configuracao.timeoutPorTentativaMs, 'timeoutPorTentativaMs', { permitirZero: false });
+  exigirInteiroExplicito(configuracao.prazoTotalMs, 'prazoTotalMs', { permitirZero: false });
+  exigirInteiroExplicito(configuracao.esperaEntreTentativasMs, 'esperaEntreTentativasMs', { permitirZero: true });
+
+  if (configuracao.prazoTotalMs < configuracao.timeoutPorTentativaMs) {
+    throw new ErroConfiguracaoClienteModeloOpenAI(
+      'prazoTotalMs',
+      'prazoTotalMs deve comportar pelo menos uma tentativa completa (>= timeoutPorTentativaMs)'
+    );
+  }
+}
+
+function exigirInteiroExplicito(valor: unknown, campo: string, opcoes: { permitirZero: boolean }): void {
+  if (valor === undefined) {
+    throw new ErroConfiguracaoClienteModeloOpenAI(campo, `${campo} deve ser fornecido explicitamente -- nao ha default silencioso`);
+  }
+  if (typeof valor !== 'number' || !Number.isFinite(valor) || !Number.isInteger(valor)) {
+    throw new ErroConfiguracaoClienteModeloOpenAI(campo, `${campo} deve ser um numero inteiro finito`);
+  }
+  const minimoValido = opcoes.permitirZero ? 0 : 1;
+  if (valor < minimoValido) {
+    throw new ErroConfiguracaoClienteModeloOpenAI(
+      campo,
+      opcoes.permitirZero ? `${campo} deve ser maior ou igual a zero` : `${campo} deve ser positivo`
+    );
+  }
+}
+
 interface ContextoChamada {
   entrada: { instrucoes: string; schema: object; payload: EntradaInterpretacao };
   chaveApi: string;
@@ -180,49 +243,76 @@ interface ContextoChamada {
   esperaEntreTentativasMs: number;
 }
 
+// Estrutura fixa: tentativa 1 sempre com o timeout completo (o orcamento
+// total ja garante isso, validado na configuracao). Se falhar de forma
+// repetivel e houver orcamento para espera + uma tentativa completa,
+// tentativa 2 tambem com o timeout completo -- NUNCA reduzido. Se nao
+// houver orcamento, ou se a tentativa 2 tambem falhar, o erro (com
+// `tentativas` refletindo exatamente quantas tentativas realmente
+// comecaram) e devolvido. Nunca ha uma terceira tentativa -- nao existe
+// nenhum laco que permita isso.
 async function executarComRetry(contexto: ContextoChamada): Promise<unknown> {
   const inicioTotal = Date.now();
-  let ultimoErro: ErroClienteModeloOpenAI | null = null;
 
-  for (let tentativa = 1; tentativa <= MAX_TENTATIVAS; tentativa++) {
-    const decorrido = Date.now() - inicioTotal;
-    const restante = contexto.prazoTotalMs - decorrido;
-    if (restante <= 0) {
-      throw new ErroClienteModeloOpenAI('timeout', 'prazo_total_excedido', tentativa - 1, decorrido, contexto.modelo);
+  try {
+    return await executarUmaTentativa(contexto, 1, contexto.timeoutPorTentativaMs, inicioTotal);
+  } catch (erroTentativa1) {
+    if (!(erroTentativa1 instanceof ErroClienteModeloOpenAI)) throw erroTentativa1;
+    if (!CATEGORIAS_REPETIVEIS.has(erroTentativa1.categoria)) throw erroTentativa1;
+
+    const esperaAplicavel = Math.max(contexto.esperaEntreTentativasMs, erroTentativa1.retryAfterMs ?? 0);
+    const restante = contexto.prazoTotalMs - (Date.now() - inicioTotal);
+    const orcamentoNecessario = esperaAplicavel + contexto.timeoutPorTentativaMs;
+
+    if (restante < orcamentoNecessario) {
+      // Orcamento insuficiente para espera + uma tentativa completa:
+      // nao inicia a segunda tentativa, devolve o ultimo erro sanitizado.
+      throw erroTentativa1;
     }
 
-    const timeoutEfetivo = Math.min(contexto.timeoutPorTentativaMs, restante);
-
-    try {
-      return await executarUmaTentativa(contexto, tentativa, timeoutEfetivo, inicioTotal);
-    } catch (erro) {
-      if (!(erro instanceof ErroClienteModeloOpenAI)) throw erro;
-      ultimoErro = erro;
-
-      if (!CATEGORIAS_REPETIVEIS.has(erro.categoria) || tentativa >= MAX_TENTATIVAS) {
-        throw erro;
-      }
-
-      const restanteAposFalha = contexto.prazoTotalMs - (Date.now() - inicioTotal);
-      if (restanteAposFalha <= 0) {
-        throw erro;
-      }
-      const espera = Math.min(contexto.esperaEntreTentativasMs, restanteAposFalha);
-      if (espera > 0) await aguardar(espera);
+    if (esperaAplicavel > 0) {
+      await aguardar(esperaAplicavel);
     }
+
+    // Tentativa 2 -- sempre com o timeout completo, nunca reduzido.
+    // Se falhar, o erro propaga diretamente: nunca ha terceira tentativa.
+    return await executarUmaTentativa(contexto, 2, contexto.timeoutPorTentativaMs, inicioTotal);
   }
-
-  throw (
-    ultimoErro ??
-    new ErroClienteModeloOpenAI('indisponibilidade', 'falha_desconhecida', MAX_TENTATIVAS, Date.now() - inicioTotal, contexto.modelo)
-  );
 }
 
+// O timer desta tentativa so e limpo apos processarTentativa terminar
+// (sucesso ou falha) -- ou seja, apos envio da requisicao, espera pelos
+// headers, leitura integral do corpo e parse necessario para classificar
+// a resposta. Nao e limpo so por causa de `fetch()` ter retornado.
 async function executarUmaTentativa(
   contexto: ContextoChamada,
   tentativa: number,
   timeoutMs: number,
   inicioTotal: number
+): Promise<unknown> {
+  const controlador = new AbortController();
+  const timer = setTimeout(() => controlador.abort(), timeoutMs);
+  try {
+    return await processarTentativa(contexto, tentativa, inicioTotal, controlador.signal);
+  } catch (erro) {
+    if (erro instanceof ErroClienteModeloOpenAI) throw erro;
+
+    const duracao = Date.now() - inicioTotal;
+    const foiAbort = controlador.signal.aborted || (erro instanceof Error && erro.name === 'AbortError');
+    if (foiAbort) {
+      throw new ErroClienteModeloOpenAI('timeout', 'tempo_esgotado_na_tentativa', tentativa, duracao, contexto.modelo);
+    }
+    throw new ErroClienteModeloOpenAI('indisponibilidade', 'erro_de_rede', tentativa, duracao, contexto.modelo);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function processarTentativa(
+  contexto: ContextoChamada,
+  tentativa: number,
+  inicioTotal: number,
+  signal: AbortSignal
 ): Promise<unknown> {
   const instrucoesPortatil = construirInstrucoesPortatil(contexto.entrada.instrucoes);
 
@@ -254,92 +344,167 @@ async function executarUmaTentativa(
   // nenhuma chave 'tools' incluida em nenhuma hipotese; nenhum dado alem
   // de mensagens_atuais/dados_atuais chega no corpo.
 
-  let resposta: Response;
-  try {
-    resposta = await chamarComTimeout(
-      contexto.fetchInjetado,
-      URL_RESPONSES,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${contexto.chaveApi}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(corpo),
-      },
-      timeoutMs
-    );
-  } catch (erroRede) {
-    const duracao = Date.now() - inicioTotal;
-    const foiAbort = erroRede instanceof Error && erroRede.name === 'AbortError';
-    if (foiAbort) {
-      throw new ErroClienteModeloOpenAI('timeout', 'tempo_esgotado_na_tentativa', tentativa, duracao, contexto.modelo);
-    }
-    throw new ErroClienteModeloOpenAI('indisponibilidade', 'erro_de_rede', tentativa, duracao, contexto.modelo);
-  }
+  const resposta = await contexto.fetchInjetado(URL_RESPONSES, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${contexto.chaveApi}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(corpo),
+    signal,
+  });
 
-  const duracao = Date.now() - inicioTotal;
+  const duracao = () => Date.now() - inicioTotal;
 
   if (!resposta.ok) {
     if (resposta.status === 401 || resposta.status === 403) {
-      throw new ErroClienteModeloOpenAI('autenticacao', 'nao_autorizado', tentativa, duracao, contexto.modelo, resposta.status);
+      throw new ErroClienteModeloOpenAI('autenticacao', 'nao_autorizado', tentativa, duracao(), contexto.modelo, resposta.status);
     }
     if (resposta.status === 429) {
-      throw new ErroClienteModeloOpenAI('limite_taxa', 'limite_de_taxa_excedido', tentativa, duracao, contexto.modelo, resposta.status);
+      const retryAfterMs = interpretarRetryAfter(resposta.headers?.get?.('Retry-After') ?? null);
+      throw new ErroClienteModeloOpenAI(
+        'limite_taxa',
+        'limite_de_taxa_excedido',
+        tentativa,
+        duracao(),
+        contexto.modelo,
+        resposta.status,
+        retryAfterMs
+      );
     }
     if (resposta.status >= 500) {
-      throw new ErroClienteModeloOpenAI('indisponibilidade', 'erro_do_servidor', tentativa, duracao, contexto.modelo, resposta.status);
+      const retryAfterMs = interpretarRetryAfter(resposta.headers?.get?.('Retry-After') ?? null);
+      throw new ErroClienteModeloOpenAI(
+        'indisponibilidade',
+        'erro_do_servidor',
+        tentativa,
+        duracao(),
+        contexto.modelo,
+        resposta.status,
+        retryAfterMs
+      );
     }
     throw new ErroClienteModeloOpenAI(
       'resposta_invalida',
       'erro_http_nao_recuperavel',
       tentativa,
-      duracao,
+      duracao(),
       contexto.modelo,
       resposta.status
     );
   }
 
-  const corpoResposta = await resposta.json().catch(() => null);
-  if (corpoResposta === null || typeof corpoResposta !== 'object') {
-    throw new ErroClienteModeloOpenAI('resposta_vazia', 'corpo_nao_e_json', tentativa, duracao, contexto.modelo, resposta.status);
+  // Le o corpo integralmente ANTES de classificar -- o timer da tentativa
+  // (em executarUmaTentativa) permanece ativo durante esta leitura.
+  const textoCorpo = await resposta.text();
+
+  if (textoCorpo === '') {
+    // Corpo HTTP com zero bytes: unico caso, junto com output_text vazio
+    // mais abaixo, classificado como resposta_vazia (repetivel).
+    throw new ErroClienteModeloOpenAI('resposta_vazia', 'corpo_http_vazio', tentativa, duracao(), contexto.modelo, resposta.status);
   }
 
-  const status = (corpoResposta as { status?: unknown }).status;
+  let corpoResposta: unknown;
+  try {
+    corpoResposta = JSON.parse(textoCorpo);
+  } catch {
+    throw new ErroClienteModeloOpenAI(
+      'resposta_invalida',
+      'corpo_nao_e_json_valido',
+      tentativa,
+      duracao(),
+      contexto.modelo,
+      resposta.status
+    );
+  }
+
+  if (corpoResposta === null || typeof corpoResposta !== 'object' || Array.isArray(corpoResposta)) {
+    throw new ErroClienteModeloOpenAI(
+      'resposta_invalida',
+      'raiz_json_nao_e_objeto',
+      tentativa,
+      duracao(),
+      contexto.modelo,
+      resposta.status
+    );
+  }
+  const envelope = corpoResposta as Record<string, unknown>;
+
+  // Recusa/filtro precisa ser detectada ANTES de qualquer classificacao
+  // generica de truncamento -- examina todos os itens de output, todos os
+  // itens de content, e incomplete_details quando presente.
+  if (detectarRecusaOuFiltro(envelope)) {
+    throw new ErroClienteModeloOpenAI(
+      'recusa_ou_filtro',
+      'recusa_ou_filtro_detectado',
+      tentativa,
+      duracao(),
+      contexto.modelo,
+      resposta.status
+    );
+  }
+
+  const status = envelope.status;
   if (typeof status === 'string' && status !== 'completed') {
-    throw new ErroClienteModeloOpenAI('resposta_truncada', `status_${status}`, tentativa, duracao, contexto.modelo, resposta.status);
+    // Codigo fixo -- nunca interpola o valor externo de `status`.
+    throw new ErroClienteModeloOpenAI('resposta_truncada', 'resposta_incompleta', tentativa, duracao(), contexto.modelo, resposta.status);
   }
 
-  const output = (corpoResposta as { output?: unknown }).output;
-  const itemMensagem = Array.isArray(output)
-    ? output.find((item: { type?: string }) => item?.type === 'message')
-    : null;
+  const output = envelope.output;
+  if (!Array.isArray(output)) {
+    throw new ErroClienteModeloOpenAI(
+      'resposta_nao_estruturada',
+      'output_ausente_ou_invalido',
+      tentativa,
+      duracao(),
+      contexto.modelo,
+      resposta.status
+    );
+  }
+
+  const itemMensagem = output.find((item) => (item as { type?: string })?.type === 'message') as
+    | { content?: unknown }
+    | undefined;
   if (!itemMensagem) {
-    throw new ErroClienteModeloOpenAI('resposta_vazia', 'sem_item_de_mensagem', tentativa, duracao, contexto.modelo, resposta.status);
+    throw new ErroClienteModeloOpenAI(
+      'resposta_nao_estruturada',
+      'item_mensagem_ausente',
+      tentativa,
+      duracao(),
+      contexto.modelo,
+      resposta.status
+    );
   }
 
-  const conteudo = Array.isArray((itemMensagem as { content?: unknown }).content)
-    ? (itemMensagem as { content: unknown[] }).content[0]
-    : null;
-  if (!conteudo) {
-    throw new ErroClienteModeloOpenAI('resposta_vazia', 'sem_conteudo', tentativa, duracao, contexto.modelo, resposta.status);
+  const conteudo = itemMensagem.content;
+  if (!Array.isArray(conteudo)) {
+    throw new ErroClienteModeloOpenAI(
+      'resposta_nao_estruturada',
+      'conteudo_ausente_ou_invalido',
+      tentativa,
+      duracao(),
+      contexto.modelo,
+      resposta.status
+    );
   }
 
-  const tipoConteudo = (conteudo as { type?: string }).type;
-  if (tipoConteudo === 'refusal') {
-    throw new ErroClienteModeloOpenAI('recusa_ou_filtro', 'modelo_recusou', tentativa, duracao, contexto.modelo, resposta.status);
-  }
-
-  const textoBruto = (conteudo as { text?: unknown }).text;
-  if (tipoConteudo !== 'output_text' || typeof textoBruto !== 'string') {
+  const itemTexto = conteudo.find((item) => (item as { type?: string })?.type === 'output_text') as
+    | { text?: unknown }
+    | undefined;
+  const textoBruto = itemTexto?.text;
+  if (!itemTexto || typeof textoBruto !== 'string') {
     throw new ErroClienteModeloOpenAI(
       'resposta_nao_estruturada',
       'canal_estruturado_ausente',
       tentativa,
-      duracao,
+      duracao(),
       contexto.modelo,
       resposta.status
     );
+  }
+
+  if (textoBruto === '') {
+    throw new ErroClienteModeloOpenAI('resposta_vazia', 'output_text_vazio', tentativa, duracao(), contexto.modelo, resposta.status);
   }
 
   // Nenhuma tentativa de consertar/reinterpretar: JSON.parse direto, sem
@@ -348,16 +513,78 @@ async function executarUmaTentativa(
   try {
     objetoPortatil = JSON.parse(textoBruto);
   } catch {
-    throw new ErroClienteModeloOpenAI('resposta_invalida', 'json_invalido', tentativa, duracao, contexto.modelo, resposta.status);
+    throw new ErroClienteModeloOpenAI(
+      'resposta_invalida',
+      'output_text_json_invalido',
+      tentativa,
+      duracao(),
+      contexto.modelo,
+      resposta.status
+    );
   }
 
   try {
     const alteracoesInternas = converterParaContratoInterno(objetoPortatil);
     return { alteracoes: alteracoesInternas };
   } catch (erroConversao) {
-    const codigo = erroConversao instanceof ErroConversaoPortatil ? erroConversao.codigo : 'conversao_falhou';
-    throw new ErroClienteModeloOpenAI('resposta_invalida', codigo, tentativa, duracao, contexto.modelo, resposta.status);
+    const codigo = erroConversao instanceof ErroConversaoPortatil ? erroConversao.codigo : 'objeto_portatil_invalido';
+    throw new ErroClienteModeloOpenAI('resposta_invalida', codigo, tentativa, duracao(), contexto.modelo, resposta.status);
   }
+}
+
+// Examina todos os itens de `output` (inclusive os que nao sao do tipo
+// "message") e todos os itens de `content` dentro de cada item de
+// mensagem, procurando por `type === 'refusal'`. Tambem verifica
+// `incomplete_details.reason` para indicadores oficiais de filtro de
+// conteudo. Nunca incorpora o texto da recusa nem o motivo bruto no
+// retorno -- so um booleano.
+function detectarRecusaOuFiltro(envelope: Record<string, unknown>): boolean {
+  const output = envelope.output;
+  if (Array.isArray(output)) {
+    for (const itemOutput of output) {
+      const item = itemOutput as { type?: string; content?: unknown } | null;
+      if (item?.type === 'refusal') return true;
+      if (Array.isArray(item?.content)) {
+        for (const itemConteudo of item.content as unknown[]) {
+          if ((itemConteudo as { type?: string } | null)?.type === 'refusal') return true;
+        }
+      }
+    }
+  }
+
+  const detalheIncompleto = envelope.incomplete_details;
+  if (detalheIncompleto && typeof detalheIncompleto === 'object') {
+    const motivo = (detalheIncompleto as { reason?: unknown }).reason;
+    if (typeof motivo === 'string') {
+      const motivoNormalizado = motivo.toLowerCase();
+      if (motivoNormalizado.includes('filter') || motivoNormalizado.includes('safety') || motivoNormalizado.includes('refusal')) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+// Interpreta o header Retry-After em segundos ou em formato de data HTTP,
+// devolvendo sempre um numero de milissegundos ja convertido (nunca o
+// texto bruto). Valor invalido ou ausente -> null (o chamador usa somente
+// esperaEntreTentativasMs nesse caso).
+function interpretarRetryAfter(valorHeader: string | null): number | null {
+  if (!valorHeader) return null;
+
+  const comoSegundos = Number(valorHeader);
+  if (Number.isFinite(comoSegundos) && comoSegundos >= 0) {
+    return Math.round(comoSegundos * 1000);
+  }
+
+  const comoData = Date.parse(valorHeader);
+  if (!Number.isNaN(comoData)) {
+    const diferencaMs = comoData - Date.now();
+    return diferencaMs > 0 ? diferencaMs : 0;
+  }
+
+  return null;
 }
 
 // --- Conversao deterministica: lista portatil -> mapa interno ---
@@ -457,19 +684,4 @@ function construirInstrucoesPortatil(instrucoesBase: string): string {
 
 function aguardar(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function chamarComTimeout(
-  fetchFn: typeof fetch,
-  url: string,
-  opcoes: RequestInit,
-  timeoutMs: number
-): Promise<Response> {
-  const controlador = new AbortController();
-  const timer = setTimeout(() => controlador.abort(), timeoutMs);
-  try {
-    return await fetchFn(url, { ...opcoes, signal: controlador.signal });
-  } finally {
-    clearTimeout(timer);
-  }
 }
