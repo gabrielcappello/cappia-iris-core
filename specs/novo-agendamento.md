@@ -230,9 +230,26 @@ Exemplo:
 
 Uma mensagem recebida simultaneamente em clínicas de São Paulo e Manaus pode representar datas ou horários locais diferentes.
 
-A IA interpreta a expressão utilizada pelo paciente.
+A IA interpreta a expressão temporal usada pelo paciente e devolve o texto interpretado, nunca uma data já calculada.
 
-O Core transforma essa expressão em data e hora reais no fuso da clínica e valida se o período não está no passado.
+Exemplo:
+
+```json
+{
+  "data_texto": "sexta que vem",
+  "periodo": "tarde",
+  "horario_texto": null
+}
+```
+
+O Core é o único responsável por transformar essa expressão em data e hora reais, usando:
+
+- a data e hora atuais;
+- o fuso horário cadastrado para a clínica.
+
+O Core valida se o período resultante não está no passado.
+
+A IA nunca calcula, arredonda ou normaliza datas. Essa responsabilidade é exclusiva do Core.
 
 A Iris pergunta apenas o dado temporal que ainda estiver faltando.
 
@@ -272,6 +289,15 @@ Quando o paciente aceitar qualquer profissional, o Core deve:
 - data;
 - período;
 - horário informado.
+
+Quando o paciente aceitar qualquer profissional, a "melhor opção disponível" é definida por:
+
+- menor data e horário dentro dos critérios já informados pelo paciente: data, período e horário;
+- em caso de empate exato entre dois ou mais dentistas no mesmo horário, desempate pelo identificador do dentista, em ordem estável.
+
+Esse critério de desempate é técnico e invisível ao paciente. Não representa prioridade ou ranking entre profissionais e não exige nova configuração no painel.
+
+Mantém-se a decisão já aprovada de apresentar somente uma opção por vez (ver seção 10).
 
 Exemplo:
 
@@ -342,7 +368,7 @@ Somente depois de existir um horário disponível escolhido, verificar os dados 
 Solicitar apenas o que ainda estiver faltando:
 
 - nome;
-- documento;
+- CPF;
 - data de nascimento;
 - e-mail, somente quando a clínica estiver configurada para solicitar.
 
@@ -353,6 +379,19 @@ Solicitar somente dados obrigatórios que estejam incompletos.
 Dados já existentes no cadastro ou informados durante a conversa não devem ser solicitados novamente.
 
 O cadastro não deve ser exigido antes da escolha de um horário real.
+
+### Validação de formato
+
+Os dados cadastrais seguem validação de formato:
+
+- nome: deve conter ao menos duas letras e não pode ser composto somente por números ou símbolos;
+- CPF: deve possuir 11 dígitos e dígitos verificadores válidos;
+- data de nascimento: deve ser uma data real e não futura;
+- e-mail: solicitado somente quando configurado pela clínica e validado por formato básico de e-mail.
+
+Nome, CPF e data de nascimento são obrigatórios.
+
+O e-mail é condicionado à configuração da clínica.
 
 ---
 
@@ -391,9 +430,16 @@ Criar o agendamento.
 
 ### Horário indisponível
 
-Não criar o agendamento.
+Se o horário ficar indisponível na revalidação:
 
-Informar que o horário deixou de estar disponível e procurar uma nova opção real.
+- não criar o agendamento;
+- retornar ao estado `aguardando_escolha`;
+- apresentar uma nova opção real;
+- aguardar nova aceitação explícita;
+- apresentar um novo resumo;
+- solicitar uma nova confirmação explícita.
+
+Nenhuma aceitação, resumo ou confirmação da tentativa anterior pode ser reaproveitada.
 
 Nunca informar sucesso antes de a operação técnica ser concluída.
 
@@ -445,8 +491,6 @@ Exemplo:
 
 > Seu agendamento foi confirmado para 12/08 às 14h com a Dra. Ana.
 
-A resposta pode incluir informações aprovadas da clínica, como a existência de lembrete automático.
-
 A IA pode redigir a mensagem de forma natural, mas não pode alterar:
 
 - procedimento;
@@ -467,11 +511,11 @@ Exemplo:
 > amanhã
 > à tarde
 
-O sistema pode aguardar aproximadamente três segundos após a mensagem mais recente daquela conversa e interpretar o conjunto.
+O sistema aguarda exatamente 3 segundos após a mensagem mais recente daquela conversa antes de interpretar o conjunto.
 
-Essa espera ocorre somente naquela conversa.
+A espera ocorre por conversa, identificada por clínica + telefone.
 
-Outros pacientes e clínicas continuam sendo atendidos simultaneamente.
+Outras conversas continuam sendo processadas normalmente.
 
 Nenhuma mensagem legítima deve ser descartada.
 
@@ -518,7 +562,7 @@ A Iris não depende da memória do modelo para lembrar:
 - confirmação;
 - ação em andamento.
 
-Estados internos mínimos sugeridos:
+Estados obrigatórios:
 
 - `atendimento`;
 - `aguardando_escolha`;
@@ -526,6 +570,14 @@ Estados internos mínimos sugeridos:
 - `aguardando_confirmacao`;
 - `executando`;
 - `concluido`.
+
+Transições obrigatórias:
+
+- horário perdido na revalidação: `executando → aguardando_escolha`;
+- desistência explícita: qualquer estado ativo → `atendimento`;
+- alteração de procedimento, dentista, data ou horário após existir uma escolha registrada: invalidar a escolha anterior e retornar para `aguardando_escolha`.
+
+Essa última regra aplica-se durante `aguardando_escolha`, `coletando_cadastro` e `aguardando_confirmacao`.
 
 Os dados estruturados determinam o que ainda está faltando.
 
@@ -618,3 +670,25 @@ A implementação deve cobrir, no mínimo:
 33. desistência explícita encerra a ação;
 34. duas clínicas são atendidas simultaneamente sem mistura de dados;
 35. datas relativas são resolvidas em fusos horários diferentes.
+
+---
+
+## 23. Idioma, país e documento
+
+Nesta primeira versão:
+
+- o único país suportado é Brasil;
+- o único idioma de atendimento é português brasileiro;
+- o documento obrigatório é CPF válido.
+
+A Iris responde sempre em português brasileiro.
+
+O idioma não é detectado a partir da mensagem do paciente e não é alterado automaticamente durante a conversa.
+
+Mensagens recebidas em outro idioma não autorizam a Iris a mudar o idioma da resposta.
+
+Espanhol e suporte a clínicas de outros países ficam fora desta especificação.
+
+Quando forem implementados, deverão possuir especificação própria para idioma, documento e regras locais do país correspondente.
+
+Os testes desta entrega são somente em português brasileiro.
