@@ -3,7 +3,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { aplicarDados } from './aplicar-dados.ts';
-import { EntradaInvalidaError } from './erros.ts';
+import { ConflitoConcorrenteError, EntradaInvalidaError } from './erros.ts';
+import type { ClienteBancoDados } from './tipos.ts';
 import { ClienteFalso, criarTabelasFalsasVazias, type TabelasFalsas } from './teste-cliente-falso.ts';
 
 const CLINICA_ID = crypto.randomUUID();
@@ -17,10 +18,45 @@ function semearEstado(tabelas: TabelasFalsas, dados: Record<string, unknown>, ex
     estado: 'atendimento',
     dados,
     paciente_id: null,
+    atualizado_em: new Date('2026-07-01T00:00:00.000Z').toISOString(),
     ...extras,
   };
   tabelas.estado_conversa.push(conversa);
   return conversa;
+}
+
+// Envolve o ClienteFalso para forcar deterministicamente um conflito de
+// versao: na N-esima chamada a .update() em estado_conversa, muda
+// atualizado_em por baixo dos panos (simulando outra chamada concorrente
+// que ja escreveu), antes do update real acontecer. Usado para testar a
+// releitura + nova tentativa sem depender de timing de Promise.all.
+function clienteComConflitoNasPrimeirasNAtualizacoes(
+  tabelas: TabelasFalsas,
+  numeroDeConflitos: number
+): { cliente: ClienteBancoDados; tentativasDeUpdate: () => number } {
+  const real = new ClienteFalso(tabelas);
+  let tentativas = 0;
+  const cliente: ClienteBancoDados = {
+    from(nome: string) {
+      const base = real.from(nome);
+      return {
+        ...base,
+        update: (valores: Record<string, unknown>) => {
+          if (nome === 'estado_conversa') {
+            tentativas++;
+            if (tentativas <= numeroDeConflitos) {
+              const linha = tabelas.estado_conversa[0];
+              if (linha) {
+                linha.atualizado_em = new Date(Date.now() + tentativas * 1000).toISOString();
+              }
+            }
+          }
+          return base.update(valores);
+        },
+      };
+    },
+  };
+  return { cliente, tentativasDeUpdate: () => tentativas };
 }
 
 function contexto(conversaId: string) {
@@ -267,4 +303,211 @@ test('teste15: paciente_id nao e alterado', async () => {
   });
 
   assert.equal(tabelas.estado_conversa[0].paciente_id, pacienteId);
+});
+
+// --- Correcoes da revisao do Codex sobre 5324dc3 ---
+
+test('revisao1: alteracoes ausente e rejeitado', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const conversa = semearEstado(tabelas, {});
+  const cliente = new ClienteFalso(tabelas);
+
+  await assert.rejects(
+    () => aplicarDados(cliente, { ...contexto(conversa.id) } as never),
+    EntradaInvalidaError
+  );
+});
+
+test('revisao2: alteracoes null e rejeitado', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const conversa = semearEstado(tabelas, {});
+  const cliente = new ClienteFalso(tabelas);
+
+  await assert.rejects(
+    () => aplicarDados(cliente, { ...contexto(conversa.id), alteracoes: null } as never),
+    EntradaInvalidaError
+  );
+});
+
+test('revisao3: alteracoes array e rejeitado', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const conversa = semearEstado(tabelas, {});
+  const cliente = new ClienteFalso(tabelas);
+
+  await assert.rejects(
+    () => aplicarDados(cliente, { ...contexto(conversa.id), alteracoes: [] } as never),
+    EntradaInvalidaError
+  );
+});
+
+test('revisao4: valor numerico e rejeitado', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const conversa = semearEstado(tabelas, {});
+  const cliente = new ClienteFalso(tabelas);
+
+  await assert.rejects(
+    () =>
+      aplicarDados(cliente, {
+        ...contexto(conversa.id),
+        alteracoes: { nome: { acao: 'informar', valor: 42 } } as never,
+      }),
+    EntradaInvalidaError
+  );
+});
+
+test('revisao5: valor booleano e rejeitado', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const conversa = semearEstado(tabelas, {});
+  const cliente = new ClienteFalso(tabelas);
+
+  await assert.rejects(
+    () =>
+      aplicarDados(cliente, {
+        ...contexto(conversa.id),
+        alteracoes: { nome: { acao: 'informar', valor: true } } as never,
+      }),
+    EntradaInvalidaError
+  );
+});
+
+test('revisao6: valor array e rejeitado', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const conversa = semearEstado(tabelas, {});
+  const cliente = new ClienteFalso(tabelas);
+
+  await assert.rejects(
+    () =>
+      aplicarDados(cliente, {
+        ...contexto(conversa.id),
+        alteracoes: { nome: { acao: 'informar', valor: ['Joao'] } } as never,
+      }),
+    EntradaInvalidaError
+  );
+});
+
+test('revisao7: valor objeto e rejeitado', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const conversa = semearEstado(tabelas, {});
+  const cliente = new ClienteFalso(tabelas);
+
+  await assert.rejects(
+    () =>
+      aplicarDados(cliente, {
+        ...contexto(conversa.id),
+        alteracoes: { nome: { acao: 'informar', valor: { x: 1 } } } as never,
+      }),
+    EntradaInvalidaError
+  );
+});
+
+test('revisao8: objeto de alteracoes vazio nao executa UPDATE', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const conversa = semearEstado(tabelas, { nome: 'Joao' });
+  const cliente = new ClienteFalso(tabelas);
+  const timestampAntes = tabelas.estado_conversa[0].atualizado_em;
+
+  const resultado = await aplicarDados(cliente, { ...contexto(conversa.id), alteracoes: {} });
+
+  assert.deepEqual(resultado.dados, { nome: 'Joao' });
+  assert.deepEqual(resultado.campos_adicionados, []);
+  assert.deepEqual(resultado.campos_corrigidos, []);
+  assert.deepEqual(resultado.campos_removidos, []);
+  assert.deepEqual(resultado.campos_preservados, []);
+  assert.equal(cliente.estatisticas.chamadasUpdate['estado_conversa'] ?? 0, 0);
+  assert.equal(tabelas.estado_conversa[0].atualizado_em, timestampAntes, 'atualizado_em nao deve mudar');
+});
+
+test('revisao9: operacao totalmente idempotente nao executa UPDATE', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const conversa = semearEstado(tabelas, { nome: 'Joao' });
+  const cliente = new ClienteFalso(tabelas);
+  const timestampAntes = tabelas.estado_conversa[0].atualizado_em;
+
+  const resultado = await aplicarDados(cliente, {
+    ...contexto(conversa.id),
+    alteracoes: {
+      nome: { acao: 'informar', valor: 'Joao' }, // mesmo valor: idempotente
+      cpf: { acao: 'remover' }, // campo inexistente: no-op
+    },
+  });
+
+  assert.deepEqual(resultado.dados, { nome: 'Joao' });
+  assert.equal(cliente.estatisticas.chamadasUpdate['estado_conversa'] ?? 0, 0);
+  assert.equal(tabelas.estado_conversa[0].atualizado_em, timestampAntes);
+});
+
+test('revisao10: remocao de campo inexistente entra em campos_preservados', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const conversa = semearEstado(tabelas, { nome: 'Joao' });
+  const cliente = new ClienteFalso(tabelas);
+
+  const resultado = await aplicarDados(cliente, {
+    ...contexto(conversa.id),
+    alteracoes: { cpf: { acao: 'remover' } },
+  });
+
+  assert.deepEqual(resultado.campos_preservados, ['cpf']);
+  assert.deepEqual(resultado.campos_removidos, [], 'nunca informar remocao de algo que nao existia');
+});
+
+test('revisao11: duas chamadas concorrentes acrescentando campos diferentes preservam ambos', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const conversa = semearEstado(tabelas, {});
+  const cliente = new ClienteFalso(tabelas);
+
+  const [resultadoA, resultadoB] = await Promise.all([
+    aplicarDados(cliente, { ...contexto(conversa.id), alteracoes: { nome: { acao: 'informar', valor: 'Joao' } } }),
+    aplicarDados(cliente, {
+      ...contexto(conversa.id),
+      alteracoes: { procedimento_texto: { acao: 'informar', valor: 'limpeza' } },
+    }),
+  ]);
+
+  assert.equal(resultadoA.conversa_id, conversa.id);
+  assert.equal(resultadoB.conversa_id, conversa.id);
+  assert.deepEqual(tabelas.estado_conversa[0].dados, { nome: 'Joao', procedimento_texto: 'limpeza' });
+});
+
+test('revisao12: concorrencia no mesmo campo nao causa substituicao silenciosa', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const conversa = semearEstado(tabelas, {});
+  const cliente = new ClienteFalso(tabelas);
+
+  await Promise.all([
+    aplicarDados(cliente, { ...contexto(conversa.id), alteracoes: { nome: { acao: 'informar', valor: 'Joao' } } }),
+    aplicarDados(cliente, { ...contexto(conversa.id), alteracoes: { nome: { acao: 'informar', valor: 'Maria' } } }),
+  ]);
+
+  const nomeFinal = tabelas.estado_conversa[0].dados.nome;
+  assert.ok(nomeFinal === 'Joao' || nomeFinal === 'Maria', 'deve ficar com um dos dois, nunca corrompido/mesclado');
+});
+
+test('revisao13: conflito de versao provoca releitura e nova tentativa', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const conversa = semearEstado(tabelas, {});
+  const { cliente, tentativasDeUpdate } = clienteComConflitoNasPrimeirasNAtualizacoes(tabelas, 1);
+
+  const resultado = await aplicarDados(cliente, {
+    ...contexto(conversa.id),
+    alteracoes: { nome: { acao: 'informar', valor: 'Joao' } },
+  });
+
+  assert.equal(resultado.dados.nome, 'Joao');
+  assert.equal(tentativasDeUpdate(), 2, 'a primeira tentativa deve falhar por conflito e a segunda ter sucesso');
+});
+
+test('revisao14: excesso de conflitos gera erro controlado', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const conversa = semearEstado(tabelas, {});
+  const { cliente, tentativasDeUpdate } = clienteComConflitoNasPrimeirasNAtualizacoes(tabelas, 999);
+
+  await assert.rejects(
+    () =>
+      aplicarDados(cliente, {
+        ...contexto(conversa.id),
+        alteracoes: { nome: { acao: 'informar', valor: 'Joao' } },
+      }),
+    ConflitoConcorrenteError
+  );
+  assert.equal(tentativasDeUpdate(), 5, 'deve respeitar o limite explicito de tentativas');
 });

@@ -30,3 +30,13 @@ export class ConversaNaoEncontradaError extends Error {
     this.name = 'ConversaNaoEncontradaError';
   }
 }
+
+export class ConflitoConcorrenteError extends Error {
+  tentativas: number;
+
+  constructor(tentativas: number) {
+    super(`nao foi possivel aplicar as alteracoes apos ${tentativas} tentativas por conflito de concorrencia`);
+    this.name = 'ConflitoConcorrenteError';
+    this.tentativas = tentativas;
+  }
+}

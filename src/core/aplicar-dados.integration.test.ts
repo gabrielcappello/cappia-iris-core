@@ -123,3 +123,76 @@ test(
     }
   }
 );
+
+test(
+  'integracao: duas chamadas simultaneas informando campos diferentes preservam ambos, e chamada vazia nao muda atualizado_em',
+  { skip: !CREDENCIAL_DISPONIVEL },
+  async () => {
+    const supabase = createClient(URL as string, SERVICE_ROLE_KEY as string);
+    const { clinicaId, conversaId, telefone } = await criarClinicaEEstadoSinteticos(supabase);
+
+    try {
+      const contexto = { conversa_id: conversaId, clinica_id: clinicaId, telefone_normalizado: telefone };
+
+      // 2) duas chamadas simultaneas, uma informando nome, outra procedimento_texto
+      const [resultadoA, resultadoB] = await Promise.all([
+        aplicarDados(supabase as unknown as ClienteBancoDados, {
+          ...contexto,
+          alteracoes: { nome: { acao: 'informar', valor: 'Joao da Silva' } },
+        }),
+        aplicarDados(supabase as unknown as ClienteBancoDados, {
+          ...contexto,
+          alteracoes: { procedimento_texto: { acao: 'informar', valor: 'limpeza dental' } },
+        }),
+      ]);
+      assert.equal(resultadoA.conversa_id, conversaId);
+      assert.equal(resultadoB.conversa_id, conversaId);
+
+      // 3-4) consultar a linha final e confirmar que os dois campos existem
+      const { data: linhas, error: erroLinhas } = await supabase
+        .from('estado_conversa')
+        .select('id, dados, estado, paciente_id, atualizado_em')
+        .eq('clinica_id', clinicaId)
+        .eq('telefone_normalizado', telefone);
+      if (erroLinhas) throw erroLinhas;
+      assert.deepEqual(linhas?.[0]?.dados, { nome: 'Joao da Silva', procedimento_texto: 'limpeza dental' });
+
+      // 5) confirmar que ha somente uma conversa
+      assert.equal(linhas?.length, 1);
+
+      // 6) confirmar que estado e paciente_id continuam inalterados
+      assert.equal(linhas?.[0]?.estado, 'atendimento');
+      assert.equal(linhas?.[0]?.paciente_id, null);
+
+      // 7) remocao de campo inexistente
+      const remocao = await aplicarDados(supabase as unknown as ClienteBancoDados, {
+        ...contexto,
+        alteracoes: { cpf: { acao: 'remover' } },
+      });
+      assert.deepEqual(remocao.campos_preservados, ['cpf']);
+      assert.deepEqual(remocao.campos_removidos, []);
+
+      // 8) confirmar que atualizado_em nao muda em chamada vazia
+      const { data: linhaAntes, error: erroAntes } = await supabase
+        .from('estado_conversa')
+        .select('atualizado_em')
+        .eq('id', conversaId)
+        .single();
+      if (erroAntes) throw erroAntes;
+      const timestampAntes = linhaAntes.atualizado_em;
+
+      await aplicarDados(supabase as unknown as ClienteBancoDados, { ...contexto, alteracoes: {} });
+
+      const { data: linhaDepois, error: erroDepois } = await supabase
+        .from('estado_conversa')
+        .select('atualizado_em')
+        .eq('id', conversaId)
+        .single();
+      if (erroDepois) throw erroDepois;
+      assert.equal(linhaDepois.atualizado_em, timestampAntes, 'atualizado_em nao deve mudar em chamada sem efeito real');
+    } finally {
+      // 9) limpar todos os dados sinteticos
+      await limpar(supabase, clinicaId);
+    }
+  }
+);
