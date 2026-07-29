@@ -23,3 +23,10 @@ export class ClinicaNaoEncontradaError extends Error {
     this.instanciaWhatsapp = instanciaWhatsapp;
   }
 }
+
+export class ConversaNaoEncontradaError extends Error {
+  constructor() {
+    super('estado_conversa nao encontrado para conversa_id + clinica_id + telefone_normalizado informados');
+    this.name = 'ConversaNaoEncontradaError';
+  }
+}

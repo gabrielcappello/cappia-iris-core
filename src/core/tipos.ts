@@ -50,3 +50,45 @@ export interface ClienteBancoDados {
     update(valores: Record<string, unknown>): ConsultaEncadeavel;
   };
 }
+
+// Campos de dados interpretados aceitos nesta etapa (aproveitamento
+// estruturado). Qualquer chave fora desta lista e rejeitada.
+export type CampoDadosConversa =
+  | 'intencao'
+  | 'procedimento_texto'
+  | 'dentista_texto'
+  | 'data_texto'
+  | 'periodo'
+  | 'horario_texto'
+  | 'nome'
+  | 'cpf'
+  | 'data_nascimento'
+  | 'email';
+
+export type AcaoAlteracaoDados = 'informar' | 'corrigir' | 'remover';
+
+// `acao` e `valor` sao tipados como string livre (nao a uniao estrita) de
+// proposito: a entrada e produzida externamente (futuramente pela IA) e
+// precisa ser validada em tempo de execucao, nao apenas confiada ao tipo.
+export interface AlteracaoDeCampo {
+  acao: string;
+  valor?: string;
+}
+
+export type AlteracoesDados = Record<string, AlteracaoDeCampo>;
+
+export interface AplicarDadosInput {
+  conversa_id: string;
+  clinica_id: string;
+  telefone_normalizado: string;
+  alteracoes: AlteracoesDados;
+}
+
+export interface ResultadoAplicarDados {
+  conversa_id: string;
+  dados: Record<string, unknown>;
+  campos_adicionados: string[];
+  campos_corrigidos: string[];
+  campos_removidos: string[];
+  campos_preservados: string[];
+}
