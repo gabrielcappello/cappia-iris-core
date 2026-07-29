@@ -267,3 +267,34 @@ test('correcao4c: divergencia durante a execucao gera conflito, remove o campo d
   // 8) nenhum valor escolhido/perdido silenciosamente: o banco continua com sabado
   assert.equal(tabelas.estado_conversa[0].dados.data_texto, 'sabado');
 });
+
+// --- Correcao (revisao sobre 7123493): validarDadosAtuais nao pode vazar
+// a chave bruta do snapshot oficial (nome/campo.desconhecido) ---
+
+test('correcao_dados_atuais: chave desconhecida no snapshot oficial com PII no proprio nome e rejeitada antes do modelo, sem vazar no erro', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const chavePerigosa = 'nome_Maria_Silva_cpf_12345678900_email_maria.silva@example.com';
+  const conversa = semearEstado(tabelas, { [chavePerigosa]: 'x' });
+  const clienteBanco = new ClienteFalso(tabelas);
+  const clienteModelo = new ClienteModeloNuncaDeveSerChamado();
+
+  let erroCapturado: unknown;
+  try {
+    await interpretarEAplicar(clienteModelo, clienteBanco, contexto(conversa.id, ['oi']));
+  } catch (erro) {
+    erroCapturado = erro;
+  }
+
+  assert.ok(erroCapturado instanceof EntradaInvalidaError);
+  const erroTipado = erroCapturado as EntradaInvalidaError;
+  assert.equal(erroTipado.campo, 'campo_desconhecido', 'erro.campo deve usar identificador generico fixo');
+
+  const representacao = JSON.stringify(erroTipado) + erroTipado.message + erroTipado.campo;
+  assert.ok(!representacao.includes(chavePerigosa), 'a chave completa nao pode aparecer no erro');
+  assert.ok(!representacao.includes('Maria_Silva'), 'nome embutido na chave nao pode aparecer');
+  assert.ok(!representacao.includes('12345678900'), 'cpf embutido na chave nao pode aparecer');
+  assert.ok(!representacao.includes('maria.silva@example.com'), 'e-mail embutido na chave nao pode aparecer');
+
+  // nenhuma atualizacao ocorre (a rejeicao acontece antes de qualquer chamada ao modelo/UPDATE)
+  assert.equal(clienteBanco.estatisticas.chamadasUpdate['estado_conversa'] ?? 0, 0);
+});

@@ -83,8 +83,11 @@ export function validarDadosAtuais(dadosAtuais: unknown): asserts dadosAtuais is
     throw new EntradaInvalidaError('dados_atuais', 'dados_atuais deve ser um objeto (nao nulo, nao array)');
   }
   for (const [campo, valor] of Object.entries(dadosAtuais as Record<string, unknown>)) {
+    // A chave bruta nunca deve aparecer aqui: este validator tambem roda
+    // sobre o snapshot oficial do banco, entao uma chave desconhecida
+    // poderia conter PII no proprio nome. Identificador generico fixo.
     if (!CAMPOS_PERMITIDOS.includes(campo as CampoDadosConversa)) {
-      throw new EntradaInvalidaError(campo, `campo '${campo}' nao e permitido em dados_atuais`);
+      throw new EntradaInvalidaError('campo_desconhecido', 'dados_atuais contem campo nao permitido');
     }
     if (typeof valor !== 'string' || valor.trim() === '') {
       throw new EntradaInvalidaError(campo, `valor de '${campo}' deve ser uma string nao vazia`);
