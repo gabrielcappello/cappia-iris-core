@@ -27,6 +27,9 @@
 - **A clínica é determinada pela instância autenticada do WhatsApp** (não por dado
   enviado pelo paciente).
 - **O paciente é identificado pelo telefone dentro da clínica.**
+- **Se não existir paciente para a combinação clínica + telefone, tratá-lo como paciente
+  novo.** Os dados necessários ao cadastro serão solicitados **somente depois de existir
+  horário disponível escolhido** — nunca antes disso.
 - **O número cadastrado é suficiente** para consultar, remarcar, cancelar e alterar os
   próprios dados — sem exigir identificação adicional para essas ações.
 - **Dados informados podem chegar em qualquer ordem** e devem ser **preservados**.
