@@ -186,9 +186,15 @@ const CENARIOS: readonly CenarioSemantico[] = [
       { campo: 'procedimento_texto', acao: 'informar', valor: 'limpeza' },
       { campo: 'data_texto', acao: 'informar', valor: 'sexta' },
       { campo: 'periodo', acao: 'informar', valor: 'tarde' },
+      { campo: 'intencao', acao: 'informar', valor: 'novo_agendamento' },
     ],
+    // Expectativa corrigida apos o 1o lote real (base 74860b2): a mensagem
+    // tambem expressa intencao explicita de novo agendamento. A reprovacao
+    // original desse cenario foi por expectativa incompleta, nao por falha
+    // comprovada do modelo -- registrado aqui, nao tratado como resultado
+    // definitivo.
     origem:
-      'CAMPOS_PERMITIDOS (procedimento_texto/data_texto/periodo) + INSTRUCOES_EXTRATOR ("datas e horarios sempre preservados como texto"; periodo aceita manha/tarde/noite) -- composicao de campos individualmente aprovados, nenhuma regra nova',
+      'CAMPOS_PERMITIDOS (procedimento_texto/data_texto/periodo/intencao) + INSTRUCOES_EXTRATOR ("datas e horarios sempre preservados como texto"; periodo aceita manha/tarde/noite; intencao aceita novo_agendamento) -- composicao de campos individualmente aprovados, nenhuma regra nova',
   },
   {
     id: 'multiplos_procedimentos_coexistentes',
@@ -600,6 +606,13 @@ async function rodarExecucaoReal(ids: string[]): Promise<void> {
     }
 
     const recebido = (objeto as { alteracoes: ItemAlteracaoPortatil[] }).alteracoes;
+
+    // Impresso antes da comparacao semantica, aprovado ou reprovado: os
+    // cenarios sao exclusivamente sinteticos, entao exibir o objeto
+    // estruturado recebido e seguro e permite conferir acoes/valores mesmo
+    // quando a reprovacao e so por conjunto de campos.
+    console.log(`[${numero}/${MAX_CASOS_POR_EXECUCAO}] ${cenario.id}: objeto recebido: ${JSON.stringify(objeto)}`);
+
     const { aprovado, motivo } = compararComEsperado(recebido, cenario.resultado_esperado);
     console.log(
       `[${numero}/${MAX_CASOS_POR_EXECUCAO}] ${cenario.id}: ${aprovado ? 'APROVADO' : 'REPROVADO'} -- ${motivo} (duracao ${duracaoMs}ms, tokens entrada/saida: ${uso.input_tokens ?? '?'}/${uso.output_tokens ?? '?'})`
