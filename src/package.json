@@ -1,0 +1,12 @@
+{
+  "name": "cappia-iris-core",
+  "private": true,
+  "type": "module",
+  "description": "Core deterministico da Iris Nova (TypeScript). Todo o codigo do repositorio cappia-iris-core vive aqui dentro.",
+  "scripts": {
+    "test": "node --test core/**/*.test.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0"
+  }
+}
