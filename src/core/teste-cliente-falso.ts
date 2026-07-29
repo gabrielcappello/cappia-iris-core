@@ -1,8 +1,9 @@
 // Dublê de ClienteBancoDados para testes de unidade — nunca acessa rede ou
 // banco real. Implementa apenas o subconjunto de comportamento usado por
-// identificacao.ts: select/eq/maybeSingle e upsert com onConflict +
-// ignoreDuplicates, reproduzindo a semantica do PostgREST (0 linhas
-// retornadas quando ignoreDuplicates encontra conflito).
+// identificacao.ts: select/eq/is/maybeSingle, upsert com onConflict +
+// ignoreDuplicates, e update com filtro (incluindo IS NULL), reproduzindo a
+// semantica do PostgREST (0 linhas afetadas quando o WHERE nao casa mais
+// nenhuma linha).
 import type { ClienteBancoDados, ConsultaEncadeavel } from './tipos.ts';
 
 export interface TabelasFalsas {
@@ -39,6 +40,10 @@ class ConsultaFalsa implements ConsultaEncadeavel {
     );
   }
 
+  is(coluna: string, valor: null): ConsultaEncadeavel {
+    return this.eq(coluna, valor);
+  }
+
   select(_colunas: string): ConsultaEncadeavel {
     return this;
   }
@@ -56,8 +61,50 @@ class ConsultaFalsa implements ConsultaEncadeavel {
   }
 }
 
+type Filtro = { coluna: string; valor: unknown };
+
+class AtualizacaoFalsa implements ConsultaEncadeavel {
+  private readonly linhas: Record<string, unknown>[];
+  private readonly valores: Record<string, unknown>;
+  private readonly filtros: Filtro[];
+
+  constructor(linhas: Record<string, unknown>[], valores: Record<string, unknown>, filtros: Filtro[]) {
+    this.linhas = linhas;
+    this.valores = valores;
+    this.filtros = filtros;
+  }
+
+  eq(coluna: string, valor: unknown): ConsultaEncadeavel {
+    return new AtualizacaoFalsa(this.linhas, this.valores, [...this.filtros, { coluna, valor }]);
+  }
+
+  is(coluna: string, valor: null): ConsultaEncadeavel {
+    return this.eq(coluna, valor);
+  }
+
+  select(_colunas: string): ConsultaEncadeavel {
+    return this;
+  }
+
+  async maybeSingle(): Promise<{ data: Record<string, unknown> | null; error: { message: string } | null }> {
+    // yield explicito, igual ConsultaFalsa — mas a checagem do WHERE e a
+    // mutacao abaixo acontecem em um unico trecho sincrono apos o yield,
+    // reproduzindo a atomicidade de um UPDATE real: nenhuma outra chamada
+    // "concorrente" consegue intercalar entre o find e o Object.assign.
+    await Promise.resolve();
+    const alvo = this.linhas.find((linha) => this.filtros.every((f) => linha[f.coluna] === f.valor));
+    if (!alvo) return { data: null, error: null };
+    Object.assign(alvo, this.valores);
+    return { data: alvo, error: null };
+  }
+}
+
 export class ClienteFalso implements ClienteBancoDados {
   private readonly tabelas: TabelasFalsas;
+  // instrumentacao para testes: numero de vezes que .update() foi chamado,
+  // por tabela — usada para provar que um vinculo ja existente nunca
+  // dispara uma tentativa de atualizacao.
+  readonly estatisticas: { chamadasUpdate: Record<string, number> } = { chamadasUpdate: {} };
 
   constructor(tabelas: TabelasFalsas) {
     this.tabelas = tabelas;
@@ -85,6 +132,10 @@ export class ClienteFalso implements ClienteBancoDados {
         const nova = { id: crypto.randomUUID(), ...valores };
         linhas.push(nova);
         return new ConsultaFalsa(linhas, [nova], null);
+      },
+      update: (valores: Record<string, unknown>): ConsultaEncadeavel => {
+        this.estatisticas.chamadasUpdate[nome] = (this.estatisticas.chamadasUpdate[nome] ?? 0) + 1;
+        return new AtualizacaoFalsa(linhas, valores, []);
       },
     };
   }

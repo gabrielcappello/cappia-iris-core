@@ -6,7 +6,16 @@ export interface IdentificarConversaInput {
   telefone_normalizado: string;
 }
 
-export type EstadoConversa = 'atendimento';
+// Os seis estados aprovados em specs/novo-agendamento.md (secao 19) e
+// verificados pelo check estado_conversa_estado_valido em
+// 20260729_iris_nova_identificacao_v1.sql.
+export type EstadoConversa =
+  | 'atendimento'
+  | 'aguardando_escolha'
+  | 'coletando_cadastro'
+  | 'aguardando_confirmacao'
+  | 'executando'
+  | 'concluido';
 
 export interface ResultadoIdentificacao {
   clinica_id: string;
@@ -26,6 +35,7 @@ export interface ResultadoIdentificacao {
 // SupabaseClient real (@supabase/supabase-js) quanto um dublê de teste.
 export interface ConsultaEncadeavel<T = Record<string, unknown>> {
   eq(coluna: string, valor: unknown): ConsultaEncadeavel<T>;
+  is(coluna: string, valor: null): ConsultaEncadeavel<T>;
   select(colunas: string): ConsultaEncadeavel<T>;
   maybeSingle(): Promise<{ data: T | null; error: { message: string } | null }>;
 }
@@ -37,5 +47,6 @@ export interface ClienteBancoDados {
       valores: Record<string, unknown>,
       opcoes: { onConflict: string; ignoreDuplicates: boolean }
     ): ConsultaEncadeavel;
+    update(valores: Record<string, unknown>): ConsultaEncadeavel;
   };
 }

@@ -25,6 +25,25 @@ function semearClinica(tabelas: TabelasFalsas, instanciaWhatsapp: string) {
   return clinica;
 }
 
+function semearEstadoConversa(
+  tabelas: TabelasFalsas,
+  clinicaId: string,
+  telefoneNormalizado: string,
+  estado: string,
+  pacienteId: string | null
+) {
+  const conversa = {
+    id: crypto.randomUUID(),
+    clinica_id: clinicaId,
+    telefone_normalizado: telefoneNormalizado,
+    estado,
+    dados: {},
+    paciente_id: pacienteId,
+  };
+  tabelas.estado_conversa.push(conversa);
+  return conversa;
+}
+
 function semearPaciente(tabelas: TabelasFalsas, clinicaId: string, telefoneNormalizado: string) {
   const paciente = { id: crypto.randomUUID(), clinica_id: clinicaId, telefone_normalizado: telefoneNormalizado };
   tabelas.pacientes.push(paciente);
@@ -194,4 +213,95 @@ test('teste10: paciente novo permanece com paciente_id nulo', async () => {
   });
 
   assert.equal(tabelas.estado_conversa[0].paciente_id, null);
+});
+
+const ESTADOS_APROVADOS = [
+  'atendimento',
+  'aguardando_escolha',
+  'coletando_cadastro',
+  'aguardando_confirmacao',
+  'executando',
+  'concluido',
+] as const;
+
+for (const estado of ESTADOS_APROVADOS) {
+  test(`teste-estados: estado existente '${estado}' e devolvido como o valor real (sem forcar atendimento)`, async () => {
+    const tabelas = criarTabelasFalsasVazias();
+    const clinica = semearClinica(tabelas, INSTANCIA_A);
+    semearEstadoConversa(tabelas, clinica.id, TELEFONE_VALIDO, estado, null);
+    const cliente = new ClienteFalso(tabelas);
+
+    const resultado = await identificarConversa(cliente, {
+      provider: PROVIDER,
+      instancia_whatsapp: INSTANCIA_A,
+      telefone_normalizado: TELEFONE_VALIDO,
+    });
+
+    assert.equal(resultado.conversa.estado, estado);
+    assert.equal(tabelas.estado_conversa.length, 1, 'nenhum estado novo deve ser criado quando ja existe um');
+  });
+}
+
+test('teste-vinculo1: estado existente com paciente_id nulo e vinculado quando o paciente passa a existir', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const clinica = semearClinica(tabelas, INSTANCIA_A);
+  const conversa = semearEstadoConversa(tabelas, clinica.id, TELEFONE_VALIDO, 'aguardando_escolha', null);
+  // paciente passa a existir DEPOIS que a conversa ja estava em andamento
+  const paciente = semearPaciente(tabelas, clinica.id, TELEFONE_VALIDO);
+  const cliente = new ClienteFalso(tabelas);
+
+  const resultado = await identificarConversa(cliente, {
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA_A,
+    telefone_normalizado: TELEFONE_VALIDO,
+  });
+
+  assert.equal(resultado.paciente.encontrado, true);
+  assert.equal(resultado.paciente.id, paciente.id);
+  assert.equal(resultado.conversa.id, conversa.id, 'deve ser o mesmo estado, nao um novo');
+  assert.equal(resultado.conversa.estado, 'aguardando_escolha', 'o estado nao deve ser alterado pelo vinculo');
+  assert.equal(tabelas.estado_conversa.length, 1);
+  assert.equal(tabelas.estado_conversa[0].paciente_id, paciente.id);
+});
+
+test('teste-vinculo2: estado com paciente_id ja preenchido nao e sobrescrito', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const clinica = semearClinica(tabelas, INSTANCIA_A);
+  const paciente = semearPaciente(tabelas, clinica.id, TELEFONE_VALIDO);
+  semearEstadoConversa(tabelas, clinica.id, TELEFONE_VALIDO, 'executando', paciente.id);
+  const cliente = new ClienteFalso(tabelas);
+
+  const resultado = await identificarConversa(cliente, {
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA_A,
+    telefone_normalizado: TELEFONE_VALIDO,
+  });
+
+  assert.equal(resultado.conversa.estado, 'executando');
+  assert.equal(tabelas.estado_conversa[0].paciente_id, paciente.id);
+  assert.equal(
+    cliente.estatisticas.chamadasUpdate['estado_conversa'] ?? 0,
+    0,
+    'nenhuma tentativa de atualizacao deve ocorrer quando o paciente_id ja esta preenchido'
+  );
+});
+
+test('teste-vinculo3: duas chamadas concorrentes com paciente encontrado nao causam vinculo inconsistente', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const clinica = semearClinica(tabelas, INSTANCIA_A);
+  const paciente = semearPaciente(tabelas, clinica.id, TELEFONE_VALIDO);
+  const conversa = semearEstadoConversa(tabelas, clinica.id, TELEFONE_VALIDO, 'coletando_cadastro', null);
+  const cliente = new ClienteFalso(tabelas);
+
+  const entrada = { provider: PROVIDER, instancia_whatsapp: INSTANCIA_A, telefone_normalizado: TELEFONE_VALIDO };
+  const [resultadoA, resultadoB] = await Promise.all([
+    identificarConversa(cliente, entrada),
+    identificarConversa(cliente, entrada),
+  ]);
+
+  assert.equal(resultadoA.conversa.id, conversa.id);
+  assert.equal(resultadoB.conversa.id, conversa.id);
+  assert.equal(tabelas.estado_conversa.length, 1, 'nao pode surgir um segundo estado');
+  assert.equal(tabelas.estado_conversa[0].paciente_id, paciente.id, 'o vinculo final deve ser consistente para as duas chamadas');
+  assert.equal(tabelas.estado_conversa[0].estado, 'coletando_cadastro', 'o estado nao deve ser alterado pelo vinculo');
 });
