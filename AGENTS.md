@@ -14,12 +14,16 @@ para histórico, não como fonte técnica deste repositório).
 
 ## Processo obrigatório (não pular etapas)
 
-1. **Gabriel define e aprova o comportamento** antes de qualquer especificação ser
-   considerada canônica.
+1. **Gabriel define e aprova a especificação** antes de qualquer coisa ser considerada
+   canônica.
 2. **Code (Claude) implementa depois da aprovação** — nunca antes.
 3. **Codex revisa arquitetura, segurança e aderência** à especificação aprovada.
-4. **Não implementar sem aprovação explícita**, etapa por etapa — ver
-   `docs/06-roadmap.md` para a ordem aprovada.
+4. **Gabriel aprova a entrega e autoriza integração/publicação.** A revisão do Codex, por
+   si só, não é autorização para integrar ou publicar — o ciclo só fecha com o Gabriel
+   aprovando o resultado depois da revisão.
+
+Isso vale etapa por etapa — ver `docs/06-roadmap.md` para a ordem aprovada. Não pular
+para a etapa seguinte sem essa aprovação final na etapa atual.
 
 ## Regras que não podem ser violadas por iniciativa própria
 

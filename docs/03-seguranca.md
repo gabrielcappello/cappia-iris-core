@@ -19,14 +19,19 @@
   que é onde boa parte dos problemas de segurança de sistemas com IA generativa tendem a
   aparecer (seleção incorreta de ferramenta, injeção de instrução via mensagem do
   usuário).
+- **Confirmação explícita antes de gravação** e **idempotência por ação** — aprovadas em
+  `06-roadmap.md` (passos 7 e 8 da primeira implementação, "Confirmação explícita" e
+  "Criação idempotente"). Válidas hoje para o fluxo de **novo agendamento**, que é o único
+  já detalhado; a extensão desse mesmo princípio para remarcação, cancelamento e
+  atualização cadastral precisa ser confirmada quando essas specs forem escritas — não
+  presumir estendida antes disso.
 
 ## Pendente de decisão (não implementar por suposição)
 
 Uma sessão anterior (28/07/2026, antes deste repositório existir) levantou uma lista mais
 ampla de práticas de segurança (isolamento por `clinica_id` em toda consulta, permissões
-mínimas por serviço, validação de toda saída do modelo, confirmação explícita antes de
-gravação, idempotência por ação, mascaramento de dados pessoais em log, auditoria de
-transições, proteção contra prompt injection) — baseada em documentação pública de OpenAI,
-Anthropic, OWASP e NIST. **Essa lista não foi formalmente aprovada como decisão canônica
-deste repositório.** Fica como pauta para uma aprovação específica antes da primeira
-implementação, não como decisão já valendo.
+mínimas por serviço, validação de toda saída do modelo, mascaramento de dados pessoais em
+log, auditoria de transições, proteção contra prompt injection) — baseada em documentação
+pública de OpenAI, Anthropic, OWASP e NIST. **Essa lista não foi formalmente aprovada como
+decisão canônica deste repositório.** Fica como pauta para uma aprovação específica antes
+da primeira implementação, não como decisão já valendo.
