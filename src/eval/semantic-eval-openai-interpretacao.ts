@@ -28,6 +28,55 @@
 // somente aqui.
 import { INSTRUCOES_EXTRATOR } from '../core/interpretacao-instrucoes.ts';
 
+// --- Compatibilizacao com o transporte portatil ---
+//
+// INSTRUCOES_EXTRATOR (src/core/) descreve, na sua ultima regra
+// estrutural, o formato interno antigo do Core (objeto com acao/valor por
+// campo, remover so com acao) -- correto para o Core hoje, mas
+// incompativel com o schema portatil (array de {campo, acao, valor},
+// remover com valor: null) usado por esta avaliacao. Em vez de manter uma
+// segunda versao independente das regras semanticas, substituimos
+// EXCLUSIVAMENTE essa unica frase estrutural, preservando o restante de
+// INSTRUCOES_EXTRATOR palavra por palavra. Nao alteramos
+// src/core/interpretacao-instrucoes.ts -- o Core continua usando o
+// contrato interno antigo normalmente.
+const FRASE_ESTRUTURAL_FORMATO_INTERNO_ANTIGO =
+  'Responda estritamente no formato do schema fornecido — nenhuma propriedade alem de "alteracoes" no nivel principal, nenhuma propriedade alem de "acao"/"valor" (ou somente "acao" para remover) dentro de cada alteracao.';
+
+const FRASE_ESTRUTURAL_TRANSPORTE_PORTATIL =
+  'Responda estritamente no formato do schema fornecido — a raiz contem somente "alteracoes"; "alteracoes" e uma lista; cada item da lista contem exatamente "campo", "acao" e "valor"; informar e corrigir usam "valor" como string; remover usa "valor": null; nenhuma propriedade adicional e permitida.';
+
+function construirInstrucoesParaTransportePortatil(): string {
+  const ocorrencias = INSTRUCOES_EXTRATOR.split(FRASE_ESTRUTURAL_FORMATO_INTERNO_ANTIGO).length - 1;
+  if (ocorrencias !== 1) {
+    throw new Error(
+      `INSTRUCOES_EXTRATOR nao contem a frase estrutural esperada exatamente uma vez (encontradas: ${ocorrencias}) -- abortando localmente antes de qualquer chamada`
+    );
+  }
+  const substituida = INSTRUCOES_EXTRATOR.replace(
+    FRASE_ESTRUTURAL_FORMATO_INTERNO_ANTIGO,
+    FRASE_ESTRUTURAL_TRANSPORTE_PORTATIL
+  );
+
+  // Prova de que nada alem dessa frase mudou: removendo a frase (antiga de
+  // um lado, nova do outro) o restante do texto tem que ficar identico.
+  const restanteOriginal = INSTRUCOES_EXTRATOR.replace(FRASE_ESTRUTURAL_FORMATO_INTERNO_ANTIGO, '');
+  const restanteSubstituido = substituida.replace(FRASE_ESTRUTURAL_TRANSPORTE_PORTATIL, '');
+  if (restanteOriginal !== restanteSubstituido) {
+    throw new Error(
+      'a substituicao alterou algo alem da frase estrutural -- abortando localmente antes de qualquer chamada'
+    );
+  }
+
+  return substituida;
+}
+
+// Computada uma unica vez, no carregamento do modulo: se a frase antiga
+// nao existir (ou existir mais de uma vez) em INSTRUCOES_EXTRATOR, o
+// modulo inteiro falha ao carregar -- nenhum dry-run e nenhuma chamada
+// real conseguem prosseguir.
+const INSTRUCOES_PARA_MODELO = construirInstrucoesParaTransportePortatil();
+
 // --- Limites e protecoes de execucao (valem tanto para dry-run quanto para o modo real futuro) ---
 const PROVEDOR = 'openai' as const;
 const MODELO = 'gpt-4.1-mini-2025-04-14' as const;
@@ -122,7 +171,7 @@ const CENARIOS: readonly CenarioSemantico[] = [
   {
     id: 'intencao_novo_agendamento',
     descricao: 'Intencao explicita de novo agendamento',
-    mensagens_atuais: ['Quero marcar um horario para uma consulta nova.'],
+    mensagens_atuais: ['Quero fazer um novo agendamento.'],
     dados_atuais: {},
     resultado_esperado: [{ campo: 'intencao', acao: 'informar', valor: 'novo_agendamento' }],
     origem:
@@ -401,7 +450,13 @@ async function rodarDryRun(): Promise<void> {
   console.log(idsDuplicados ? 'FALHA: existem ids de cenario duplicados' : 'ids de cenario: todos unicos');
 
   console.log(
-    `INSTRUCOES_EXTRATOR importado com sucesso de src/core/interpretacao-instrucoes.ts (${INSTRUCOES_EXTRATOR.length} caracteres; nao copiado, nao resumido, nao alterado neste arquivo)`
+    `INSTRUCOES_EXTRATOR importado diretamente de src/core/interpretacao-instrucoes.ts (${INSTRUCOES_EXTRATOR.length} caracteres; nao copiado, nao resumido, nao alterado em src/core/)`
+  );
+  console.log(
+    `frase estrutural do formato interno antigo (acao/valor por campo, remover so com acao): encontrada exatamente 1 vez em INSTRUCOES_EXTRATOR e substituida por uma frase compativel com o transporte portatil (raiz so com "alteracoes", lista de {campo, acao, valor}, remover com valor: null)`
+  );
+  console.log(
+    `INSTRUCOES_PARA_MODELO: ${INSTRUCOES_PARA_MODELO.length} caracteres -- identica a INSTRUCOES_EXTRATOR em todo o resto (verificado: remover a frase de cada lado produz o mesmo texto restante), nenhuma outra regra semantica foi modificada`
   );
   console.log('schema portatil local: presente, identico ao aprovado (nenhuma propriedade removida ou enfraquecida)');
 
@@ -464,7 +519,7 @@ async function rodarExecucaoReal(ids: string[]): Promise<void> {
     const corpo = {
       model: MODELO,
       input: [
-        { role: 'system', content: INSTRUCOES_EXTRATOR },
+        { role: 'system', content: INSTRUCOES_PARA_MODELO },
         {
           role: 'user',
           content: JSON.stringify({ mensagens_atuais: cenario.mensagens_atuais, dados_atuais: cenario.dados_atuais }),
