@@ -9,7 +9,9 @@ import type {
   ResultadoAplicarDados,
 } from './tipos.ts';
 
-const CAMPOS_PERMITIDOS: readonly CampoDadosConversa[] = [
+// Exportados para reuso em outros modulos (ex.: validacao da interpretacao
+// por IA) sem duplicar as listas/regex canonicas.
+export const CAMPOS_PERMITIDOS: readonly CampoDadosConversa[] = [
   'intencao',
   'procedimento_texto',
   'dentista_texto',
@@ -22,9 +24,9 @@ const CAMPOS_PERMITIDOS: readonly CampoDadosConversa[] = [
   'email',
 ];
 
-const ACOES_PERMITIDAS: readonly AcaoAlteracaoDados[] = ['informar', 'corrigir', 'remover'];
-const PERIODOS_PERMITIDOS = ['manha', 'tarde', 'noite'];
-const INTENCOES_PERMITIDAS = ['novo_agendamento'];
+export const ACOES_PERMITIDAS: readonly AcaoAlteracaoDados[] = ['informar', 'corrigir', 'remover'];
+export const PERIODOS_PERMITIDOS = ['manha', 'tarde', 'noite'];
+export const INTENCOES_PERMITIDAS = ['novo_agendamento'];
 const MAX_TENTATIVAS = 5;
 
 interface LinhaEstadoConversa {

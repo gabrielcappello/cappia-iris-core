@@ -40,3 +40,19 @@ export class ConflitoConcorrenteError extends Error {
     this.tentativas = tentativas;
   }
 }
+
+// Erro controlado para saida de interpretacao (IA) invalida. `codigo` e
+// `caminho` sao construidos SOMENTE a partir de nomes de campo/indices
+// fixos, nunca de valores — nunca incluir mensagem do paciente, CPF, nome,
+// e-mail, nascimento, conteudo bruto do modelo ou valores acumulados.
+export class InterpretacaoInvalidaError extends Error {
+  codigo: string;
+  caminho: string;
+
+  constructor(codigo: string, caminho: string) {
+    super(`interpretacao invalida: ${codigo} em ${caminho}`);
+    this.name = 'InterpretacaoInvalidaError';
+    this.codigo = codigo;
+    this.caminho = caminho;
+  }
+}
