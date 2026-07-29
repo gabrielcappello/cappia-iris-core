@@ -1,4 +1,5 @@
 import { ConflitoConcorrenteError, ConversaNaoEncontradaError, EntradaInvalidaError } from './erros.ts';
+import { telefoneNormalizadoValido } from './telefone.ts';
 import type {
   AcaoAlteracaoDados,
   AlteracoesDados,
@@ -200,15 +201,45 @@ function proximoTimestamp(anteriorIso: string): string {
   return new Date(novoMs).toISOString();
 }
 
+const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+// `entrada` e tratada como `unknown` nos campos abaixo de proposito: sao
+// identificadores que virao do contexto ja identificado pelo Core, mas o
+// tipo estatico nao protege contra valores realmente invalidos em tempo de
+// execucao (numero, boolean, objeto, array, null, undefined) — por isso a
+// checagem de `typeof` sempre vem antes de qualquer `.trim()`.
 function validarContexto(entrada: AplicarDadosInput): void {
-  if (!entrada.conversa_id || entrada.conversa_id.trim() === '') {
-    throw new EntradaInvalidaError('conversa_id', 'conversa_id e obrigatorio');
+  validarIdentificadorUuid('conversa_id', entrada.conversa_id as unknown);
+  validarIdentificadorUuid('clinica_id', entrada.clinica_id as unknown);
+  validarTelefoneDoContexto(entrada.telefone_normalizado as unknown);
+}
+
+function validarIdentificadorUuid(campo: string, valor: unknown): void {
+  if (typeof valor !== 'string') {
+    throw new EntradaInvalidaError(campo, `${campo} deve ser uma string`);
   }
-  if (!entrada.clinica_id || entrada.clinica_id.trim() === '') {
-    throw new EntradaInvalidaError('clinica_id', 'clinica_id e obrigatorio');
+  if (valor.trim() === '') {
+    throw new EntradaInvalidaError(campo, `${campo} nao pode ser vazio`);
   }
-  if (!entrada.telefone_normalizado || entrada.telefone_normalizado.trim() === '') {
-    throw new EntradaInvalidaError('telefone_normalizado', 'telefone_normalizado e obrigatorio');
+  if (!UUID_REGEX.test(valor)) {
+    throw new EntradaInvalidaError(campo, `${campo} deve estar no formato UUID valido`);
+  }
+}
+
+function validarTelefoneDoContexto(valor: unknown): void {
+  if (typeof valor !== 'string') {
+    throw new EntradaInvalidaError('telefone_normalizado', 'telefone_normalizado deve ser uma string');
+  }
+  if (valor.trim() === '') {
+    throw new EntradaInvalidaError('telefone_normalizado', 'telefone_normalizado nao pode ser vazio');
+  }
+  // reutiliza a mesma regra canonica do modulo de identificacao — nunca
+  // duplicar o regex do formato brasileiro de telefone.
+  if (!telefoneNormalizadoValido(valor)) {
+    throw new EntradaInvalidaError(
+      'telefone_normalizado',
+      'telefone_normalizado fora do formato brasileiro canonico (55 + 10 ou 11 digitos)'
+    );
   }
 }
 

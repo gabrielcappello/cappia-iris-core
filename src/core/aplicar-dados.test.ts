@@ -511,3 +511,124 @@ test('revisao14: excesso de conflitos gera erro controlado', async () => {
   );
   assert.equal(tentativasDeUpdate(), 5, 'deve respeitar o limite explicito de tentativas');
 });
+
+// --- Segunda correcao da revisao do Codex sobre 639b54b: validacao runtime dos identificadores ---
+
+const UUID_VALIDO_EXEMPLO = '123e4567-e89b-12d3-a456-426614174000';
+
+async function esperarRejeicaoSemAcessoAoBanco(
+  tabelas: TabelasFalsas,
+  cliente: ClienteFalso,
+  entrada: unknown
+): Promise<void> {
+  const dadosAntes = JSON.parse(JSON.stringify(tabelas.estado_conversa));
+  await assert.rejects(() => aplicarDados(cliente, entrada as never), EntradaInvalidaError);
+  assert.equal(cliente.estatisticas.chamadasSelect['estado_conversa'] ?? 0, 0, 'nenhuma leitura deve ocorrer');
+  assert.equal(cliente.estatisticas.chamadasUpdate['estado_conversa'] ?? 0, 0, 'nenhuma escrita deve ocorrer');
+  assert.deepEqual(tabelas.estado_conversa, dadosAntes, 'nada deve ser persistido');
+}
+
+const VALORES_INVALIDOS_GENERICOS: Array<{ nome: string; valor: unknown }> = [
+  { nome: 'ausente (undefined)', valor: undefined },
+  { nome: 'null', valor: null },
+  { nome: 'numero', valor: 42 },
+  { nome: 'boolean', valor: true },
+  { nome: 'objeto', valor: { x: 1 } },
+  { nome: 'array', valor: ['a'] },
+  { nome: 'string vazia', valor: '   ' },
+];
+
+for (const campo of ['conversa_id', 'clinica_id', 'telefone_normalizado'] as const) {
+  for (const caso of VALORES_INVALIDOS_GENERICOS) {
+    test(`revisao15: ${campo} ${caso.nome} e rejeitado com EntradaInvalidaError, sem TypeError e sem acesso ao banco`, async () => {
+      const tabelas = criarTabelasFalsasVazias();
+      const conversa = semearEstado(tabelas, {});
+      const cliente = new ClienteFalso(tabelas);
+
+      const entrada = {
+        ...contexto(conversa.id),
+        alteracoes: { nome: { acao: 'informar', valor: 'Joao' } },
+        [campo]: caso.valor,
+      };
+
+      await esperarRejeicaoSemAcessoAoBanco(tabelas, cliente, entrada);
+    });
+  }
+}
+
+test('revisao16: UUID invalido para conversa_id e rejeitado', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const conversa = semearEstado(tabelas, {});
+  const cliente = new ClienteFalso(tabelas);
+
+  const entrada = {
+    ...contexto(conversa.id),
+    conversa_id: 'nao-e-um-uuid',
+    alteracoes: { nome: { acao: 'informar', valor: 'Joao' } },
+  };
+
+  await esperarRejeicaoSemAcessoAoBanco(tabelas, cliente, entrada);
+});
+
+test('revisao17: UUID invalido para clinica_id e rejeitado', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const conversa = semearEstado(tabelas, {});
+  const cliente = new ClienteFalso(tabelas);
+
+  const entrada = {
+    ...contexto(conversa.id),
+    clinica_id: 'nao-e-um-uuid',
+    alteracoes: { nome: { acao: 'informar', valor: 'Joao' } },
+  };
+
+  await esperarRejeicaoSemAcessoAoBanco(tabelas, cliente, entrada);
+});
+
+const TELEFONES_INVALIDOS: Array<{ nome: string; valor: string }> = [
+  { nome: 'sem prefixo 55', valor: '11999999999' },
+  { nome: 'com pontuacao', valor: '+55 11 99999-9999' },
+  { nome: 'curto', valor: '5511999' },
+  { nome: 'longo', valor: '55119999999999' },
+];
+
+for (const caso of TELEFONES_INVALIDOS) {
+  test(`revisao18: telefone_normalizado ${caso.nome} e rejeitado`, async () => {
+    const tabelas = criarTabelasFalsasVazias();
+    const conversa = semearEstado(tabelas, {});
+    const cliente = new ClienteFalso(tabelas);
+
+    const entrada = {
+      ...contexto(conversa.id),
+      telefone_normalizado: caso.valor,
+      alteracoes: { nome: { acao: 'informar', valor: 'Joao' } },
+    };
+
+    await esperarRejeicaoSemAcessoAoBanco(tabelas, cliente, entrada);
+  });
+}
+
+test('revisao19: identificadores validos continuam funcionando normalmente', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const conversa = {
+    id: UUID_VALIDO_EXEMPLO,
+    clinica_id: crypto.randomUUID(),
+    telefone_normalizado: '5511988887777',
+    estado: 'atendimento',
+    dados: {},
+    paciente_id: null,
+    atualizado_em: new Date('2026-07-01T00:00:00.000Z').toISOString(),
+  };
+  tabelas.estado_conversa.push(conversa);
+  const cliente = new ClienteFalso(tabelas);
+
+  const resultado = await aplicarDados(cliente, {
+    conversa_id: conversa.id,
+    clinica_id: conversa.clinica_id,
+    telefone_normalizado: conversa.telefone_normalizado,
+    alteracoes: { nome: { acao: 'informar', valor: 'Joao' } },
+  });
+
+  assert.equal(resultado.conversa_id, conversa.id);
+  assert.deepEqual(resultado.dados, { nome: 'Joao' });
+  assert.deepEqual(resultado.campos_adicionados, ['nome']);
+});

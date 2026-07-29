@@ -101,10 +101,14 @@ class AtualizacaoFalsa implements ConsultaEncadeavel {
 
 export class ClienteFalso implements ClienteBancoDados {
   private readonly tabelas: TabelasFalsas;
-  // instrumentacao para testes: numero de vezes que .update() foi chamado,
-  // por tabela — usada para provar que um vinculo ja existente nunca
-  // dispara uma tentativa de atualizacao.
-  readonly estatisticas: { chamadasUpdate: Record<string, number> } = { chamadasUpdate: {} };
+  // instrumentacao para testes: numero de vezes que .update()/.select()
+  // foram chamados, por tabela — usada para provar que um vinculo ja
+  // existente nunca dispara uma tentativa de atualizacao, e que contexto
+  // invalido rejeita antes de qualquer leitura ou escrita no banco.
+  readonly estatisticas: { chamadasUpdate: Record<string, number>; chamadasSelect: Record<string, number> } = {
+    chamadasUpdate: {},
+    chamadasSelect: {},
+  };
 
   constructor(tabelas: TabelasFalsas) {
     this.tabelas = tabelas;
@@ -116,7 +120,10 @@ export class ClienteFalso implements ClienteBancoDados {
       throw new Error(`tabela falsa desconhecida: ${nome}`);
     }
     return {
-      select: (_colunas: string): ConsultaEncadeavel => new ConsultaFalsa(linhas, null, null),
+      select: (_colunas: string): ConsultaEncadeavel => {
+        this.estatisticas.chamadasSelect[nome] = (this.estatisticas.chamadasSelect[nome] ?? 0) + 1;
+        return new ConsultaFalsa(linhas, null, null);
+      },
       upsert: (
         valores: Record<string, unknown>,
         opcoes: { onConflict: string; ignoreDuplicates: boolean }
