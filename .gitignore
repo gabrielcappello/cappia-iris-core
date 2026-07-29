@@ -1,0 +1,19 @@
+# Segredos
+.env
+.env.*
+
+# Node / TypeScript
+node_modules/
+dist/
+coverage/
+
+# Editor / sistema
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# Obsidian (workspace local, não deve ser versionado)
+.obsidian/
