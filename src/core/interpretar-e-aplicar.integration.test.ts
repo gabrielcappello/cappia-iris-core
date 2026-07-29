@@ -78,7 +78,6 @@ test(
       const resultado1 = await interpretarEAplicar(clienteModelo1, supabase as unknown as ClienteBancoDados, {
         ...contextoBase,
         mensagens_atuais: ['tambem quero clareamento', 'pode ser sexta'],
-        dados_atuais: { procedimento_texto: 'limpeza' },
       });
 
       // 4) procedimento_texto vira conflito; clareamento fica no conflito; data_texto e aplicada
@@ -115,7 +114,6 @@ test(
           interpretarEAplicar(clienteModelo2, supabase as unknown as ClienteBancoDados, {
             ...contextoBase,
             mensagens_atuais: ['pode ser sabado entao'],
-            dados_atuais: { procedimento_texto: 'limpeza', data_texto: 'sexta' },
           }),
         InterpretacaoInvalidaError
       );

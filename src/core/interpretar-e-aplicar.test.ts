@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { InterpretacaoInvalidaError } from './erros.ts';
+import { EntradaInvalidaError, InterpretacaoInvalidaError } from './erros.ts';
 import { interpretarEAplicar } from './interpretar-e-aplicar.ts';
+import type { ClienteModeloEstruturado } from './interpretacao-tipos.ts';
 import { ClienteFalso, criarTabelasFalsasVazias, type TabelasFalsas } from './teste-cliente-falso.ts';
-import { ClienteModeloFalso } from './teste-cliente-modelo-falso.ts';
+import { ClienteModeloFalso, ClienteModeloNuncaDeveSerChamado } from './teste-cliente-modelo-falso.ts';
 
 const CLINICA_ID = crypto.randomUUID();
 const TELEFONE = '5511999999999';
@@ -22,13 +23,13 @@ function semearEstado(tabelas: TabelasFalsas, dados: Record<string, unknown>) {
   return conversa;
 }
 
-function contexto(conversaId: string, mensagensAtuais: string[], dadosAtuais: Record<string, string>) {
+function contexto(conversaId: string, mensagensAtuais: string[], overrides: Record<string, unknown> = {}) {
   return {
     conversa_id: conversaId,
     clinica_id: CLINICA_ID,
     telefone_normalizado: TELEFONE,
     mensagens_atuais: mensagensAtuais,
-    dados_atuais: dadosAtuais,
+    ...overrides,
   };
 }
 
@@ -44,7 +45,7 @@ test('teste5: correcoes sucessivas resultam em uma unica alteracao final aplicad
   const resultado = await interpretarEAplicar(
     clienteModelo,
     clienteBanco,
-    contexto(conversa.id, ['quero limpeza', 'na verdade prefiro clareamento'], {})
+    contexto(conversa.id, ['quero limpeza', 'na verdade prefiro clareamento'])
   );
 
   assert.deepEqual(resultado.conflitos, []);
@@ -63,7 +64,7 @@ test('teste6: ultima correcao cronologica prevalece (corrigir substitui o valor 
   const resultado = await interpretarEAplicar(
     clienteModelo,
     clienteBanco,
-    contexto(conversa.id, ['na verdade quero clareamento, nao limpeza'], { procedimento_texto: 'limpeza' })
+    contexto(conversa.id, ['na verdade quero clareamento, nao limpeza'])
   );
 
   assert.deepEqual(resultado.conflitos, [], 'corrigir nunca conflita');
@@ -79,7 +80,7 @@ test('teste7: retorno ao valor original gera informar e e aplicavel (nao conflit
   const resultado = await interpretarEAplicar(
     clienteModelo,
     clienteBanco,
-    contexto(conversa.id, ['e Joao mesmo, deixa como estava'], { nome: 'Joao' })
+    contexto(conversa.id, ['e Joao mesmo, deixa como estava'])
   );
 
   assert.deepEqual(resultado.conflitos, []);
@@ -94,17 +95,12 @@ test('teste11: campo conflitante nao segue para aplicarDados', async () => {
     { alteracoes: { procedimento_texto: { acao: 'informar', valor: 'clareamento' } } },
   ]);
 
-  const resultado = await interpretarEAplicar(
-    clienteModelo,
-    clienteBanco,
-    contexto(conversa.id, ['tambem quero clareamento'], { procedimento_texto: 'limpeza' })
-  );
+  const resultado = await interpretarEAplicar(clienteModelo, clienteBanco, contexto(conversa.id, ['tambem quero clareamento']));
 
   assert.equal(resultado.conflitos.length, 1);
   assert.equal(resultado.conflitos[0].valor_atual, 'limpeza');
   assert.equal(resultado.conflitos[0].valor_informado, 'clareamento');
   assert.equal(resultado.aplicacao, null, 'nenhuma alteracao aplicavel: aplicarDados nunca deve ser chamado');
-  assert.equal(clienteBanco.estatisticas.chamadasSelect['estado_conversa'] ?? 0, 0);
   assert.equal(clienteBanco.estatisticas.chamadasUpdate['estado_conversa'] ?? 0, 0);
   assert.equal(tabelas.estado_conversa[0].dados.procedimento_texto, 'limpeza', 'valor acumulado preservado');
 });
@@ -116,11 +112,10 @@ test('teste24-25: payload integralmente invalido nao chama aplicarDados e nao mo
   const clienteModelo = new ClienteModeloFalso([{ alteracoes: {}, confidence: 0.9 }]);
 
   await assert.rejects(
-    () => interpretarEAplicar(clienteModelo, clienteBanco, contexto(conversa.id, ['oi'], { nome: 'Joao' })),
+    () => interpretarEAplicar(clienteModelo, clienteBanco, contexto(conversa.id, ['oi'])),
     InterpretacaoInvalidaError
   );
 
-  assert.equal(clienteBanco.estatisticas.chamadasSelect['estado_conversa'] ?? 0, 0);
   assert.equal(clienteBanco.estatisticas.chamadasUpdate['estado_conversa'] ?? 0, 0);
   assert.deepEqual(tabelas.estado_conversa[0].dados, { nome: 'Joao' });
 });
@@ -131,15 +126,144 @@ test('teste26: alteracoes vazio nao chama aplicarDados', async () => {
   const clienteBanco = new ClienteFalso(tabelas);
   const clienteModelo = new ClienteModeloFalso([{ alteracoes: {} }]);
 
-  const resultado = await interpretarEAplicar(
-    clienteModelo,
-    clienteBanco,
-    contexto(conversa.id, ['nao sei ainda'], { nome: 'Joao' })
-  );
+  const resultado = await interpretarEAplicar(clienteModelo, clienteBanco, contexto(conversa.id, ['nao sei ainda']));
 
   assert.equal(resultado.aplicacao, null);
   assert.deepEqual(resultado.alteracoes_aplicaveis, {});
   assert.deepEqual(resultado.conflitos, []);
+  assert.equal(clienteBanco.estatisticas.chamadasUpdate['estado_conversa'] ?? 0, 0);
+});
+
+// --- Correcao 2: validar contexto antes do banco e do modelo ---
+
+test('correcao2: conversa_id invalido e rejeitado sem consultar o banco nem chamar o modelo', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  semearEstado(tabelas, {});
+  const clienteBanco = new ClienteFalso(tabelas);
+  const clienteModelo = new ClienteModeloNuncaDeveSerChamado();
+
+  await assert.rejects(
+    () => interpretarEAplicar(clienteModelo, clienteBanco, contexto('nao-e-um-uuid', ['oi'])),
+    EntradaInvalidaError
+  );
+
   assert.equal(clienteBanco.estatisticas.chamadasSelect['estado_conversa'] ?? 0, 0);
   assert.equal(clienteBanco.estatisticas.chamadasUpdate['estado_conversa'] ?? 0, 0);
+});
+
+test('correcao2: clinica_id invalido e rejeitado sem consultar o banco nem chamar o modelo', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const conversa = semearEstado(tabelas, {});
+  const clienteBanco = new ClienteFalso(tabelas);
+  const clienteModelo = new ClienteModeloNuncaDeveSerChamado();
+
+  await assert.rejects(
+    () =>
+      interpretarEAplicar(
+        clienteModelo,
+        clienteBanco,
+        contexto(conversa.id, ['oi'], { clinica_id: 'nao-e-um-uuid' })
+      ),
+    EntradaInvalidaError
+  );
+
+  assert.equal(clienteBanco.estatisticas.chamadasSelect['estado_conversa'] ?? 0, 0);
+  assert.equal(clienteBanco.estatisticas.chamadasUpdate['estado_conversa'] ?? 0, 0);
+});
+
+test('correcao2: telefone_normalizado invalido e rejeitado sem consultar o banco nem chamar o modelo', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const conversa = semearEstado(tabelas, {});
+  const clienteBanco = new ClienteFalso(tabelas);
+  const clienteModelo = new ClienteModeloNuncaDeveSerChamado();
+
+  await assert.rejects(
+    () =>
+      interpretarEAplicar(
+        clienteModelo,
+        clienteBanco,
+        contexto(conversa.id, ['oi'], { telefone_normalizado: '11999999999' })
+      ),
+    EntradaInvalidaError
+  );
+
+  assert.equal(clienteBanco.estatisticas.chamadasSelect['estado_conversa'] ?? 0, 0);
+  assert.equal(clienteBanco.estatisticas.chamadasUpdate['estado_conversa'] ?? 0, 0);
+});
+
+// --- Correcao 4: snapshot oficial, nunca o do chamador ---
+
+test('correcao4a: o modelo recebe o snapshot oficial lido do banco, nao um dados_atuais fornecido pelo chamador', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const conversa = semearEstado(tabelas, { procedimento_texto: 'limpeza' });
+  const clienteBanco = new ClienteFalso(tabelas);
+  const clienteModelo = new ClienteModeloFalso([{ alteracoes: {} }]);
+
+  await interpretarEAplicar(clienteModelo, clienteBanco, contexto(conversa.id, ['oi']));
+
+  assert.equal(clienteModelo.chamadas[0].payload.dados_atuais.procedimento_texto, 'limpeza');
+});
+
+test('correcao4b: entrada integrada contendo dados_atuais e rejeitada; banco e modelo nao sao chamados', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const conversa = semearEstado(tabelas, { procedimento_texto: 'limpeza' });
+  const clienteBanco = new ClienteFalso(tabelas);
+  const clienteModelo = new ClienteModeloNuncaDeveSerChamado();
+
+  await assert.rejects(
+    () =>
+      interpretarEAplicar(
+        clienteModelo,
+        clienteBanco,
+        contexto(conversa.id, ['oi'], { dados_atuais: { procedimento_texto: 'limpeza' } })
+      ),
+    EntradaInvalidaError
+  );
+
+  assert.equal(clienteBanco.estatisticas.chamadasSelect['estado_conversa'] ?? 0, 0);
+  assert.equal(clienteBanco.estatisticas.chamadasUpdate['estado_conversa'] ?? 0, 0);
+});
+
+test('correcao4c: divergencia durante a execucao gera conflito, remove o campo de alteracoes_aplicaveis, e nao afeta os demais campos', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  // 1) snapshot inicial nao possui data_texto
+  const conversa = semearEstado(tabelas, {});
+  const clienteBanco = new ClienteFalso(tabelas);
+
+  // Cliente de modelo com efeito colateral: simula outra operacao gravando
+  // data_texto = sabado DEPOIS que o snapshot foi lido, mas ANTES de
+  // aplicarDados ser chamado (a janela exata que a reconciliacao cobre).
+  const clienteModelo: ClienteModeloEstruturado = {
+    async executar() {
+      const linha = tabelas.estado_conversa[0];
+      linha.dados = { ...(linha.dados as Record<string, unknown>), data_texto: 'sabado' };
+      // 2) modelo retorna data_texto informar sexta + nome informar Joao
+      return {
+        alteracoes: {
+          data_texto: { acao: 'informar', valor: 'sexta' },
+          nome: { acao: 'informar', valor: 'Joao' },
+        },
+      };
+    },
+  };
+
+  const resultado = await interpretarEAplicar(clienteModelo, clienteBanco, contexto(conversa.id, ['pode ser sexta, sou o Joao']));
+
+  // 4) aplicarDados preserva sabado (informar em campo com valor diferente do real)
+  // 5) conflito: campo=data_texto, valor_atual=sabado, valor_informado=sexta
+  assert.equal(resultado.conflitos.length, 1);
+  assert.equal(resultado.conflitos[0].campo, 'data_texto');
+  assert.equal(resultado.conflitos[0].valor_atual, 'sabado');
+  assert.equal(resultado.conflitos[0].valor_informado, 'sexta');
+
+  // 6) data_texto nao permanece em alteracoes_aplicaveis
+  assert.ok(!('data_texto' in resultado.alteracoes_aplicaveis));
+
+  // 7) nome continua aplicado normalmente
+  assert.ok('nome' in resultado.alteracoes_aplicaveis);
+  assert.equal(resultado.aplicacao?.dados.nome, 'Joao');
+  assert.ok(resultado.aplicacao?.campos_adicionados.includes('nome'));
+
+  // 8) nenhum valor escolhido/perdido silenciosamente: o banco continua com sabado
+  assert.equal(tabelas.estado_conversa[0].dados.data_texto, 'sabado');
 });

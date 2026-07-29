@@ -77,10 +77,17 @@ export interface AlteracaoDeCampo {
 
 export type AlteracoesDados = Record<string, AlteracaoDeCampo>;
 
-export interface AplicarDadosInput {
+// Os tres identificadores que localizam uma linha de estado_conversa.
+// Extraido para ser reutilizado pela validacao canonica (validarContexto)
+// tanto por aplicarDados quanto por interpretarEAplicar, sem duplicar
+// regex de UUID nem regra de telefone.
+export interface ContextoConversa {
   conversa_id: string;
   clinica_id: string;
   telefone_normalizado: string;
+}
+
+export interface AplicarDadosInput extends ContextoConversa {
   alteracoes: AlteracoesDados;
 }
 

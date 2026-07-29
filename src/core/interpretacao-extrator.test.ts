@@ -195,3 +195,50 @@ test('teste29b: erro de entrada invalida nao contem PII', async () => {
   const representacao = JSON.stringify(erroCapturado) + (erroCapturado as Error).message;
   assert.ok(!representacao.includes(nomeReal));
 });
+
+// --- Correcao 1: fechar integralmente a entrada do extrator ---
+
+test('correcao1: entrada com propriedade extra (telefone) e rejeitada; modelo nao e chamado; nada extra chega ao payload', async () => {
+  const cliente = new ClienteModeloNuncaDeveSerChamado();
+
+  await assert.rejects(
+    () =>
+      extrairAlteracoes(cliente, {
+        mensagens_atuais: ['oi'],
+        dados_atuais: {},
+        telefone: '5511999999999',
+      }),
+    EntradaInvalidaError
+  );
+});
+
+test('correcao1: payload enviado ao modelo contem exatamente mensagens_atuais e dados_atuais, mesmo que a validacao aceite', async () => {
+  const cliente = new ClienteModeloFalso([{ alteracoes: {} }]);
+
+  await extrairAlteracoes(cliente, { mensagens_atuais: ['oi'], dados_atuais: { nome: 'Joao' } });
+
+  assert.deepEqual(Object.keys(cliente.chamadas[0].payload).sort(), ['dados_atuais', 'mensagens_atuais']);
+});
+
+// --- Correcao 3: nunca reproduzir chave bruta em erros ---
+
+test('correcao3: chave desconhecida contendo nome, CPF e e-mail no proprio nome nunca aparece no erro', async () => {
+  const chavePerigosa = 'nome_Maria_Silva_cpf_12345678900_email_maria.silva@example.com';
+  const cliente = new ClienteModeloFalso([{ alteracoes: { [chavePerigosa]: { acao: 'informar', valor: 'x' } } }]);
+
+  let erroCapturado: unknown;
+  try {
+    await extrairAlteracoes(cliente, { mensagens_atuais: ['oi'], dados_atuais: {} });
+  } catch (erro) {
+    erroCapturado = erro;
+  }
+
+  assert.ok(erroCapturado instanceof InterpretacaoInvalidaError);
+  const erroTipado = erroCapturado as InterpretacaoInvalidaError;
+  const representacao = JSON.stringify(erroTipado) + erroTipado.message + erroTipado.codigo + erroTipado.caminho;
+  assert.ok(!representacao.includes(chavePerigosa));
+  assert.ok(!representacao.includes('Maria_Silva'));
+  assert.ok(!representacao.includes('12345678900'));
+  assert.ok(!representacao.includes('maria.silva@example.com'));
+  assert.equal(erroTipado.caminho, 'saida.alteracoes.campo_desconhecido');
+});

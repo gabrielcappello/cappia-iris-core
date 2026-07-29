@@ -6,6 +6,7 @@ import type {
   AplicarDadosInput,
   CampoDadosConversa,
   ClienteBancoDados,
+  ContextoConversa,
   ResultadoAplicarDados,
 } from './tipos.ts';
 
@@ -29,7 +30,9 @@ export const PERIODOS_PERMITIDOS = ['manha', 'tarde', 'noite'];
 export const INTENCOES_PERMITIDAS = ['novo_agendamento'];
 const MAX_TENTATIVAS = 5;
 
-interface LinhaEstadoConversa {
+// Exportado para reuso (ex.: interpretarEAplicar precisa do mesmo snapshot
+// oficial antes de chamar o modelo, sem duplicar a consulta).
+export interface LinhaEstadoConversa {
   id: string;
   dados: unknown;
   atualizado_em: string;
@@ -122,9 +125,11 @@ function montarResultado(
   };
 }
 
-async function buscarEstadoConversa(
+// Exportado para reuso: interpretarEAplicar usa a mesma consulta para obter
+// o snapshot oficial antes de chamar o modelo, sem duplicar a logica.
+export async function buscarEstadoConversa(
   cliente: ClienteBancoDados,
-  entrada: AplicarDadosInput
+  entrada: ContextoConversa
 ): Promise<LinhaEstadoConversa> {
   // Os tres identificadores devem casar simultaneamente na mesma linha —
   // nunca aceitar clinica_id vindo da IA ou do paciente: aqui ele e um
@@ -210,7 +215,11 @@ const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}
 // tipo estatico nao protege contra valores realmente invalidos em tempo de
 // execucao (numero, boolean, objeto, array, null, undefined) — por isso a
 // checagem de `typeof` sempre vem antes de qualquer `.trim()`.
-function validarContexto(entrada: AplicarDadosInput): void {
+//
+// Exportado: e a validacao canonica dos tres identificadores, reutilizada
+// por interpretarEAplicar (nunca duplicar regex de UUID nem regra de
+// telefone em outro modulo).
+export function validarContexto(entrada: ContextoConversa): void {
   validarIdentificadorUuid('conversa_id', entrada.conversa_id as unknown);
   validarIdentificadorUuid('clinica_id', entrada.clinica_id as unknown);
   validarTelefoneDoContexto(entrada.telefone_normalizado as unknown);

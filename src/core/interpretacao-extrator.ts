@@ -16,10 +16,18 @@ export async function extrairAlteracoes(
 ): Promise<SaidaInterpretacao> {
   validarEntradaInterpretacao(entradaBruta);
 
+  // Payload construido explicitamente com somente os dois campos do
+  // contrato — entradaBruta nunca e repassada diretamente ao modelo, mesmo
+  // que a validacao acima ja garanta que ela so tem essas duas chaves.
+  const payload: EntradaInterpretacao = {
+    mensagens_atuais: [...entradaBruta.mensagens_atuais],
+    dados_atuais: { ...entradaBruta.dados_atuais },
+  };
+
   const saidaBruta = await cliente.executar({
     instrucoes: INSTRUCOES_EXTRATOR,
     schema: SCHEMA_SAIDA_INTERPRETACAO,
-    payload: entradaBruta,
+    payload,
   });
 
   validarSaidaInterpretacao(saidaBruta);
@@ -28,9 +36,21 @@ export async function extrairAlteracoes(
 
 // --- Validacao da entrada (mensagens_atuais + dados_atuais) ---
 
+const CHAVES_ENTRADA_INTERPRETACAO = ['mensagens_atuais', 'dados_atuais'] as const;
+
 export function validarEntradaInterpretacao(entrada: unknown): asserts entrada is EntradaInterpretacao {
   if (entrada === null || typeof entrada !== 'object' || Array.isArray(entrada)) {
     throw new EntradaInvalidaError('entrada', 'entrada deve ser um objeto');
+  }
+
+  // Entrada fechada: somente mensagens_atuais e dados_atuais sao aceitos.
+  // Qualquer propriedade adicional (telefone, IDs, historico, etc.)
+  // invalida a entrada inteira. O nome da propriedade desconhecida nunca e
+  // reproduzido no erro.
+  const chaves = Object.keys(entrada as Record<string, unknown>);
+  const chavesEsperadas: readonly string[] = CHAVES_ENTRADA_INTERPRETACAO;
+  if (chaves.length !== chavesEsperadas.length || !chavesEsperadas.every((chave) => chaves.includes(chave))) {
+    throw new EntradaInvalidaError('entrada', 'entrada contem propriedade nao permitida');
   }
 
   const { mensagens_atuais, dados_atuais } = entrada as Record<string, unknown>;
@@ -38,7 +58,7 @@ export function validarEntradaInterpretacao(entrada: unknown): asserts entrada i
   validarDadosAtuais(dados_atuais);
 }
 
-function validarMensagensAtuais(mensagens: unknown): asserts mensagens is string[] {
+export function validarMensagensAtuais(mensagens: unknown): asserts mensagens is string[] {
   if (!Array.isArray(mensagens)) {
     throw new EntradaInvalidaError('mensagens_atuais', 'mensagens_atuais deve ser um array');
   }
@@ -58,7 +78,7 @@ function validarMensagensAtuais(mensagens: unknown): asserts mensagens is string
   // extrairAlteracoes) — o array e repassado ao payload sem transformacao.
 }
 
-function validarDadosAtuais(dadosAtuais: unknown): asserts dadosAtuais is Record<string, string> {
+export function validarDadosAtuais(dadosAtuais: unknown): asserts dadosAtuais is Record<string, string> {
   if (dadosAtuais === null || typeof dadosAtuais !== 'object' || Array.isArray(dadosAtuais)) {
     throw new EntradaInvalidaError('dados_atuais', 'dados_atuais deve ser um objeto (nao nulo, nao array)');
   }
@@ -100,11 +120,14 @@ export function validarSaidaInterpretacao(saida: unknown): asserts saida is Said
   }
 
   for (const [campo, alteracao] of Object.entries(alteracoes as Record<string, unknown>)) {
-    const caminhoCampo = `saida.alteracoes.${campo}`;
-
+    // A chave bruta `campo` nunca deve aparecer em nenhum erro: se ela nao
+    // for um dos dez campos canonicos (fixos, sem PII), usamos um caminho
+    // generico em vez de interpolar o nome recebido do modelo.
     if (!CAMPOS_PERMITIDOS.includes(campo as CampoDadosConversa)) {
-      throw new InterpretacaoInvalidaError('campo_desconhecido', caminhoCampo);
+      throw new InterpretacaoInvalidaError('campo_desconhecido', 'saida.alteracoes.campo_desconhecido');
     }
+
+    const caminhoCampo = `saida.alteracoes.${campo}`;
     if (alteracao === null || typeof alteracao !== 'object' || Array.isArray(alteracao)) {
       throw new InterpretacaoInvalidaError('alteracao_invalida', caminhoCampo);
     }
