@@ -281,23 +281,13 @@ Quando o paciente aceitar qualquer profissional, o Core deve:
 
 1. consultar internamente cada dentista apto;
 2. usar a duração configurada individualmente para cada um;
-3. respeitar os critérios já informados pelo paciente;
-4. identificar a melhor opção disponível.
-
-"Melhor opção disponível" significa a opção mais próxima que respeite:
-
-- data;
-- período;
-- horário informado.
-
-Quando o paciente aceitar qualquer profissional, a "melhor opção disponível" é definida por:
-
-- menor data e horário dentro dos critérios já informados pelo paciente: data, período e horário;
-- em caso de empate exato entre dois ou mais dentistas no mesmo horário, desempate pelo identificador do dentista, em ordem estável.
+3. respeitar os critérios já informados pelo paciente: data, período e horário;
+4. selecionar primeiro o dentista que possuir o horário mais próximo dentro desses critérios;
+5. em empate do primeiro horário entre dois ou mais dentistas, desempate pelo identificador do dentista, em ordem estável.
 
 Esse critério de desempate é técnico e invisível ao paciente. Não representa prioridade ou ranking entre profissionais e não exige nova configuração no painel.
 
-Mantém-se a decisão já aprovada de apresentar somente uma opção por vez (ver seção 10).
+A apresentação dos horários desse dentista segue as regras da seção 10.
 
 Exemplo:
 
@@ -305,29 +295,48 @@ Se o paciente pediu sexta-feira à tarde, a busca deve ocorrer dentro de sexta-f
 
 Não oferecer quinta-feira de manhã apenas por ser o primeiro horário geral disponível.
 
-Se não existir disponibilidade dentro dos critérios solicitados, a Iris deve informar isso antes de propor uma alternativa fora deles.
+### Ausência de horário no período solicitado
+
+A busca deve seguir esta ordem:
+
+1. procurar na data e no período solicitados;
+2. se não houver disponibilidade, procurar nos demais períodos da mesma data;
+3. se encontrar, informar que o período original está indisponível e apresentar os horários do período alternativo, mantendo um dentista por vez;
+4. se não houver disponibilidade em nenhum período daquela data, informar isso e pedir outra data.
+
+Exemplo:
+
+> Não encontrei horários na sexta-feira à tarde, mas tenho pela manhã às 8h, 9h40 e 11h com a Dra. Ana. Algum serve ou prefere verificar outro dia?
+
+Nesta primeira versão, não procurar automaticamente outras datas sem que o paciente indique ou aceite uma nova data.
 
 ---
 
 ## 10. Apresentação das opções
 
-A Iris não deve apresentar uma lista misturando vários dentistas e vários horários.
+Não misturar horários de vários dentistas na mesma lista.
 
-Quando o paciente aceitar qualquer profissional, apresentar somente uma opção por vez, informando claramente o horário e o dentista.
+Apresentar um dentista por vez.
+
+Apresentar, em uma única mensagem, todos os horários realmente disponíveis daquele dentista dentro da data e do período solicitados.
 
 Exemplo:
 
-> Encontrei amanhã às 14h com a Dra. Ana. Esse horário serve para você?
+> Encontrei estes horários à tarde com a Dra. Ana: 14h, 15h20 e 16h40. Qual fica melhor para você?
 
-Se o paciente não aceitar, apresentar a próxima melhor opção disponível.
+Quando houver apenas um dentista apto ou uma preferência já resolvida, apresentar os horários disponíveis desse profissional.
 
-A próxima opção pode alterar:
+Quando o paciente autorizar qualquer profissional:
 
-- horário;
-- dentista;
-- ou ambos.
+- consultar internamente todos os dentistas aptos;
+- usar a duração individual configurada para cada dentista;
+- selecionar primeiro o dentista que possuir o horário mais próximo dentro dos critérios pedidos;
+- em empate do primeiro horário, usar o identificador do dentista em ordem estável;
+- apresentar o nome desse dentista e todos os horários disponíveis dele dentro do período;
+- se o paciente não aceitar nenhum deles, seguir para o próximo dentista apto;
+- nunca misturar profissionais na mesma lista.
 
-O nome do profissional deve sempre ser informado antes de o paciente aceitar o horário.
+O nome do profissional deve sempre ser informado antes de o paciente aceitar um horário.
 
 Como o paciente autorizou qualquer profissional, essa recomendação não representa escolha silenciosa de dentista.
 
@@ -385,13 +394,29 @@ O cadastro não deve ser exigido antes da escolha de um horário real.
 Os dados cadastrais seguem validação de formato:
 
 - nome: deve conter ao menos duas letras e não pode ser composto somente por números ou símbolos;
-- CPF: deve possuir 11 dígitos e dígitos verificadores válidos;
+- CPF: ver regras específicas abaixo;
 - data de nascimento: deve ser uma data real e não futura;
-- e-mail: solicitado somente quando configurado pela clínica e validado por formato básico de e-mail.
+- e-mail: ver regras específicas abaixo.
 
 Nome, CPF e data de nascimento são obrigatórios.
 
-O e-mail é condicionado à configuração da clínica.
+O e-mail permanece opcional e somente é solicitado quando configurado pela clínica. Quando informado, aceitar somente quando:
+
+- não possuir espaços;
+- possuir exatamente um `@`;
+- existir conteúdo antes do `@`;
+- existir domínio depois do `@`;
+- o domínio possuir ao menos um ponto;
+- existir conteúdo antes e depois desse ponto.
+
+Não verificar se o endereço realmente existe.
+
+CPF — nesta primeira versão, usar exclusivamente o campo `cpf`, sem referências genéricas a "documento". Validação:
+
+- remover pontuação;
+- exigir exatamente 11 dígitos;
+- validar os dois dígitos verificadores;
+- rejeitar sequências formadas pelo mesmo dígito, como `00000000000` e `11111111111`.
 
 ---
 
@@ -554,7 +579,7 @@ A Iris não depende da memória do modelo para lembrar:
 - período;
 - horário;
 - nome;
-- documento;
+- cpf;
 - data de nascimento;
 - e-mail;
 - horário oferecido;
@@ -573,11 +598,26 @@ Estados obrigatórios:
 
 Transições obrigatórias:
 
-- horário perdido na revalidação: `executando → aguardando_escolha`;
-- desistência explícita: qualquer estado ativo → `atendimento`;
+- `atendimento → aguardando_escolha`: quando horários reais são apresentados;
+- `aguardando_escolha → coletando_cadastro`: quando o paciente escolhe um horário e faltam dados obrigatórios;
+- `aguardando_escolha → aguardando_confirmacao`: quando o horário é escolhido e o cadastro já está completo;
+- `coletando_cadastro → aguardando_confirmacao`: quando os dados obrigatórios ficam completos e o resumo é apresentado;
+- `aguardando_confirmacao → executando`: após confirmação explícita;
+- `executando → concluido`: após criação técnica bem-sucedida;
+- `executando → aguardando_escolha`: se o horário ficar indisponível na revalidação;
+- qualquer estado ativo → `atendimento`: em desistência explícita;
 - alteração de procedimento, dentista, data ou horário após existir uma escolha registrada: invalidar a escolha anterior e retornar para `aguardando_escolha`.
 
 Essa última regra aplica-se durante `aguardando_escolha`, `coletando_cadastro` e `aguardando_confirmacao`.
+
+Quando o horário ficar indisponível na revalidação:
+
+- apresentar novos horários reais;
+- aguardar nova escolha;
+- apresentar novo resumo;
+- exigir nova confirmação.
+
+Não reaproveitar escolha, resumo ou confirmação anteriores.
 
 Os dados estruturados determinam o que ainda está faltando.
 
@@ -646,8 +686,8 @@ A implementação deve cobrir, no mínimo:
 9. paciente já menciona o dentista na mensagem inicial;
 10. dentista mencionado não realiza o procedimento;
 11. paciente aceita qualquer profissional;
-12. apenas uma opção de horário e dentista é mostrada por vez;
-13. paciente rejeita a primeira opção e recebe a próxima;
+12. apenas um dentista é apresentado por vez, com todos os horários disponíveis dele na mesma mensagem;
+13. paciente rejeita todos os horários do primeiro dentista e recebe o próximo dentista apto;
 14. nenhum dentista realiza o procedimento;
 15. Consulta/Avaliação é oferecida;
 16. Consulta/Avaliação só substitui o procedimento após aceitação;
@@ -679,7 +719,7 @@ Nesta primeira versão:
 
 - o único país suportado é Brasil;
 - o único idioma de atendimento é português brasileiro;
-- o documento obrigatório é CPF válido.
+- o campo `cpf` é o único documento obrigatório.
 
 A Iris responde sempre em português brasileiro.
 
