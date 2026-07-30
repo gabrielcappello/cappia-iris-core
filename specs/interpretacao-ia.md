@@ -9,3 +9,9 @@ nunca decide o próximo passo nem acessa banco, calendário, credenciais ou ferr
 
 Não preencher por suposição. Escrever somente depois que Gabriel definir e aprovar o
 comportamento detalhado (ver processo em `../AGENTS.md`).
+
+## Cláusula registrada
+
+No adaptador OpenAI, o modo estruturado obrigatório deve usar
+`text.format.type = 'json_schema'` e `strict = true`; remover ou enfraquecer
+`strict` viola o contrato.
