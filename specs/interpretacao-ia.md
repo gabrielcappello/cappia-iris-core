@@ -276,6 +276,234 @@ haverá serialização adicional por conversa; não haverá persistência de res
 transitórios. Isto é uma decisão consciente de escopo da primeira versão, não um erro
 arquitetural pendente.
 
+## Contrato técnico de banco (Etapa 6 aprovada)
+
+### Estado real confirmado
+
+Auditoria de leitura confirmou:
+
+- `mensagens_recebidas` não possui, no schema versionado hoje: `claim_token`;
+  `lease_expira_em`; `interpretacao_persistida_em`;
+- não existem RPCs, funções PostgreSQL ou triggers para claim, reclaim, ou
+  persistência atômica da interpretação;
+- não existe call site de produção para `mensagens_recebidas`;
+- `aplicarDados` usa chamadas PostgREST separadas e retry client-side, e permanece
+  inalterado para seus consumidores atuais (ver "Componentes reutilizados");
+- `atualizado_em` é tratado nesta integração como versão de `estado_conversa.dados`,
+  não de todas as colunas da linha.
+
+Isso descreve o schema versionado inspecionado — não afirma que a tabela implantada
+está vazia, nem que o banco vivo corresponde integralmente às migrations versionadas.
+
+### Migration mínima aprovada
+
+Uma futura migration aditiva, adicionando exatamente estas colunas `nullable` a
+`mensagens_recebidas`:
+
+- `claim_token uuid null`;
+- `lease_expira_em timestamptz null`;
+- `interpretacao_persistida_em timestamptz null`.
+
+Nesta primeira migration: nenhum `resultado_continuacao`; nenhuma coluna adicional;
+nenhum índice novo; nenhum `CHECK` novo; nenhum backfill obrigatório; nenhuma suposição
+sobre ausência de linhas antigas. `CHECK`s e índices só poderão ser avaliados
+futuramente, com necessidade comprovada.
+
+### Operações aprovadas
+
+Pacote mínimo:
+
+1. uma RPC PostgreSQL para reivindicação (`reivindicar_mensagem`);
+2. uma RPC PostgreSQL para persistência atômica da interpretação
+   (`aplicar_interpretacao_condicional`);
+3. um `UPDATE` PostgREST condicional para conclusão.
+
+Não há RPC adicional de reclaim: claim inicial e reclaim pertencem à mesma operação de
+reivindicação.
+
+### RPC de reivindicação — `reivindicar_mensagem`
+
+Uma única operação atômica.
+
+Entrada mínima:
+
+```ts
+interface ReivindicarMensagemInput {
+  provider: string;
+  instancia_whatsapp: string;
+  message_id: string;
+  clinica_id: string;
+  telefone_normalizado: string;
+}
+```
+
+Todos os dados vêm do servidor e da instância autenticada — nunca `clinica_id`
+fornecido pelo paciente ou pela IA.
+
+- **Linha inexistente**: inserir a mensagem diretamente com
+  `status_processamento = 'processando'`; gerar `claim_token` no servidor; definir
+  `lease_expira_em` para 60 segundos; `interpretacao_persistida_em` permanece `null`;
+  retornar `reivindicada_interpretar`.
+- **Linha existente em `recebida`**: alterar para `processando`; gerar novo
+  `claim_token` no servidor; definir lease de 60 segundos; retornar
+  `reivindicada_interpretar`.
+- **Linha existente em `processando` com lease expirado e marcador `null`**: manter
+  status `processando`; substituir `claim_token`; renovar lease por 60 segundos;
+  retornar `reivindicada_interpretar`.
+- **Linha existente em `processando` com lease expirado e marcador preenchido**:
+  manter status `processando`; substituir `claim_token`; renovar lease por 60
+  segundos; preservar `interpretacao_persistida_em`; retornar
+  `reivindicada_resposta_fixa`.
+- **Linha existente em `processando` com lease vigente**: não alterar; não retornar
+  token utilizável; retornar `nao_elegivel`.
+- **Linha `concluida`**: não alterar; não processar novamente; retornar
+  `nao_elegivel`.
+- **Linha `falhou`**: não alterar; não reinterpretar automaticamente; retornar
+  `nao_elegivel`.
+
+A restrição única `provider + instancia_whatsapp + message_id`, combinada com a
+operação atômica, garante um único vencedor.
+
+### Resultados mínimos da reivindicação
+
+Somente:
+
+- `reivindicada_interpretar`;
+- `reivindicada_resposta_fixa`;
+- `nao_elegivel`.
+
+Erros técnicos não são novos valores de `status_processamento` nem resultados
+operacionais persistidos. A resposta da RPC só pode fornecer `claim_token` quando a
+mensagem tiver sido realmente reivindicada — isto é, nos dois resultados
+`reivindicada_*`, nunca em `nao_elegivel`.
+
+### RPC de persistência atômica — `aplicar_interpretacao_condicional`
+
+Executa uma única transação PostgreSQL.
+
+Entrada mínima:
+
+```ts
+interface AplicarInterpretacaoCondicionalInput {
+  mensagem_recebida_id: string;
+  clinica_id: string;
+  telefone_normalizado: string;
+  claim_token: string;
+  conversa_id: string;
+  snapshot_atualizado_em: string;
+  alteracoes_aplicaveis: AlteracoesDados; // mesmo formato de aplicarDados (src/core/tipos.ts)
+}
+```
+
+Ordem fixa:
+
+1. localizar e bloquear `mensagens_recebidas`;
+2. validar autorização da mensagem;
+3. executar o CAS em `estado_conversa`;
+4. persistir alterações quando existirem;
+5. preencher `interpretacao_persistida_em`;
+6. retornar o estado oficial;
+7. rollback integral em qualquer falha.
+
+**Validação em `mensagens_recebidas`** — exigir simultaneamente: `id =
+mensagem_recebida_id`; `clinica_id` correspondente ao autenticado;
+`telefone_normalizado` correspondente; `status_processamento = 'processando'`;
+`claim_token` correspondente; `lease_expira_em` ainda vigente;
+`interpretacao_persistida_em IS NULL`.
+
+**CAS em `estado_conversa`** — exigir simultaneamente: `id = conversa_id`;
+`clinica_id` correspondente; `telefone_normalizado` correspondente; `atualizado_em =
+snapshot_atualizado_em`.
+
+A mensagem e a conversa devem pertencer à mesma clínica e ao mesmo telefone.
+
+- **Com alterações efetivas**: na mesma transação, atualizar `dados`; atualizar
+  `atualizado_em`; preencher `interpretacao_persistida_em`; retornar o estado oficial
+  resultante.
+- **Sem alterações efetivas** (saída vazia, idempotência, ou somente conflito):
+  `dados` permanece igual; `atualizado_em` pode permanecer igual;
+  `interpretacao_persistida_em` é preenchido; retornar o estado oficial existente; a
+  interpretação é considerada persistida com sucesso.
+- **Resultado misto**: persistir somente `alteracoes_aplicaveis`; conflitos
+  permanecem em memória no Core; preencher o marcador na mesma transação. Conflitos
+  nunca são persistidos.
+
+### Resultados mínimos da persistência
+
+Somente:
+
+- `persistida`;
+- `autorizacao_invalida`;
+- `conflito_concorrente`.
+
+`autorizacao_invalida` reúne: mensagem inexistente ou incompatível; clínica ou
+telefone incompatível; status incompatível; token incompatível; lease expirado;
+marcador já preenchido.
+
+`conflito_concorrente` significa exclusivamente falha do CAS de
+`estado_conversa.atualizado_em`.
+
+Erro técnico permanece exceção controlada — não é resultado de negócio nem novo
+status persistido.
+
+### Locks
+
+- Ordem fixa: (1) `mensagens_recebidas`; (2) `estado_conversa`.
+- O `UPDATE` condicional de `estado_conversa` é suficiente para o CAS — não é
+  necessário `SELECT FOR UPDATE` separado.
+- Nenhuma serialização adicional permanente por conversa será criada.
+- Dois `message_id` diferentes da mesma conversa podem disputar o mesmo CAS; apenas
+  um CAS válido persiste; o segundo recebe `conflito_concorrente`.
+
+### Segurança das RPCs
+
+Para `reivindicar_mensagem` e `aplicar_interpretacao_condicional`:
+
+- `SECURITY INVOKER` — nunca `SECURITY DEFINER`;
+- chamadas somente pela Edge Function usando `service_role`;
+- nomes de schemas e objetos totalmente qualificados;
+- `search_path` explícito e seguro;
+- revogar `EXECUTE` de `PUBLIC`, `anon`, `authenticated`;
+- conceder `EXECUTE` somente a `service_role`;
+- nenhuma IA acessa as RPCs diretamente;
+- nenhuma credencial entra em prompt, payload ou log.
+
+### Conclusão condicional
+
+Um único `UPDATE` PostgREST condicional em `mensagens_recebidas` — sem RPC dedicada.
+
+Exigir: `id = mensagem_recebida_id`; `clinica_id` correspondente à clínica
+autenticada; `status_processamento = 'processando'`; `claim_token` correspondente;
+`interpretacao_persistida_em IS NOT NULL`.
+
+Atualizar: `status_processamento = 'concluida'`; `concluido_em = now()`.
+
+Não exigir lease vigente na conclusão. Justificativa: o envio pode terminar depois da
+expiração do lease; exigir lease poderia impedir a conclusão de uma mensagem já
+enviada; o token vigente continua impedindo o worker antigo depois de um reclaim.
+
+Resultados mínimos: `concluida`; `autorizacao_invalida`. Erro técnico permanece
+separado.
+
+### Multiclínica
+
+- `clinica_id` deriva exclusivamente da instância WhatsApp autenticada;
+- a RPC de reivindicação valida `provider + instancia_whatsapp + message_id +
+  clinica_id + telefone_normalizado`;
+- a persistência valida mensagem e conversa com o mesmo `clinica_id` e telefone;
+- a conclusão valida `mensagem_recebida_id + clinica_id`;
+- nenhuma operação confia em `clinica_id` vindo da IA ou do paciente;
+- uma mensagem nunca pode alterar estado de outra clínica.
+
+### Compatibilidade e rollback
+
+- Colunas novas são `nullable`; a migration deve funcionar mesmo com linhas antigas;
+  ausência de backfill obrigatório; nenhuma constraint nova nesta primeira
+  implantação.
+- Rollback exige primeiro interromper consumidores da versão nova; depois remover
+  funções e grants; e somente então as três colunas.
+- Não presumir que o rollback é seguro enquanto consumidores novos estiverem ativos.
+
 ## Política de tentativas
 
 - Retry técnico interno do adaptador (`criarClienteModeloOpenAI`, já aprovado) permanece
@@ -653,6 +881,45 @@ com outro cenário:
 16. nenhum teste exige reconstrução perfeita de conflitos após um crash posterior à
     persistência, coluna ou estrutura de resultado transitório persistido, ou vínculo
     entre conflitos e a versão de `estado_conversa`.
+
+### Contrato técnico de banco
+
+Cenários obrigatórios sobre `reivindicar_mensagem`, `aplicar_interpretacao_condicional`
+e a conclusão condicional — cada um preserva sua asserção específica, sem fusão com
+outro cenário:
+
+1. dois workers inserindo a mesma mensagem inexistente: um vencedor;
+2. `recebida → processando`;
+3. reclaim com marcador `null` retorna `reivindicada_interpretar`;
+4. reclaim com marcador preenchido retorna `reivindicada_resposta_fixa`;
+5. `processando` com lease vigente retorna `nao_elegivel`;
+6. `concluida` retorna `nao_elegivel`;
+7. `falhou` retorna `nao_elegivel`;
+8. `claim_token` gerado somente no servidor;
+9. persistência com autorização e CAS válidos;
+10. status incompatível rejeitado;
+11. `claim_token` incompatível rejeitado;
+12. lease expirado rejeitado na persistência;
+13. marcador já preenchido rejeitado na persistência;
+14. clínica incompatível rejeitada;
+15. telefone incompatível rejeitado;
+16. CAS inválido retorna `conflito_concorrente`;
+17. rollback conjunto em qualquer falha;
+18. alteração efetiva atualiza `dados`, `atualizado_em` e o marcador;
+19. saída vazia preenche somente o marcador;
+20. idempotência preenche o marcador sem mudar `atualizado_em`;
+21. somente conflitos preenche o marcador e não persiste conflitos;
+22. resultado misto persiste `alteracoes_aplicaveis` e o marcador;
+23. dois `message_id` disputando a mesma conversa: um CAS vence;
+24. isolamento entre clínicas;
+25. `PUBLIC`, `anon` e `authenticated` sem `EXECUTE`;
+26. `service_role` com `EXECUTE`;
+27. conclusão com token vigente;
+28. conclusão com token antigo rejeitada;
+29. conclusão exige marcador preenchido;
+30. lease expirado sem reclaim não impede a conclusão;
+31. linhas antigas continuam válidas após a migration;
+32. rollback restaura o schema anterior.
 
 ### Conflitos
 
