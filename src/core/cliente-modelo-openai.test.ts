@@ -199,6 +199,35 @@ function respostaComStatusInvalido(status: unknown) {
   return new Response(JSON.stringify(corpo), { status: 200 });
 }
 
+// Bloqueio sincrono deliberado e controlado (spin em Date.now()), usado
+// somente em testes -- torna o tempo decorrido preciso e independente de
+// jitter do event loop, ao contrario de um atraso baseado em setTimeout.
+function bloqueioSincronoMs(ms: number): void {
+  const fim = Date.now() + ms;
+  while (Date.now() < fim) {
+    // bloqueio deliberado
+  }
+}
+
+// Substitui temporariamente o JSON.parse global por uma versao que
+// bloqueia sincronamente por `atrasoMs` antes de delegar ao parse
+// original -- simula processamento pos-leitura lento (que o
+// AbortController nao consegue interromper) sem depender de timers reais.
+// Sempre restaurado em finally; nenhuma alteracao global sobrevive ao
+// teste.
+async function comJsonParseAtrasado<T>(atrasoMs: number, fn: () => Promise<T>): Promise<T> {
+  const parseOriginal = JSON.parse;
+  JSON.parse = ((texto: string, reviver?: (key: string, value: unknown) => unknown) => {
+    bloqueioSincronoMs(atrasoMs);
+    return parseOriginal(texto, reviver);
+  }) as typeof JSON.parse;
+  try {
+    return await fn();
+  } finally {
+    JSON.parse = parseOriginal;
+  }
+}
+
 function entradaValida(overrides: Record<string, unknown> = {}) {
   return {
     instrucoes: INSTRUCOES_EXTRATOR,
@@ -926,42 +955,53 @@ test('extra: executar() bem-sucedido devolve o mapa interno pronto para validarS
 
 // --- Correcao 1: revalidar o orcamento apos a espera ---
 
-test('correcao1: revalidacao apos a espera bloqueia a segunda tentativa quando o tempo realmente gasto excede o orcamento (tentativas=1, sem segundo fetch)', async () => {
-  // Escala deliberadamente maior (espera de ~1000ms via Retry-After) para
-  // que o overshoot real e proporcionalmente pequeno do setTimeout (tipicamente
-  // 10-20ms sobre 1000ms, ja observado de forma estavel no teste 22) seja
-  // consistentemente maior que a margem apertada deixada em prazoTotalMs --
-  // isso torna o teste robusto, sem depender de uma janela de poucos
-  // milissegundos. prazoTotalMs=1205 passa a checagem PRE-espera (que usa
-  // 1000ms de espera + 200ms de timeout = 1200, com ~5ms de folga para a
-  // tentativa 1 quase instantanea) mas nao sobrevive a checagem POS-espera
-  // uma vez que a espera real ultrapassa 1000ms.
+test('correcao1: revalidacao apos a espera bloqueia a segunda tentativa de forma deterministica, sem depender de jitter natural do setTimeout', async () => {
+  // Tecnica: substitui Date.now globalmente por um relogio falso de duas
+  // fases (nao mexe em setTimeout, entao aguardar() continua sendo uma
+  // espera real, so que minuscula: 5ms). A fase muda de "antes" (0) para
+  // "depois" (1000) atraves de um setTimeout(...,0) agendado dentro do
+  // proprio fetch falso da tentativa 1 -- por garantia da propria
+  // especificacao de timers do JavaScript, um timer de delay 0 SEMPRE
+  // dispara antes de um timer de delay >0 agendado por perto (aqui,
+  // esperaEntreTentativasMs=5), entao a mudanca de fase e GARANTIDA
+  // acontecer antes da checagem pos-espera rodar -- nao ha dependencia de
+  // quanto o setTimeout realmente atrasa (overshoot), apenas da ORDEM
+  // relativa entre dois timers de delays diferentes, que o event loop
+  // sempre respeita. A checagem PRE-espera roda de forma sincrona (antes
+  // de qualquer timer dela disparar), entao sempre ve o relogio na fase
+  // "antes". Restaura Date.now no finally, isolado por teste.
   const timeoutPorTentativaMs = 200;
-  const prazoTotalMs = 1205;
+  const esperaEntreTentativasMs = 5;
+  const prazoTotalMs = 300; // >= esperaEntreTentativasMs(nominal, fase "antes") + timeoutPorTentativaMs -> passa a checagem PRE-espera; < 1000(fase "depois") -> falha a checagem POS-espera
+
+  const DateNowOriginal = Date.now;
+  let faseDepois = false;
+  Date.now = () => (faseDepois ? 1000 : 0);
 
   const { fetchFalso, chamadas } = criarFetchFalso([
-    () => respostaErroHttp(429, {}, { 'Retry-After': '1' }),
+    () => {
+      setTimeout(() => {
+        faseDepois = true;
+      }, 0);
+      return respostaErroHttp(503, {});
+    },
     () => respostaSucesso([]),
   ]);
 
-  const inicio = Date.now();
-  const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs, esperaEntreTentativasMs: 5, prazoTotalMs });
+  const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs, esperaEntreTentativasMs, prazoTotalMs });
 
   let erro: unknown;
   try {
     await cliente.executar(entradaValida());
   } catch (e) {
     erro = e;
+  } finally {
+    Date.now = DateNowOriginal;
   }
-  const duracao = Date.now() - inicio;
 
-  assertCategoria(erro, 'limite_taxa');
+  assertCategoria(erro, 'indisponibilidade');
   assert.equal(erro.tentativas, 1, 'a segunda tentativa nao deveria ter iniciado');
   assert.equal(chamadas.length, 1, 'nenhum segundo fetch deveria ocorrer');
-  assert.ok(
-    duracao >= 950,
-    `a espera pelo Retry-After deveria ter efetivamente ocorrido antes da rejeicao (duracao=${duracao}ms) -- prova que a checagem PRE-espera passou e foi a checagem POS-espera que bloqueou`
-  );
 });
 
 test('correcao1b: com orcamento generoso, a revalidacao apos a espera nao bloqueia a segunda tentativa (regressao)', async () => {
@@ -1237,4 +1277,298 @@ test('correcao-geral: no maximo duas tentativas mesmo combinando Retry-After val
   const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 200, prazoTotalMs: 5000 });
   await assert.rejects(() => cliente.executar(entradaValida()));
   assert.equal(chamadas.length, 2);
+});
+
+// =====================================================================
+// Rodada 4 -- cinco fronteiras corrigidas apos revisao do Codex sobre o
+// commit ef04caf: Retry-After so aceita HTTP-date canonica (round-trip
+// exato); WeakMap privado substitui o Symbol; timeout prevalece sobre
+// qualquer classificacao tardia produzida apos a leitura do corpo;
+// prazo esgotado passa a usar >=; teste de revalidacao pos-espera deixa
+// de depender de jitter natural do setTimeout.
+// =====================================================================
+
+// --- Correcao 1: Retry-After so aceita HTTP-date canonica (round-trip) ---
+
+test('correcao4-1: Retry-After em HTTP-date canonica (toUTCString) continua aceito (regressao)', async () => {
+  const dataFutura = new Date(Date.now() + 2200).toUTCString();
+  const { fetchFalso, chamadas } = criarFetchFalso([
+    () => respostaErroHttp(429, {}, { 'Retry-After': dataFutura }),
+    () => respostaSucesso([]),
+  ]);
+  const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 500, prazoTotalMs: 10000 });
+  await cliente.executar(entradaValida());
+  assert.equal(chamadas.length, 2);
+  const intervalo = chamadas[1].momento - chamadas[0].momento;
+  assert.ok(intervalo >= 1000, `deveria respeitar o Retry-After como data canonica, esperou ${intervalo}ms`);
+});
+
+test('correcao4-2: Retry-After em formato ISO 8601 e rejeitado (nao e a forma canonica de toUTCString)', async () => {
+  const dataIso = new Date(Date.now() + 2200).toISOString();
+  const { fetchFalso, chamadas } = criarFetchFalso([
+    () => respostaErroHttp(429, {}, { 'Retry-After': dataIso }),
+    () => respostaSucesso([]),
+  ]);
+  const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 200, prazoTotalMs: 5000 });
+  const inicio = Date.now();
+  await cliente.executar(entradaValida());
+  const duracao = Date.now() - inicio;
+  assert.equal(chamadas.length, 2);
+  assert.ok(duracao < 200, `ISO 8601 nao deveria ser aceito como Retry-After (levou ${duracao}ms)`);
+});
+
+test('correcao4-3: Retry-After em formato de data local (toString) e rejeitado', async () => {
+  const dataLocal = new Date(Date.now() + 2200).toString();
+  const { fetchFalso, chamadas } = criarFetchFalso([
+    () => respostaErroHttp(429, {}, { 'Retry-After': dataLocal }),
+    () => respostaSucesso([]),
+  ]);
+  const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 200, prazoTotalMs: 5000 });
+  const inicio = Date.now();
+  await cliente.executar(entradaValida());
+  const duracao = Date.now() - inicio;
+  assert.equal(chamadas.length, 2);
+  assert.ok(duracao < 200, `formato de data local nao deveria ser aceito como Retry-After (levou ${duracao}ms)`);
+});
+
+test('correcao4-4: valor numerico ambiguo (epoch em segundos) e tratado como delta-segundos, nunca como data', async () => {
+  const epochSegundosFuturo = String(Math.floor((Date.now() + 3600_000) / 1000));
+  const { fetchFalso, chamadas } = criarFetchFalso([
+    () => respostaErroHttp(429, {}, { 'Retry-After': epochSegundosFuturo }),
+    () => respostaSucesso([]),
+  ]);
+  const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 100, prazoTotalMs: 1000 });
+  let erro: unknown;
+  try {
+    await cliente.executar(entradaValida());
+  } catch (e) {
+    erro = e;
+  }
+  // Se fosse (incorretamente) interpretado como uma data proxima, a
+  // segunda tentativa ocorreria rapido. Sendo interpretado corretamente
+  // como delta-segundos (um numero de segundos enorme), o orcamento e
+  // insuficiente e a segunda tentativa nunca ocorre.
+  assertCategoria(erro, 'limite_taxa');
+  assert.equal(chamadas.length, 1);
+});
+
+test('correcao4-5: decimal rejeitado como delta-segundos tambem nao e aceito como data (fallback correto)', async () => {
+  const { fetchFalso, chamadas } = criarFetchFalso([() => respostaErroHttp(429, {}, { 'Retry-After': '1.5' }), () => respostaSucesso([])]);
+  const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 200, prazoTotalMs: 5000 });
+  const inicio = Date.now();
+  await cliente.executar(entradaValida());
+  const duracao = Date.now() - inicio;
+  assert.equal(chamadas.length, 2);
+  assert.ok(duracao < 200, `"1.5" nao deveria ser aceito nem como segundos nem como data (levou ${duracao}ms)`);
+});
+
+test('correcao4-6: data valida mas com espacamento fora do padrao canonico e rejeitada (round-trip exato falha)', async () => {
+  const dataFutura = new Date(Date.now() + 2200).toUTCString();
+  const dataComEspacoExtra = dataFutura.replace(', ', ',  '); // espaco duplo apos a virgula
+  const { fetchFalso, chamadas } = criarFetchFalso([
+    () => respostaErroHttp(429, {}, { 'Retry-After': dataComEspacoExtra }),
+    () => respostaSucesso([]),
+  ]);
+  const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 200, prazoTotalMs: 5000 });
+  const inicio = Date.now();
+  await cliente.executar(entradaValida());
+  const duracao = Date.now() - inicio;
+  assert.equal(chamadas.length, 2);
+  assert.ok(duracao < 200, `data com espacamento fora do padrao nao deveria ser aceita (levou ${duracao}ms)`);
+});
+
+// --- Correcao 2: WeakMap privado, nenhuma forma de reflexao revela Retry-After ---
+
+test('correcao4-7: WeakMap nao cria propriedade propria no erro -- Object.getOwnPropertyNames so mostra campos aprovados e padrao de Error', async () => {
+  const { fetchFalso } = criarFetchFalso([() => respostaErroHttp(429, {}, { 'Retry-After': '3600' })]);
+  const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 100, prazoTotalMs: 200 });
+  let erro: unknown;
+  try {
+    await cliente.executar(entradaValida());
+  } catch (e) {
+    erro = e;
+  }
+  assertCategoria(erro, 'limite_taxa');
+  const camposAprovados = ['categoria', 'codigo', 'tentativas', 'duracaoMs', 'modelo', 'statusHttp'];
+  const camposPadraoDeError = ['name', 'message', 'stack'];
+  const nomes = Object.getOwnPropertyNames(erro as object);
+  for (const nome of nomes) {
+    assert.ok(camposAprovados.includes(nome) || camposPadraoDeError.includes(nome), `propriedade inesperada: ${nome}`);
+  }
+  assert.ok(!nomes.includes('retryAfterMs'));
+});
+
+test('correcao4-8: Object.getOwnPropertySymbols nao revela nenhum Retry-After', async () => {
+  const { fetchFalso } = criarFetchFalso([() => respostaErroHttp(429, {}, { 'Retry-After': '3600' })]);
+  const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 100, prazoTotalMs: 200 });
+  let erro: unknown;
+  try {
+    await cliente.executar(entradaValida());
+  } catch (e) {
+    erro = e;
+  }
+  assertCategoria(erro, 'limite_taxa');
+  assert.deepEqual(Object.getOwnPropertySymbols(erro as object), []);
+});
+
+test('correcao4-9: Reflect.ownKeys nao revela nenhum Retry-After (nem symbol, nem string oculta)', async () => {
+  const { fetchFalso } = criarFetchFalso([() => respostaErroHttp(429, {}, { 'Retry-After': '3600' })]);
+  const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 100, prazoTotalMs: 200 });
+  let erro: unknown;
+  try {
+    await cliente.executar(entradaValida());
+  } catch (e) {
+    erro = e;
+  }
+  assertCategoria(erro, 'limite_taxa');
+  const camposAprovados = ['categoria', 'codigo', 'tentativas', 'duracaoMs', 'modelo', 'statusHttp'];
+  const camposPadraoDeError = ['name', 'message', 'stack'];
+  const chaves = Reflect.ownKeys(erro as object);
+  for (const chave of chaves) {
+    assert.ok(typeof chave === 'string' && (camposAprovados.includes(chave) || camposPadraoDeError.includes(chave)));
+  }
+});
+
+test('correcao4-10: JSON.stringify (direto e aninhado) nao revela Retry-After', async () => {
+  const { fetchFalso } = criarFetchFalso([() => respostaErroHttp(429, {}, { 'Retry-After': '3600' })]);
+  const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 100, prazoTotalMs: 200 });
+  let erro: unknown;
+  try {
+    await cliente.executar(entradaValida());
+  } catch (e) {
+    erro = e;
+  }
+  assertCategoria(erro, 'limite_taxa');
+  assert.ok(!JSON.stringify(erro).includes('retryAfterMs'));
+  const envelope = { contexto: 'teste', erroOcorrido: erro };
+  assert.ok(!JSON.stringify(envelope).includes('retryAfterMs'));
+  assert.ok(!JSON.stringify(envelope).includes('3600'));
+});
+
+// --- Correcao 3 e 4: timeout prevalece sobre classificacao tardia; limite e >= ---
+
+test('correcao4-11: processamento estrutural tardio (output ausente) retorna timeout, nao resposta_nao_estruturada', async () => {
+  const { fetchFalso } = criarFetchFalso([() => respostaOutputAusente()]);
+  const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs: 20, esperaEntreTentativasMs: 5, prazoTotalMs: 20 });
+  let erro: unknown;
+  await comJsonParseAtrasado(30, async () => {
+    try {
+      await cliente.executar(entradaValida());
+    } catch (e) {
+      erro = e;
+    }
+  });
+  assertCategoria(erro, 'timeout');
+  assert.equal(erro.tentativas, 1);
+});
+
+test('correcao4-12: conversao portatil tardia (campo desconhecido) retorna timeout, nao resposta_invalida', async () => {
+  function respostaComAlteracaoInvalida() {
+    const corpo = {
+      status: 'completed',
+      output: [
+        {
+          type: 'message',
+          content: [{ type: 'output_text', text: JSON.stringify({ alteracoes: [{ campo: 'campo_desconhecido', acao: 'informar', valor: 'x' }] }) }],
+        },
+      ],
+    };
+    return new Response(JSON.stringify(corpo), { status: 200 });
+  }
+  const { fetchFalso } = criarFetchFalso([() => respostaComAlteracaoInvalida()]);
+  const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs: 20, esperaEntreTentativasMs: 5, prazoTotalMs: 20 });
+  let erro: unknown;
+  await comJsonParseAtrasado(15, async () => {
+    try {
+      await cliente.executar(entradaValida());
+    } catch (e) {
+      erro = e;
+    }
+  });
+  assertCategoria(erro, 'timeout');
+});
+
+test('correcao4-13: recusa/filtro tardio retorna timeout quando o prazo ja expirou', async () => {
+  const { fetchFalso } = criarFetchFalso([() => respostaRecusaNoSegundoItemDeContent('motivo interno')]);
+  const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs: 20, esperaEntreTentativasMs: 5, prazoTotalMs: 20 });
+  let erro: unknown;
+  await comJsonParseAtrasado(30, async () => {
+    try {
+      await cliente.executar(entradaValida());
+    } catch (e) {
+      erro = e;
+    }
+  });
+  assertCategoria(erro, 'timeout');
+});
+
+test('correcao4-14: classificacoes originais sao preservadas quando o processamento termina dentro do prazo (regressao)', async () => {
+  const { fetchFalso } = criarFetchFalso([() => respostaOutputAusente()]);
+  const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs: 5000, esperaEntreTentativasMs: 5, prazoTotalMs: 5000 });
+  let erro: unknown;
+  await comJsonParseAtrasado(5, async () => {
+    try {
+      await cliente.executar(entradaValida());
+    } catch (e) {
+      erro = e;
+    }
+  });
+  assertCategoria(erro, 'resposta_nao_estruturada');
+});
+
+test('correcao4-15: decorrido exatamente no limite do timeout da tentativa (ou alem) e tratado como timeout (>=)', async () => {
+  const timeoutPorTentativaMs = 15;
+  const { fetchFalso } = criarFetchFalso([() => respostaSucesso([])]);
+  const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs, esperaEntreTentativasMs: 5, prazoTotalMs: 5000 });
+  let erro: unknown;
+  await comJsonParseAtrasado(timeoutPorTentativaMs, async () => {
+    try {
+      await cliente.executar(entradaValida());
+    } catch (e) {
+      erro = e;
+    }
+  });
+  assertCategoria(erro, 'timeout');
+});
+
+test('correcao4-16: decorrido exatamente no limite do prazo total (ou alem) e tratado como timeout (>=)', async () => {
+  // prazoTotalMs == timeoutPorTentativaMs: configuracao legal mais
+  // apertada (validarConfiguracao exige prazoTotalMs >= timeoutPorTentativaMs).
+  // Nessa configuracao, para a primeira tentativa, os dois limites
+  // coincidem -- e a unica forma de exercitar o limite de prazoTotalMs
+  // sem depender de uma segunda tentativa.
+  const prazoUnico = 15;
+  const { fetchFalso } = criarFetchFalso([() => respostaSucesso([])]);
+  const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs: prazoUnico, esperaEntreTentativasMs: 5, prazoTotalMs: prazoUnico });
+  let erro: unknown;
+  await comJsonParseAtrasado(prazoUnico, async () => {
+    try {
+      await cliente.executar(entradaValida());
+    } catch (e) {
+      erro = e;
+    }
+  });
+  assertCategoria(erro, 'timeout');
+});
+
+// --- Correcao 5: garantias gerais (maximo de tentativas, so fetch falso, zero chamadas reais) ---
+
+test('correcao4-17: maximo de duas tentativas continua garantido apos as cinco correcoes (regressao)', async () => {
+  const { fetchFalso, chamadas } = criarFetchFalso([
+    () => respostaErroHttp(500, {}),
+    () => respostaErroHttp(500, {}),
+    () => respostaErroHttp(500, {}),
+    () => respostaSucesso([]),
+  ]);
+  const cliente = criarCliente({ fetch: fetchFalso });
+  await assert.rejects(() => cliente.executar(entradaValida()));
+  assert.equal(chamadas.length, 2);
+});
+
+test('correcao4-18: todos os testes usam somente fetch falso injetado; nenhuma chamada real de API ocorre', async () => {
+  const { fetchFalso, chamadas } = criarFetchFalso([() => respostaSucesso([])]);
+  const cliente = criarCliente({ fetch: fetchFalso });
+  await cliente.executar(entradaValida());
+  assert.equal(chamadas.length, 1);
+  assert.equal(chamadas[0].url, 'https://api.openai.com/v1/responses');
 });

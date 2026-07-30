@@ -89,23 +89,23 @@ const CATEGORIAS_REPETIVEIS = new Set<CategoriaErroModelo>([
   'resposta_vazia',
 ]);
 
-// Chave interna (nunca exportada) usada para guardar o Retry-After ja
-// convertido para milissegundos, sem torna-lo parte da interface publica
-// do erro -- ver ErroClienteModeloOpenAI abaixo.
-const CHAVE_RETRY_AFTER_MS = Symbol('retryAfterMs');
+// WeakMap privado do modulo, nunca exportado: guarda o Retry-After ja
+// convertido para milissegundos (number | null), associado a cada
+// instancia de ErroClienteModeloOpenAI como chave. Como o valor vive
+// inteiramente FORA do objeto (nenhuma propriedade e criada na
+// instancia, nem enumeravel nem oculta), ele nao aparece em
+// Object.keys, for...in, JSON.stringify, Object.getOwnPropertySymbols,
+// Object.getOwnPropertyNames nem Reflect.ownKeys -- inclusive quando o
+// erro esta aninhado dentro de outro objeto serializado. So e lido
+// internamente por obterRetryAfterMs(), usado pelo orquestrador de retry.
+const mapaRetryAfterMs = new WeakMap<ErroClienteModeloOpenAI, number | null>();
 
-// A interface publica/enumeravel so pode conter: categoria, codigo
+// A interface publica da instancia so pode conter: categoria, codigo
 // tecnico fixo, numero de tentativas realmente iniciadas, duracao,
-// modelo (sempre a constante aprovada), e status HTTP quando existir.
+// modelo (sempre a constante aprovada), e status HTTP quando existir --
+// alem das propriedades padrao de qualquer Error (name, message, stack).
 // Nunca mensagem do paciente, dados_atuais, resposta bruta, valores
-// interpretados, PII, chave ou corpo bruto de erro da API.
-//
-// O valor de Retry-After (ja convertido para milissegundos, nunca o
-// texto bruto do header) e guardado como propriedade NAO ENUMERAVEL
-// (Object.defineProperty), associada a uma chave Symbol interna deste
-// modulo -- nao aparece em JSON.stringify, nao aparece em Object.keys,
-// nao faz parte do tipo publico da classe. So e lido internamente por
-// obterRetryAfterMs(), usado pelo orquestrador de retry.
+// interpretados, PII, chave, corpo bruto de erro da API ou Retry-After.
 export class ErroClienteModeloOpenAI extends Error {
   categoria: CategoriaErroModelo;
   codigo: string;
@@ -132,17 +132,12 @@ export class ErroClienteModeloOpenAI extends Error {
     this.modelo = modelo;
     this.statusHttp = statusHttp;
 
-    Object.defineProperty(this, CHAVE_RETRY_AFTER_MS, {
-      value: retryAfterMs,
-      enumerable: false,
-      writable: false,
-      configurable: false,
-    });
+    mapaRetryAfterMs.set(this, retryAfterMs);
   }
 }
 
 function obterRetryAfterMs(erro: ErroClienteModeloOpenAI): number | null {
-  return (erro as unknown as Record<symbol, number | null>)[CHAVE_RETRY_AFTER_MS] ?? null;
+  return mapaRetryAfterMs.get(erro) ?? null;
 }
 
 // Erro de configuracao, lancado sincronamente em criarClienteModeloOpenAI,
@@ -431,41 +426,80 @@ async function processarTentativa(
   // (em executarUmaTentativa) permanece ativo durante esta leitura.
   const textoCorpo = await resposta.text();
 
-  // Checagem explicita do prazo da tentativa, logo apos a leitura
-  // integral do corpo: o AbortController nao interrompe processamento
-  // sincrono (JSON.parse, classificacao, conversao) que aconteca DEPOIS
-  // da leitura terminar -- entao verificamos aqui por conta propria.
-  verificarPrazoDaTentativa(tentativa, inicioTentativa, timeoutTentativaMs, duracao(), contexto.modelo);
+  // Checagem explicita do prazo da tentativa e do prazo total, logo apos
+  // a leitura integral do corpo: o AbortController nao interrompe
+  // processamento sincrono (JSON.parse, classificacao, conversao) que
+  // aconteca DEPOIS da leitura terminar -- entao verificamos aqui por
+  // conta propria.
+  verificarPrazoOuLancarTimeout(tentativa, inicioTentativa, timeoutTentativaMs, inicioTotal, contexto.prazoTotalMs, duracao(), contexto.modelo);
 
+  try {
+    const resultado = classificarEConverter(textoCorpo, resposta.status, tentativa, duracao, contexto.modelo);
+
+    // Ultima checagem, imediatamente antes de aceitar como sucesso: o
+    // prazo da tentativa e o prazo total (parse/classificacao/conversao
+    // tambem sao processamento sincrono, nao interrompido pelo
+    // AbortController).
+    verificarPrazoOuLancarTimeout(
+      tentativa,
+      inicioTentativa,
+      timeoutTentativaMs,
+      inicioTotal,
+      contexto.prazoTotalMs,
+      duracao(),
+      contexto.modelo
+    );
+
+    return resultado;
+  } catch (erroClassificacao) {
+    if (!(erroClassificacao instanceof ErroClienteModeloOpenAI)) throw erroClassificacao;
+
+    // O prazo pode ter se esgotado DURANTE o processamento (JSON invalido,
+    // raiz invalida, status invalido, truncamento, recusa/filtro, output
+    // ausente, message ausente, content ausente, output_text ausente ou
+    // invalido, conversao portatil invalida) -- nesses casos, timeout
+    // prevalece sobre a classificacao estrutural/semantica, que nunca e
+    // devolvida tardiamente. Se o prazo ainda nao se esgotou, a
+    // classificacao original e preservada sem alteracao.
+    verificarPrazoOuLancarTimeout(
+      tentativa,
+      inicioTentativa,
+      timeoutTentativaMs,
+      inicioTotal,
+      contexto.prazoTotalMs,
+      duracao(),
+      contexto.modelo
+    );
+    throw erroClassificacao;
+  }
+}
+
+// Toda a classificacao estrutural/semantica do corpo ja lido, mais a
+// conversao para o contrato interno. Extraida a parte para que
+// processarTentativa possa envolve-la num unico ponto de checagem de
+// prazo (ver verificarPrazoOuLancarTimeout acima).
+function classificarEConverter(
+  textoCorpo: string,
+  statusHttpResposta: number,
+  tentativa: number,
+  duracao: () => number,
+  modelo: string
+): { alteracoes: AlteracoesDados } {
   if (textoCorpo === '') {
     // Corpo HTTP com zero bytes: unico caso, junto com output_text vazio
     // mais abaixo, classificado como resposta_vazia (repetivel).
-    throw new ErroClienteModeloOpenAI('resposta_vazia', 'corpo_http_vazio', tentativa, duracao(), contexto.modelo, resposta.status);
+    throw new ErroClienteModeloOpenAI('resposta_vazia', 'corpo_http_vazio', tentativa, duracao(), modelo, statusHttpResposta);
   }
 
   let corpoResposta: unknown;
   try {
     corpoResposta = JSON.parse(textoCorpo);
   } catch {
-    throw new ErroClienteModeloOpenAI(
-      'resposta_invalida',
-      'corpo_nao_e_json_valido',
-      tentativa,
-      duracao(),
-      contexto.modelo,
-      resposta.status
-    );
+    throw new ErroClienteModeloOpenAI('resposta_invalida', 'corpo_nao_e_json_valido', tentativa, duracao(), modelo, statusHttpResposta);
   }
 
   if (corpoResposta === null || typeof corpoResposta !== 'object' || Array.isArray(corpoResposta)) {
-    throw new ErroClienteModeloOpenAI(
-      'resposta_invalida',
-      'raiz_json_nao_e_objeto',
-      tentativa,
-      duracao(),
-      contexto.modelo,
-      resposta.status
-    );
+    throw new ErroClienteModeloOpenAI('resposta_invalida', 'raiz_json_nao_e_objeto', tentativa, duracao(), modelo, statusHttpResposta);
   }
   const envelope = corpoResposta as Record<string, unknown>;
 
@@ -473,14 +507,7 @@ async function processarTentativa(
   // generica de status/truncamento -- examina todos os itens de output,
   // todos os itens de content, e incomplete_details quando presente.
   if (detectarRecusaOuFiltro(envelope)) {
-    throw new ErroClienteModeloOpenAI(
-      'recusa_ou_filtro',
-      'recusa_ou_filtro_detectado',
-      tentativa,
-      duracao(),
-      contexto.modelo,
-      resposta.status
-    );
+    throw new ErroClienteModeloOpenAI('recusa_ou_filtro', 'recusa_ou_filtro_detectado', tentativa, duracao(), modelo, statusHttpResposta);
   }
 
   // status precisa ser exatamente a string "completed" para a resposta
@@ -496,12 +523,12 @@ async function processarTentativa(
       'status_ausente_ou_invalido',
       tentativa,
       duracao(),
-      contexto.modelo,
-      resposta.status
+      modelo,
+      statusHttpResposta
     );
   }
   if (status !== 'completed') {
-    throw new ErroClienteModeloOpenAI('resposta_truncada', 'resposta_incompleta', tentativa, duracao(), contexto.modelo, resposta.status);
+    throw new ErroClienteModeloOpenAI('resposta_truncada', 'resposta_incompleta', tentativa, duracao(), modelo, statusHttpResposta);
   }
 
   const output = envelope.output;
@@ -511,8 +538,8 @@ async function processarTentativa(
       'output_ausente_ou_invalido',
       tentativa,
       duracao(),
-      contexto.modelo,
-      resposta.status
+      modelo,
+      statusHttpResposta
     );
   }
 
@@ -520,14 +547,7 @@ async function processarTentativa(
     | { content?: unknown }
     | undefined;
   if (!itemMensagem) {
-    throw new ErroClienteModeloOpenAI(
-      'resposta_nao_estruturada',
-      'item_mensagem_ausente',
-      tentativa,
-      duracao(),
-      contexto.modelo,
-      resposta.status
-    );
+    throw new ErroClienteModeloOpenAI('resposta_nao_estruturada', 'item_mensagem_ausente', tentativa, duracao(), modelo, statusHttpResposta);
   }
 
   const conteudo = itemMensagem.content;
@@ -537,8 +557,8 @@ async function processarTentativa(
       'conteudo_ausente_ou_invalido',
       tentativa,
       duracao(),
-      contexto.modelo,
-      resposta.status
+      modelo,
+      statusHttpResposta
     );
   }
 
@@ -552,13 +572,13 @@ async function processarTentativa(
       'canal_estruturado_ausente',
       tentativa,
       duracao(),
-      contexto.modelo,
-      resposta.status
+      modelo,
+      statusHttpResposta
     );
   }
 
   if (textoBruto === '') {
-    throw new ErroClienteModeloOpenAI('resposta_vazia', 'output_text_vazio', tentativa, duracao(), contexto.modelo, resposta.status);
+    throw new ErroClienteModeloOpenAI('resposta_vazia', 'output_text_vazio', tentativa, duracao(), modelo, statusHttpResposta);
   }
 
   // Nenhuma tentativa de consertar/reinterpretar: JSON.parse direto, sem
@@ -567,14 +587,7 @@ async function processarTentativa(
   try {
     objetoPortatil = JSON.parse(textoBruto);
   } catch {
-    throw new ErroClienteModeloOpenAI(
-      'resposta_invalida',
-      'output_text_json_invalido',
-      tentativa,
-      duracao(),
-      contexto.modelo,
-      resposta.status
-    );
+    throw new ErroClienteModeloOpenAI('resposta_invalida', 'output_text_json_invalido', tentativa, duracao(), modelo, statusHttpResposta);
   }
 
   let alteracoesInternas: AlteracoesDados;
@@ -582,15 +595,8 @@ async function processarTentativa(
     alteracoesInternas = converterParaContratoInterno(objetoPortatil);
   } catch (erroConversao) {
     const codigo = erroConversao instanceof ErroConversaoPortatil ? erroConversao.codigo : 'objeto_portatil_invalido';
-    throw new ErroClienteModeloOpenAI('resposta_invalida', codigo, tentativa, duracao(), contexto.modelo, resposta.status);
+    throw new ErroClienteModeloOpenAI('resposta_invalida', codigo, tentativa, duracao(), modelo, statusHttpResposta);
   }
-
-  // Ultima checagem, imediatamente antes de aceitar como sucesso: o
-  // prazo da tentativa (parse/classificacao/conversao tambem sao
-  // processamento sincrono, nao interrompido pelo AbortController) e o
-  // prazo total.
-  verificarPrazoDaTentativa(tentativa, inicioTentativa, timeoutTentativaMs, duracao(), contexto.modelo);
-  verificarPrazoTotal(tentativa, inicioTotal, contexto.prazoTotalMs, contexto.modelo);
 
   return { alteracoes: alteracoesInternas };
 }
@@ -598,25 +604,29 @@ async function processarTentativa(
 // AbortController so cancela I/O pendente (fetch/leitura do corpo) -- nao
 // interrompe processamento sincrono que aconteca depois. Por isso, alem
 // do timeout via AbortController, verificamos explicitamente o relogio
-// de parede em dois pontos: logo apos a leitura integral do corpo, e
-// logo antes de aceitar a resposta como sucesso.
-function verificarPrazoDaTentativa(
+// de parede: logo apos a leitura integral do corpo, imediatamente antes
+// de aceitar a resposta como sucesso, e imediatamente antes de propagar
+// qualquer erro de classificacao produzido nesse intervalo -- nesse
+// ultimo caso, se o prazo ja se esgotou, timeout prevalece sobre a
+// classificacao original. O prazo e considerado esgotado com >=, nunca
+// apenas com > (nao aceita sucesso ou classificacao tardia exatamente no
+// limite).
+function verificarPrazoOuLancarTimeout(
   tentativa: number,
   inicioTentativa: number,
   timeoutTentativaMs: number,
+  inicioTotal: number,
+  prazoTotalMs: number,
   duracaoTotal: number,
   modelo: string
 ): void {
   const decorridoNaTentativa = Date.now() - inicioTentativa;
-  if (decorridoNaTentativa > timeoutTentativaMs) {
-    throw new ErroClienteModeloOpenAI('timeout', 'prazo_da_tentativa_excedido_apos_leitura', tentativa, duracaoTotal, modelo);
+  if (decorridoNaTentativa >= timeoutTentativaMs) {
+    throw new ErroClienteModeloOpenAI('timeout', 'prazo_da_tentativa_excedido', tentativa, duracaoTotal, modelo);
   }
-}
-
-function verificarPrazoTotal(tentativa: number, inicioTotal: number, prazoTotalMs: number, modelo: string): void {
   const decorridoTotal = Date.now() - inicioTotal;
-  if (decorridoTotal > prazoTotalMs) {
-    throw new ErroClienteModeloOpenAI('timeout', 'prazo_total_excedido_apos_processamento', tentativa, decorridoTotal, modelo);
+  if (decorridoTotal >= prazoTotalMs) {
+    throw new ErroClienteModeloOpenAI('timeout', 'prazo_total_excedido', tentativa, duracaoTotal, modelo);
   }
 }
 
@@ -661,10 +671,19 @@ function detectarRecusaOuFiltro(envelope: Record<string, unknown>): boolean {
 const REGEX_RETRY_AFTER_SEGUNDOS_INTEIROS = /^[0-9]+$/;
 
 // Interpreta o header Retry-After em segundos (formato estrito acima) ou
-// em formato de data HTTP, devolvendo sempre um numero de milissegundos
-// ja convertido (nunca o texto bruto). Valor invalido, ausente, ou que
-// gere milissegundos nao finitos / maiores que Number.MAX_SAFE_INTEGER ->
-// null (o chamador usa somente esperaEntreTentativasMs nesse caso).
+// em data HTTP canonica, devolvendo sempre um numero de milissegundos ja
+// convertido (nunca o texto bruto, nunca armazenado em nenhum lugar).
+// Valor invalido, ausente, ou que gere milissegundos nao finitos / maiores
+// que Number.MAX_SAFE_INTEGER -> null (o chamador usa somente
+// esperaEntreTentativasMs nesse caso).
+//
+// O formato de data so e aceito quando o header for EXATAMENTE a forma
+// canonica RFC 1123 que o proprio runtime produziria para aquele instante
+// (round-trip via toUTCString): Date.parse aceita, deliberadamente, uma
+// familia ampla de formatos (ISO 8601, data local, variantes com
+// espacamento diferente, formatos dependentes de runtime) -- nenhum
+// desses e aceito aqui. Sem trim, sem normalizacao: a comparacao e
+// sempre contra o texto recebido, byte a byte.
 function interpretarRetryAfter(valorHeader: string | null): number | null {
   if (!valorHeader) return null;
 
@@ -677,9 +696,9 @@ function interpretarRetryAfter(valorHeader: string | null): number | null {
     return null;
   }
 
-  const comoData = Date.parse(valorHeader);
-  if (!Number.isNaN(comoData)) {
-    const diferencaMs = comoData - Date.now();
+  const comoTimestamp = Date.parse(valorHeader);
+  if (!Number.isNaN(comoTimestamp) && new Date(comoTimestamp).toUTCString() === valorHeader) {
+    const diferencaMs = comoTimestamp - Date.now();
     return diferencaMs > 0 ? diferencaMs : 0;
   }
 
