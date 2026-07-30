@@ -36,6 +36,11 @@ export interface ResultadoIdentificacao {
 export interface ConsultaEncadeavel<T = Record<string, unknown>> {
   eq(coluna: string, valor: unknown): ConsultaEncadeavel<T>;
   is(coluna: string, valor: null): ConsultaEncadeavel<T>;
+  // Espelha PostgrestFilterBuilder.not() do supabase-js. Usado hoje somente
+  // para expressar "IS NOT NULL" (ex.: not('interpretacao_persistida_em',
+  // 'is', null)), necessario para a conclusao condicional -- nunca faz um
+  // SELECT de autorizacao seguido de UPDATE separado.
+  not(coluna: string, operador: string, valor: unknown): ConsultaEncadeavel<T>;
   select(colunas: string): ConsultaEncadeavel<T>;
   maybeSingle(): Promise<{ data: T | null; error: { message: string } | null }>;
 }

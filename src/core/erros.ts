@@ -56,3 +56,17 @@ export class InterpretacaoInvalidaError extends Error {
     this.caminho = caminho;
   }
 }
+
+// Erro tecnico de uma chamada RPC (falha de rede/SQL reportada pelo cliente,
+// ou payload de retorno que nao corresponde ao contrato aprovado). `motivo`
+// e sempre uma descricao tecnica fixa (nome de campo, vocabulario esperado)
+// — nunca inclui claim_token, PII ou o payload bruto retornado pela RPC.
+export class ErroRpcTecnico extends Error {
+  rpc: string;
+
+  constructor(rpc: string, motivo: string) {
+    super(`falha tecnica na RPC '${rpc}': ${motivo}`);
+    this.name = 'ErroRpcTecnico';
+    this.rpc = rpc;
+  }
+}

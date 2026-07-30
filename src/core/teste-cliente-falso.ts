@@ -10,10 +10,11 @@ export interface TabelasFalsas {
   clinicas: Record<string, unknown>[];
   pacientes: Record<string, unknown>[];
   estado_conversa: Record<string, unknown>[];
+  mensagens_recebidas: Record<string, unknown>[];
 }
 
 export function criarTabelasFalsasVazias(): TabelasFalsas {
-  return { clinicas: [], pacientes: [], estado_conversa: [] };
+  return { clinicas: [], pacientes: [], estado_conversa: [], mensagens_recebidas: [] };
 }
 
 class ConsultaFalsa implements ConsultaEncadeavel {
@@ -44,6 +45,18 @@ class ConsultaFalsa implements ConsultaEncadeavel {
     return this.eq(coluna, valor);
   }
 
+  not(coluna: string, operador: string, valor: unknown): ConsultaEncadeavel {
+    if (operador !== 'is' || valor !== null) {
+      throw new Error(`ConsultaFalsa.not: combinacao nao suportada (${operador}, ${String(valor)})`);
+    }
+    const base = this.linhasFiltradas ?? this.todasLinhas;
+    return new ConsultaFalsa(
+      this.todasLinhas,
+      base.filter((linha) => linha[coluna] !== null && linha[coluna] !== undefined),
+      this.erro
+    );
+  }
+
   select(_colunas: string): ConsultaEncadeavel {
     return this;
   }
@@ -61,7 +74,14 @@ class ConsultaFalsa implements ConsultaEncadeavel {
   }
 }
 
-type Filtro = { coluna: string; valor: unknown };
+// 'eq' cobre .eq() e .is(coluna, null); 'not_null' cobre .not(coluna, 'is', null)
+// -- a unica combinacao de .not() usada hoje (ver ConsultaEncadeavel.not em tipos.ts).
+type Filtro = { tipo: 'eq'; coluna: string; valor: unknown } | { tipo: 'not_null'; coluna: string };
+
+function filtroCasa(linha: Record<string, unknown>, filtro: Filtro): boolean {
+  if (filtro.tipo === 'eq') return linha[filtro.coluna] === filtro.valor;
+  return linha[filtro.coluna] !== null && linha[filtro.coluna] !== undefined;
+}
 
 class AtualizacaoFalsa implements ConsultaEncadeavel {
   private readonly linhas: Record<string, unknown>[];
@@ -75,11 +95,18 @@ class AtualizacaoFalsa implements ConsultaEncadeavel {
   }
 
   eq(coluna: string, valor: unknown): ConsultaEncadeavel {
-    return new AtualizacaoFalsa(this.linhas, this.valores, [...this.filtros, { coluna, valor }]);
+    return new AtualizacaoFalsa(this.linhas, this.valores, [...this.filtros, { tipo: 'eq', coluna, valor }]);
   }
 
   is(coluna: string, valor: null): ConsultaEncadeavel {
     return this.eq(coluna, valor);
+  }
+
+  not(coluna: string, operador: string, valor: unknown): ConsultaEncadeavel {
+    if (operador !== 'is' || valor !== null) {
+      throw new Error(`AtualizacaoFalsa.not: combinacao nao suportada (${operador}, ${String(valor)})`);
+    }
+    return new AtualizacaoFalsa(this.linhas, this.valores, [...this.filtros, { tipo: 'not_null', coluna }]);
   }
 
   select(_colunas: string): ConsultaEncadeavel {
@@ -92,7 +119,7 @@ class AtualizacaoFalsa implements ConsultaEncadeavel {
     // reproduzindo a atomicidade de um UPDATE real: nenhuma outra chamada
     // "concorrente" consegue intercalar entre o find e o Object.assign.
     await Promise.resolve();
-    const alvo = this.linhas.find((linha) => this.filtros.every((f) => linha[f.coluna] === f.valor));
+    const alvo = this.linhas.find((linha) => this.filtros.every((f) => filtroCasa(linha, f)));
     if (!alvo) return { data: null, error: null };
     Object.assign(alvo, this.valores);
     return { data: alvo, error: null };
