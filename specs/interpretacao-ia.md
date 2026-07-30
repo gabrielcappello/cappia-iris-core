@@ -183,8 +183,8 @@ mais recente.
       persistida/processada, mesmo quando nenhuma alteração efetiva em
       `estado_conversa.dados` foi necessária (ver "Concorrência" → "Casos sem
       alteração de estado"). Não significa necessariamente que a interpretação "foi
-      aplicada em `estado_conversa`" — significa que o processamento desse
-      `message_id` foi concluído e não deve ser repetido.
+      aplicada em `estado_conversa`" — significa que a etapa de interpretação desse
+      `message_id` foi validamente persistida e não deve ser repetida.
   Nenhuma dessas colunas é implementada nesta rodada; `interpretacao_persistida_em` é
   usado de forma uniforme em todo este documento com essa semântica.
 - Transições de estado aprovadas:
