@@ -52,11 +52,15 @@ aplicarInterpretacaoCondicional(
 
 - Essa função fará **uma única tentativa** de persistência (sem o retry interno de
   `aplicarDados`).
-- A condição da escrita deve incluir, simultaneamente:
-  - `conversa_id`;
-  - `clinica_id`;
-  - `telefone_normalizado`;
-  - `atualizado_em` do snapshot original.
+- `conversa_id` é o campo recebido pelo Core; a coluna real em `estado_conversa` é
+  `id`. A condição da escrita deve ser, explicitamente:
+
+  ```sql
+  id = snapshot.conversa_id
+  AND clinica_id = snapshot.clinica_id
+  AND telefone_normalizado = snapshot.telefone_normalizado
+  AND atualizado_em = snapshot.atualizado_em
+  ```
 - Se a versão mudou entre a leitura do snapshot e a tentativa de escrita:
   - não aplicar nenhuma alteração;
   - não reler e reaplicar;
@@ -95,9 +99,9 @@ mais recente.
   - `recebida → processando`;
   - `processando` (expirado) `→ processando` com novo `claim_token`.
 - Lease: **60 segundos**.
-- Somente o proprietário do `claim_token` vigente pode persistir e finalizar o
-  processamento.
-- `concluída` não processa nem responde novamente.
+- Somente o proprietário do `claim_token` vigente pode: persistir a interpretação;
+  finalizar o processamento; autorizar a produção lógica da resposta.
+- `concluida` não processa nem responde novamente.
 - `processando` com lease válido não processa nem responde novamente.
 - `falhou` não é reinterpretada automaticamente.
 - `processando` com lease expirado pode ser reivindicada por um novo worker.
@@ -188,7 +192,7 @@ Cenários cobertos por essa resposta fixa:
 - falha de persistência;
 - indisponibilidade do adaptador.
 
-Mensagem duplicada (mesmo `message_id`, já `concluída` ou ainda `processando` com lease
+Mensagem duplicada (mesmo `message_id`, já `concluida` ou ainda `processando` com lease
 válido):
 
 - não chama o modelo;
@@ -207,7 +211,7 @@ Nenhuma falha pode produzir:
 1. validar envelope do transporte;
 2. resolver clínica pela instância autenticada;
 3. inserir ou reivindicar em `mensagens_recebidas`;
-4. encerrar silenciosamente se duplicada não elegível (já `concluída`, ou `processando`
+4. encerrar silenciosamente se duplicada não elegível (já `concluida`, ou `processando`
    com lease válido);
 5. identificar paciente e conversa;
 6. carregar `dados` e `atualizado_em` (o snapshot);
@@ -216,16 +220,25 @@ Nenhuma falha pode produzir:
 9. executar `extrairAlteracoes`;
 10. validar integralmente a saída;
 11. executar `preAplicar`;
-12. persistir uma única vez, via `aplicarInterpretacaoCondicional`, contra o
-    `atualizado_em` original;
-13. em conflito concorrente, não aplicar nada;
-14. recalcular deterministicamente o próximo estado (controlador);
-15. produzir a resposta por template determinístico (ou, futuramente, pela porta de
+12. revalidar `claim_token`, status `processando` e lease ainda vigente;
+13. persistir uma única vez, via `aplicarInterpretacaoCondicional`, contra o
+    `atualizado_em` original (condição completa registrada em "Concorrência");
+14. em conflito concorrente, não aplicar nada;
+15. recalcular deterministicamente o próximo estado (controlador);
+16. produzir a resposta por template determinístico (ou, futuramente, pela porta de
     redação natural);
-16. revalidar o `claim_token`;
-17. registrar a conclusão lógica em `mensagens_recebidas`;
-18. entregar pelo transporte;
-19. nunca repetir automaticamente o mesmo `message_id`.
+17. revalidar `claim_token`, status `processando` e lease ainda vigente, antes de
+    registrar a conclusão lógica;
+18. registrar a conclusão lógica em `mensagens_recebidas`;
+19. revalidar `claim_token`, status `processando` e lease ainda vigente, antes de
+    entregar a resposta;
+20. entregar pelo transporte;
+21. nunca repetir automaticamente o mesmo `message_id`.
+
+Em cada um dos três pontos de revalidação (12, 17, 19): apenas o proprietário do
+`claim_token` vigente pode prosseguir; se o claim não pertence mais ao processamento
+atual (expirado ou reivindicado por outro worker), a etapa correspondente
+(persistência, conclusão lógica ou entrega) não é executada.
 
 ## Invariantes
 
@@ -246,7 +259,7 @@ Nenhuma falha pode produzir:
   calculada.
 - Somente o proprietário do `claim_token` vigente pode persistir e finalizar — um worker
   cujo claim expirou nunca finaliza, mesmo que ainda esteja em execução.
-- `concluída` e `processando` (com lease válido) nunca disparam novo processamento nem
+- `concluida` e `processando` (com lease válido) nunca disparam novo processamento nem
   nova resposta.
 - `falhou` nunca é reinterpretada automaticamente.
 - Nenhum dado cadastral antigo (valor) é enviado ao modelo — só quais campos já estão
@@ -270,8 +283,9 @@ nesta rodada):
 - nenhuma releitura nem reaplicação automática após `conflito_concorrente`;
 - nenhuma nova chamada ao modelo após `conflito_concorrente`;
 - exatamente uma tentativa de persistência (sem o retry de `aplicarDados`);
-- condição de escrita usa `conversa_id` + `clinica_id` + `telefone_normalizado` +
-  `atualizado_em` simultaneamente;
+- condição de escrita usa `id = snapshot.conversa_id` + `clinica_id` +
+  `telefone_normalizado` + `atualizado_em` simultaneamente (ver mapeamento
+  `conversa_id` → `id` em "Concorrência");
 - `aplicarDados` (fora desta função) continua com seu comportamento e retry atuais,
   inalterado.
 
@@ -288,7 +302,7 @@ nesta rodada):
 
 - claim atômico: duas tentativas concorrentes de reivindicar a mesma mensagem resultam em
   exatamente um vencedor;
-- mensagem `concluída` não gera novo processamento nem nova resposta;
+- mensagem `concluida` não gera novo processamento nem nova resposta;
 - mensagem `processando` com lease válido não gera novo processamento nem nova resposta;
 - mensagem `processando` com lease expirado pode ser reivindicada por um novo
   `claim_token`;
@@ -320,6 +334,44 @@ nesta rodada):
 
 ### Fluxo completo
 
-- as 19 etapas do fluxo aprovado executam na ordem descrita, sem pular ou reordenar
-  etapas obrigatórias (em especial: claim antes da IA; persistência condicional antes de
-  recalcular o controlador; revalidação do `claim_token` antes de registrar conclusão).
+- as etapas do fluxo aprovado executam na ordem descrita, sem pular ou reordenar etapas
+  obrigatórias (em especial: claim antes da IA; revalidação do `claim_token` antes da
+  persistência condicional; persistência condicional antes de recalcular o controlador;
+  revalidação do `claim_token` antes de registrar a conclusão lógica; revalidação do
+  `claim_token` antes de entregar a resposta).
+
+### Integração, robustez e isolamento
+
+Cenários obrigatórios adicionais — cada um preserva sua asserção específica, sem fusão
+com outro cenário:
+
+1. adaptador real com fetch falso ligado a `interpretarEAplicar` — o caminho completo do
+   orquestrador até o adaptador é exercitado com um fetch falso simulando a API OpenAI,
+   sem chamada externa real;
+2. campo portátil repetido — uma lista `alteracoes` do contrato portátil com o mesmo
+   `campo` mais de uma vez é rejeitada por `converterParaContratoInterno`, não aplicada
+   silenciosamente;
+3. string vazia em `informar` — valor vazio para a ação `informar` é tratado como
+   entrada inválida, não como remoção nem como valor válido;
+4. string vazia em `corrigir` — valor vazio para a ação `corrigir` é tratado como
+   entrada inválida, não como remoção nem como valor válido;
+5. `periodo` inválido — valor fora do conjunto permitido para `periodo` é rejeitado
+   antes de qualquer persistência;
+6. `intencao` inválida — valor fora do conjunto permitido para `intencao` é rejeitado
+   antes de qualquer persistência;
+7. `corrigir` com versão intacta — quando `atualizado_em` não mudou entre o snapshot e
+   a escrita, uma decisão `corrigir` válida é aplicada normalmente;
+8. `remover` com versão intacta — quando `atualizado_em` não mudou entre o snapshot e
+   a escrita, uma decisão `remover` válida é aplicada normalmente;
+9. isolamento entre instâncias — mensagens com o mesmo `message_id` em
+   `instancia_whatsapp` diferentes não se confundem nem se deduplicam entre si;
+10. isolamento entre clínicas — dados, conversas e claims de uma `clinica_id` nunca
+    vazam nem interferem em outra `clinica_id`;
+11. ausência de PII em logs e erros — nenhuma mensagem de log ou de erro do fluxo de
+    interpretação expõe nome, CPF, data de nascimento, e-mail, telefone ou texto literal
+    do paciente;
+12. falha de persistência sem resposta de sucesso — se `aplicarInterpretacaoCondicional`
+    falhar, a resposta fixa de falha é produzida; nunca uma resposta de sucesso;
+13. entrada acima do limite sem chamada ao modelo — quando a entrada excede o limite
+    máximo, o modelo nunca é chamado; a rejeição ocorre antes das etapas de execução do
+    adaptador no fluxo.
