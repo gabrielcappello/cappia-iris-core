@@ -141,13 +141,22 @@ function inspecaoEstruturalValida(inspecao: InspecaoEstrutural): boolean {
 // teste "independencia do adaptador real" (no arquivo de teste) prova que
 // essa expectativa calculada aqui bate com o que o adaptador realmente
 // monta, sem nunca importar nem chamar a funcao privada.
-const FRASE_ESTRUTURAL_FORMATO_INTERNO_ANTIGO =
+//
+// IMPORTANTE: calcularInstrucaoSystemEsperada e uma funcao PURA, exportada,
+// mas NUNCA chamada no escopo superior deste modulo -- nenhuma excecao
+// pode acontecer durante a importacao. Ela so e chamada dentro do bloco
+// protegido de executarPrincipal (ou explicitamente por testes), e o
+// resultado e passado explicitamente adiante (executarUma ->
+// criarFetchComLimiteExterno -> inspecionarCorpoRequisicao) -- nunca
+// guardado em variavel global, nunca recalculado silenciosamente em cada
+// funcao da cadeia.
+export const FRASE_ESTRUTURAL_FORMATO_INTERNO_ANTIGO =
   'Responda estritamente no formato do schema fornecido — nenhuma propriedade alem de "alteracoes" no nivel principal, nenhuma propriedade alem de "acao"/"valor" (ou somente "acao" para remover) dentro de cada alteracao.';
 
-const FRASE_ESTRUTURAL_TRANSPORTE_PORTATIL =
+export const FRASE_ESTRUTURAL_TRANSPORTE_PORTATIL =
   'Responda estritamente no formato do schema fornecido — a raiz contem somente "alteracoes"; "alteracoes" e uma lista; cada item da lista contem exatamente "campo", "acao" e "valor"; informar e corrigir usam "valor" como string; remover usa "valor": null; nenhuma propriedade adicional e permitida.';
 
-function calcularInstrucaoSystemEsperada(instrucoesBase: string): string {
+export function calcularInstrucaoSystemEsperada(instrucoesBase: string): string {
   const ocorrencias = instrucoesBase.split(FRASE_ESTRUTURAL_FORMATO_INTERNO_ANTIGO).length - 1;
   if (ocorrencias !== 1) {
     throw new Error('instrucoes_base_nao_contem_a_frase_estrutural_esperada_exatamente_uma_vez');
@@ -166,23 +175,18 @@ function calcularInstrucaoSystemEsperada(instrucoesBase: string): string {
   return substituida;
 }
 
-// Expectativa exata (fixa, calculada uma unica vez na carga do modulo) do
-// conteudo que a mensagem system deveria conter -- nunca impressa nem
-// persistida.
-export const INSTRUCAO_SYSTEM_ESPERADA = calcularInstrucaoSystemEsperada(INSTRUCOES_EXTRATOR);
-
 // O item system so e aceito com EXATAMENTE as propriedades role/content,
 // role==="system", e content IGUAL, por comparacao direta de string, a
-// INSTRUCAO_SYSTEM_ESPERADA -- nenhum prefixo, sufixo, espaco adicional ou
-// instrucao paralela.
-function ehItemSystemValido(item: unknown): item is { role: 'system'; content: string } {
+// instrucaoSystemEsperada recebida -- nenhum prefixo, sufixo, espaco
+// adicional ou instrucao paralela.
+function ehItemSystemValido(item: unknown, instrucaoSystemEsperada: string): item is { role: 'system'; content: string } {
   if (item === null || typeof item !== 'object' || Array.isArray(item)) return false;
   const chaves = Object.keys(item as Record<string, unknown>).sort();
   if (JSON.stringify(chaves) !== JSON.stringify(['content', 'role'])) return false;
   const objeto = item as { role: unknown; content: unknown };
   if (objeto.role !== 'system') return false;
   if (typeof objeto.content !== 'string') return false;
-  return objeto.content === INSTRUCAO_SYSTEM_ESPERADA;
+  return objeto.content === instrucaoSystemEsperada;
 }
 
 // O item user so e aceito com EXATAMENTE as propriedades role e content
@@ -235,19 +239,22 @@ function ehPayloadDeUsuarioAutorizado(conteudoTexto: string): boolean {
 // role/content, nenhum item adicional (mais uma mensagem system, mais uma
 // user, assistant, developer, tool ou qualquer role desconhecido reprova
 // so pelo tamanho ou pela posicao), o conteudo system EXATAMENTE igual a
-// INSTRUCAO_SYSTEM_ESPERADA, e o conteudo da mensagem user exatamente
-// igual ao payload sintetico autorizado.
-function ehInputAutorizado(input: unknown): boolean {
+// instrucaoSystemEsperada (recebida explicitamente, nunca de uma
+// constante global), e o conteudo da mensagem user exatamente igual ao
+// payload sintetico autorizado.
+function ehInputAutorizado(input: unknown, instrucaoSystemEsperada: string): boolean {
   if (!Array.isArray(input)) return false;
   if (input.length !== 2) return false;
-  if (!ehItemSystemValido(input[0])) return false;
+  if (!ehItemSystemValido(input[0], instrucaoSystemEsperada)) return false;
   if (!ehItemUserValido(input[1])) return false;
   return ehPayloadDeUsuarioAutorizado(input[1].content);
 }
 
 // Analisa o corpo da requisicao SOMENTE EM MEMORIA (nunca impresso nem
-// persistido) e devolve so booleanos estruturais.
-export function inspecionarCorpoRequisicao(corpoBruto: string): InspecaoEstrutural {
+// persistido) e devolve so booleanos estruturais. `instrucaoSystemEsperada`
+// e sempre recebida explicitamente pelo chamador (nunca lida de uma
+// constante global nem recalculada aqui).
+export function inspecionarCorpoRequisicao(corpoBruto: string, instrucaoSystemEsperada: string): InspecaoEstrutural {
   const invalida: InspecaoEstrutural = {
     modeloOk: false,
     storeFalse: false,
@@ -272,7 +279,7 @@ export function inspecionarCorpoRequisicao(corpoBruto: string): InspecaoEstrutur
   const formatoJsonSchema = text?.format?.type === 'json_schema';
   const strictTrue = text?.format?.strict === true;
   const toolsAusentes = !('tools' in envelope);
-  const payloadAutorizado = ehInputAutorizado(envelope.input);
+  const payloadAutorizado = ehInputAutorizado(envelope.input, instrucaoSystemEsperada);
 
   return { modeloOk, storeFalse, formatoJsonSchema, strictTrue, toolsAusentes, payloadAutorizado };
 }
@@ -290,9 +297,13 @@ const CODIGO_ESTRUTURA_INVALIDA_BLOQUEADA = 'estrutura_da_requisicao_invalida_bl
 
 // Wrapper de fetch com limite externo ABSOLUTO: no maximo uma chamada real
 // sai para a rede, non-negociavel. Recebe o fetch subjacente (real ou
-// falso, injetavel para teste) e devolve o wrapper mais funcoes de
-// observacao -- nunca imprime nem persiste o que observa.
-export function criarFetchComLimiteExterno(fetchSubjacente: typeof fetch): {
+// falso, injetavel para teste) e a instrucaoSystemEsperada (recebida
+// explicitamente, nunca de uma constante global) e devolve o wrapper mais
+// funcoes de observacao -- nunca imprime nem persiste o que observa.
+export function criarFetchComLimiteExterno(
+  fetchSubjacente: typeof fetch,
+  instrucaoSystemEsperada: string
+): {
   fetchWrapper: typeof fetch;
   obterContadores: () => ContadoresFetch;
   obterInspecao: () => InspecaoEstrutural | null;
@@ -314,7 +325,7 @@ export function criarFetchComLimiteExterno(fetchSubjacente: typeof fetch): {
     }
 
     const corpoBruto = typeof opcoes?.body === 'string' ? opcoes.body : '';
-    ultimaInspecao = inspecionarCorpoRequisicao(corpoBruto);
+    ultimaInspecao = inspecionarCorpoRequisicao(corpoBruto, instrucaoSystemEsperada);
 
     if (!inspecaoEstruturalValida(ultimaInspecao)) {
       throw new Error(CODIGO_ESTRUTURA_INVALIDA_BLOQUEADA);
@@ -365,9 +376,11 @@ function camposOrdenados(resultado: unknown): string[] {
 // Executa exatamente uma tentativa de ponta a ponta (adaptador real +
 // wrapper de limite externo) e devolve somente a evidencia sanitizada.
 // `fetchSubjacente` e injetavel para permitir testes com fetch inteiramente
-// falso, sem nenhuma chamada real.
-export async function executarUma(fetchSubjacente: typeof fetch, chaveApi: string): Promise<Evidencia> {
-  const { fetchWrapper, obterContadores, obterInspecao, obterStatusHttp } = criarFetchComLimiteExterno(fetchSubjacente);
+// falso, sem nenhuma chamada real. `instrucaoSystemEsperada` e sempre
+// recebida explicitamente pelo chamador (executarPrincipal a calcula
+// dentro do bloco protegido e passa adiante -- nunca recalculada aqui).
+export async function executarUma(fetchSubjacente: typeof fetch, chaveApi: string, instrucaoSystemEsperada: string): Promise<Evidencia> {
+  const { fetchWrapper, obterContadores, obterInspecao, obterStatusHttp } = criarFetchComLimiteExterno(fetchSubjacente, instrucaoSystemEsperada);
 
   const cliente = criarClienteModeloOpenAI({
     chaveApi,
@@ -460,6 +473,25 @@ const EVIDENCIA_CHAVE_AUSENTE: EvidenciaErro = {
   duracao_ms: 0,
 };
 
+// Usada quando obterInstrucaoSystemEsperada() lanca -- por exemplo, se
+// INSTRUCOES_EXTRATOR deixar de conter a frase estrutural esperada
+// exatamente uma vez. Nunca contem o erro original, a mensagem, o stack
+// nem qualquer conteudo de instrucao -- so o codigo tecnico fixo abaixo.
+// Bloqueia ANTES de qualquer possibilidade de chamada a rede ou ao
+// adaptador (invocacoes_fetch/chamadas_externas ficam em 0).
+const CODIGO_INSTRUCAO_SYSTEM_ESPERADA_INVALIDA = 'instrucao_system_esperada_invalida';
+
+const EVIDENCIA_INSTRUCAO_SYSTEM_INVALIDA: EvidenciaErro = {
+  aprovado: false,
+  categoria: null,
+  codigo: CODIGO_INSTRUCAO_SYSTEM_ESPERADA_INVALIDA,
+  status_http: null,
+  invocacoes_fetch: 0,
+  chamadas_externas: 0,
+  segunda_chamada_bloqueada: false,
+  duracao_ms: 0,
+};
+
 const EVIDENCIA_ERRO_NAO_TRATADO: EvidenciaErro = {
   aprovado: false,
   categoria: null,
@@ -474,35 +506,61 @@ const EVIDENCIA_ERRO_NAO_TRATADO: EvidenciaErro = {
 // Dependencias explicitas do caminho principal -- todas injetaveis, para
 // que o teste exercite exatamente o mesmo caminho que main() usa em
 // execucao real, sem nunca tocar rede, ambiente ou console de verdade.
+// obterInstrucaoSystemEsperada() e o UNICO lugar onde
+// calcularInstrucaoSystemEsperada(INSTRUCOES_EXTRATOR) e chamada no
+// caminho real -- nunca no escopo superior do modulo.
 export interface DependenciasExecucaoPrincipal {
   fetchSubjacente: typeof fetch;
   obterChaveApi: () => string | undefined;
+  obterInstrucaoSystemEsperada: () => string;
   saida: (evidencia: Evidencia) => void;
 }
 
-// Funcao principal testavel: le a chave (via obterChaveApi injetavel),
-// executa uma tentativa e imprime (via saida injetavel) exatamente uma
-// evidencia sanitizada. Nunca aceita payload externo nem chave por
-// argumento -- essas garantias continuam fixas no proprio codigo
-// (PAYLOAD_SINTETICO_AUTORIZADO, e obterChaveApi so pode vir da variavel
-// de ambiente em producao real). Devolve o codigo de saida (0 == aprovado).
+// Calcula a evidencia (nunca lanca) -- extraida para que executarPrincipal
+// possa chamar dependencias.saida(evidencia) exatamente uma vez, sempre
+// fora de qualquer bloco de captura.
+async function calcularEvidencia(dependencias: DependenciasExecucaoPrincipal): Promise<Evidencia> {
+  const chaveApi = dependencias.obterChaveApi();
+  if (typeof chaveApi !== 'string' || chaveApi.trim() === '') {
+    return EVIDENCIA_CHAVE_AUSENTE;
+  }
+
+  // Calculada aqui, dentro do bloco protegido, ANTES de qualquer
+  // possibilidade de chamada a rede ou ao adaptador. Se lancar (por
+  // exemplo, a frase estrutural esperada ausente ou duplicada em
+  // INSTRUCOES_EXTRATOR), nem fetch nem o adaptador chegam a ser
+  // chamados -- so a evidencia sanitizada de baixo, sem o erro original,
+  // sem mensagem, sem stack, sem conteudo de instrucao.
+  let instrucaoSystemEsperada: string;
+  try {
+    instrucaoSystemEsperada = dependencias.obterInstrucaoSystemEsperada();
+  } catch {
+    return EVIDENCIA_INSTRUCAO_SYSTEM_INVALIDA;
+  }
+
+  return executarUma(dependencias.fetchSubjacente, chaveApi, instrucaoSystemEsperada);
+}
+
+// Funcao principal testavel: le a chave e a instrucao system esperada (via
+// dependencias injetaveis), executa uma tentativa e imprime (via saida
+// injetavel) exatamente uma evidencia sanitizada. Nunca aceita payload
+// externo nem chave por argumento -- essas garantias continuam fixas no
+// proprio codigo (PAYLOAD_SINTETICO_AUTORIZADO, e obterChaveApi so pode
+// vir da variavel de ambiente em producao real). Devolve o codigo de
+// saida (0 == aprovado).
 //
 // Estrutura deliberada: a evidencia (e o codigo de saida associado) e
 // calculada INTEIRAMENTE dentro do bloco protegido -- o try/catch cobre
-// somente a leitura da chave e a execucao, nunca a propria chamada de
-// saida. dependencias.saida(evidencia) roda UMA UNICA VEZ, fora desse
-// bloco: se ela propria lancar, o erro escapa direto para quem chamou
+// somente calcularEvidencia (leitura da chave, calculo da instrucao
+// system esperada e a execucao), nunca a propria chamada de saida.
+// dependencias.saida(evidencia) roda UMA UNICA VEZ, fora desse bloco: se
+// ela propria lancar, o erro escapa direto para quem chamou
 // executarPrincipal, sem ser reinterpretado como falha de execucao e sem
 // nenhuma segunda tentativa de impressao.
 export async function executarPrincipal(dependencias: DependenciasExecucaoPrincipal): Promise<number> {
   let evidencia: Evidencia;
   try {
-    const chaveApi = dependencias.obterChaveApi();
-    if (typeof chaveApi !== 'string' || chaveApi.trim() === '') {
-      evidencia = EVIDENCIA_CHAVE_AUSENTE;
-    } else {
-      evidencia = await executarUma(dependencias.fetchSubjacente, chaveApi);
-    }
+    evidencia = await calcularEvidencia(dependencias);
   } catch {
     // Nunca loga o erro capturado aqui -- pode conter stack, mensagem do
     // provedor ou qualquer outro contexto sensivel. So o codigo fixo e
@@ -514,23 +572,49 @@ export async function executarPrincipal(dependencias: DependenciasExecucaoPrinci
   return evidencia.aprovado ? 0 : 1;
 }
 
-// main() e so um adaptador minimo da execucao direta: liga
-// executarPrincipal as dependencias reais (fetch global,
-// IRIS_EVAL_OPENAI_API_KEY, console.log via imprimirEvidencia) -- toda a
-// logica testavel vive em executarPrincipal/executarUma. Se a propria
-// saida (console.log) lancar, executarPrincipal rejeita -- aqui so
-// marcamos codigo de saida diferente de zero, sem tentar imprimir de
-// novo e sem logar o erro (poderia conter contexto sensivel).
-async function main(): Promise<void> {
+// Dependencias do caminho exato que main() delega: uma chamada ja
+// vinculada a executarPrincipal (chamarExecutarPrincipal) e uma funcao
+// para registrar o codigo de saida (definirCodigoSaida) -- nenhuma delas
+// toca process.exitCode diretamente, entao o teste pode exercitar
+// exatamente esse caminho sem depender do processo real.
+export interface DependenciasCaminhoMain {
+  chamarExecutarPrincipal: () => Promise<number>;
+  definirCodigoSaida: (codigo: number) => void;
+}
+
+// Representa exatamente o que main() faz: chama executarPrincipal e
+// define o codigo de saida com o valor resolvido; se a promessa rejeitar
+// (unico jeito disso acontecer e a propria funcao de saida ter lancado,
+// ja que executarPrincipal nunca rejeita por conta propria), define
+// codigo de saida 1, sem tentar chamar a saida de novo, sem imprimir o
+// erro nem o stack, e sem iniciar nenhuma nova chamada de rede.
+export async function executarCaminhoMain(dependencias: DependenciasCaminhoMain): Promise<void> {
   try {
-    process.exitCode = await executarPrincipal({
-      fetchSubjacente: fetch,
-      obterChaveApi: () => process.env.IRIS_EVAL_OPENAI_API_KEY,
-      saida: imprimirEvidencia,
-    });
+    const codigo = await dependencias.chamarExecutarPrincipal();
+    dependencias.definirCodigoSaida(codigo);
   } catch {
-    process.exitCode = 1;
+    dependencias.definirCodigoSaida(1);
   }
+}
+
+// main() e so um adaptador minimo da execucao direta: liga
+// executarCaminhoMain as dependencias reais (fetch global,
+// IRIS_EVAL_OPENAI_API_KEY, o calculo oficial da instrucao system,
+// console.log via imprimirEvidencia, e process.exitCode) -- toda a logica
+// testavel vive em executarCaminhoMain/executarPrincipal/executarUma.
+async function main(): Promise<void> {
+  await executarCaminhoMain({
+    chamarExecutarPrincipal: () =>
+      executarPrincipal({
+        fetchSubjacente: fetch,
+        obterChaveApi: () => process.env.IRIS_EVAL_OPENAI_API_KEY,
+        obterInstrucaoSystemEsperada: () => calcularInstrucaoSystemEsperada(INSTRUCOES_EXTRATOR),
+        saida: imprimirEvidencia,
+      }),
+    definirCodigoSaida: (codigo) => {
+      process.exitCode = codigo;
+    },
+  });
 }
 
 // So dispara main() quando este arquivo e executado diretamente (node
