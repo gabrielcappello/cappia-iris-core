@@ -13,10 +13,10 @@
 --     CONCORRENCIA REAL" no rodape deste arquivo;
 --   - testes 23 e 28 adicionados para lease_expira_em NULL (reivindicacao e
 --     persistencia), que nao existiam na rodada anterior;
---   - secao inteira de validacao JSONB canonica (testes 42-59) reescrita
+--   - secao inteira de validacao JSONB canonica (testes 41-59) reescrita
 --     para cobrir o conjunto EXATO de propriedades por acao, com testes
 --     negativos e de regressao explicitos;
---   - testes que esperam excecao (42-54) reescritos com uma flag booleana
+--   - testes que esperam excecao (41-54) reescritos com uma flag booleana
 --     (v_excecao_ocorreu) e a asercao de "deveria ter lancado excecao" FORA
 --     do bloco exception -- o padrao anterior (raise exception dentro do
 --     proprio "exception when raise_exception then") se auto-capturava e
@@ -131,7 +131,9 @@ declare
   v_msg_recebida_id uuid;
   v_claim_pre uuid;
   v_lease_pre timestamptz;
-  v_check_claim_token uuid;
+
+  v_23_antes record;
+  v_23_depois record;
 
   v_msg_e1_id uuid;
   v_claim_e1 uuid;
@@ -379,16 +381,41 @@ begin
   update mensagens_recebidas set lease_expira_em = null, interpretacao_persistida_em = null, status_processamento = 'processando', claim_token = v_claim
   where provider = 'evolution' and instancia_whatsapp = 'interp-clinica-a' and message_id = 'msg-a1';
 
+  -- Snapshot "antes" das colunas mutaveis da linha, para comparacao
+  -- explicita com o snapshot "depois" da chamada -- nao basta verificar o
+  -- retorno da RPC, a linha em si precisa permanecer bit-a-bit identica.
+  select status_processamento, claim_token, lease_expira_em, interpretacao_persistida_em, concluido_em
+    into v_23_antes
+  from mensagens_recebidas
+  where provider = 'evolution' and instancia_whatsapp = 'interp-clinica-a' and message_id = 'msg-a1';
+
   select * into v_resultado, v_msg_id, v_claim2, v_lease, v_marcador
   from public.reivindicar_mensagem('evolution', 'interp-clinica-a', 'msg-a1', clinica_a, '5511900000001');
   if v_resultado <> 'nao_elegivel' or v_claim2 is not null then
     raise exception 'FALHA teste23: processando com lease_expira_em NULL deveria ser nao_elegivel sem token, foi % (token=%)', v_resultado, v_claim2;
   end if;
-  select claim_token into v_check_claim_token from mensagens_recebidas where provider = 'evolution' and instancia_whatsapp = 'interp-clinica-a' and message_id = 'msg-a1';
-  if v_check_claim_token <> v_claim then
-    raise exception 'FALHA teste23: processando com lease_expira_em NULL nao deveria ter o claim_token substituido';
+
+  select status_processamento, claim_token, lease_expira_em, interpretacao_persistida_em, concluido_em
+    into v_23_depois
+  from mensagens_recebidas
+  where provider = 'evolution' and instancia_whatsapp = 'interp-clinica-a' and message_id = 'msg-a1';
+
+  if v_23_depois.status_processamento <> v_23_antes.status_processamento then
+    raise exception 'FALHA teste23: status_processamento nao deveria ter mudado (antes=%, depois=%)', v_23_antes.status_processamento, v_23_depois.status_processamento;
   end if;
-  raise notice 'OK teste23: processando com lease_expira_em NULL -> nao_elegivel, sem reivindicar, sem renovar token, sem alterar a linha';
+  if v_23_depois.claim_token <> v_23_antes.claim_token then
+    raise exception 'FALHA teste23: claim_token nao deveria ter mudado (antes=%, depois=%)', v_23_antes.claim_token, v_23_depois.claim_token;
+  end if;
+  if v_23_antes.lease_expira_em is not null or v_23_depois.lease_expira_em is not null then
+    raise exception 'FALHA teste23: lease_expira_em deveria permanecer NULL antes e depois da chamada';
+  end if;
+  if v_23_depois.interpretacao_persistida_em is distinct from v_23_antes.interpretacao_persistida_em then
+    raise exception 'FALHA teste23: interpretacao_persistida_em nao deveria ter mudado (antes=%, depois=%)', v_23_antes.interpretacao_persistida_em, v_23_depois.interpretacao_persistida_em;
+  end if;
+  if v_23_depois.concluido_em is distinct from v_23_antes.concluido_em then
+    raise exception 'FALHA teste23: concluido_em nao deveria ter mudado -- nenhuma outra coluna relevante da linha deveria ser alterada';
+  end if;
+  raise notice 'OK teste23: processando com lease_expira_em NULL -> nao_elegivel; status_processamento, claim_token, lease_expira_em (permanece NULL) e interpretacao_persistida_em comparados explicitamente antes/depois, nenhum alterado';
 
   -- 24. persistencia valida altera estado e marcador -----------------------
   select * into v_resultado, v_msg_id, v_claim2, v_lease, v_marcador
@@ -455,6 +482,9 @@ begin
 
   -- 28. lease_expira_em NULL na persistencia -> autorizacao_invalida --------
   update mensagens_recebidas set lease_expira_em = null where id = v_msg_id;
+  -- "antes" explicito de atualizado_em, capturado imediatamente antes da
+  -- chamada -- nao reaproveita valor de um teste anterior.
+  select atualizado_em into v_atualizado_em2 from estado_conversa where id = conversa_a;
   select * into v_conv_resultado, v_conv_id, v_dados, v_atualizado_em
   from public.aplicar_interpretacao_condicional(
     v_msg_id, clinica_a, '5511900000001', v_claim2, conversa_a,
@@ -467,7 +497,13 @@ begin
   if (select dados from estado_conversa where id = conversa_a) is distinct from jsonb_build_object('nome', 'Maria') then
     raise exception 'FALHA teste28: lease_expira_em NULL nao deveria ter permitido alteracao em estado_conversa';
   end if;
-  raise notice 'OK teste28: lease_expira_em NULL na persistencia -> autorizacao_invalida, sem alterar estado_conversa';
+  if (select atualizado_em from estado_conversa where id = conversa_a) <> v_atualizado_em2 then
+    raise exception 'FALHA teste28: lease_expira_em NULL nao deveria ter permitido alteracao em atualizado_em';
+  end if;
+  if (select interpretacao_persistida_em from mensagens_recebidas where id = v_msg_id) is not null then
+    raise exception 'FALHA teste28: lease_expira_em NULL nao deveria ter permitido preencher interpretacao_persistida_em';
+  end if;
+  raise notice 'OK teste28: lease_expira_em NULL na persistencia -> autorizacao_invalida, sem alterar estado_conversa (dados e atualizado_em) e com interpretacao_persistida_em permanecendo NULL';
   update mensagens_recebidas set lease_expira_em = transaction_timestamp() + interval '60 seconds' where id = v_msg_id;
 
   -- 29. marcador preenchido -> autorizacao_invalida ------------------------
