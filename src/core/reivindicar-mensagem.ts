@@ -1,4 +1,5 @@
-import { ErroRpcTecnico } from './erros.ts';
+import { EntradaInvalidaError, ErroRpcTecnico } from './erros.ts';
+import { telefoneNormalizadoValido } from './telefone.ts';
 import type {
   ClienteRpc,
   ReivindicarMensagemEntrada,
@@ -14,17 +15,22 @@ const RESULTADOS_VALIDOS: readonly ResultadoReivindicacao[] = [
   'nao_elegivel',
 ];
 
+const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
 /**
  * Adaptador minimo para a RPC public.reivindicar_mensagem (specs/
  * interpretacao-ia.md, "Contrato tecnico de banco — Etapa 6"). Uma unica
  * chamada, sem retry, sem releitura. Nao chama modelo, nao executa
- * controlador, nunca registra claim_token, PII ou o payload bruto da RPC —
- * as mensagens de erro so citam nomes de campo fixos.
+ * controlador. As mensagens de erro citam somente nomes de campo ou codigos
+ * tecnicos fixos — nunca `error.message` do cliente Supabase, nem
+ * claim_token, PII ou qualquer payload bruto retornado pela RPC.
  */
 export async function reivindicarMensagem(
   cliente: ClienteRpc,
   entrada: ReivindicarMensagemEntrada
 ): Promise<ReivindicarMensagemSaida> {
+  validarEntrada(entrada);
+
   const { data, error } = await cliente.rpc(NOME_RPC, {
     p_provider: entrada.provider,
     p_instancia_whatsapp: entrada.instancia_whatsapp,
@@ -34,10 +40,38 @@ export async function reivindicarMensagem(
   });
 
   if (error) {
-    throw new ErroRpcTecnico(NOME_RPC, error.message);
+    // Nunca propaga error.message: pode conter SQL, detalhes de linha ou
+    // outro conteudo bruto reportado pelo cliente Supabase. Motivo tecnico
+    // fixo somente.
+    throw new ErroRpcTecnico(NOME_RPC, 'cliente_supabase_falhou');
   }
 
   return validarSaida(data);
+}
+
+function validarEntrada(entrada: ReivindicarMensagemEntrada): void {
+  validarStringNaoVazia('provider', entrada.provider);
+  validarStringNaoVazia('instancia_whatsapp', entrada.instancia_whatsapp);
+  validarStringNaoVazia('message_id', entrada.message_id);
+  validarUuid('clinica_id', entrada.clinica_id);
+  if (typeof entrada.telefone_normalizado !== 'string' || !telefoneNormalizadoValido(entrada.telefone_normalizado)) {
+    throw new EntradaInvalidaError(
+      'telefone_normalizado',
+      'telefone_normalizado fora do formato brasileiro canonico (55 + 10 ou 11 digitos)'
+    );
+  }
+}
+
+function validarStringNaoVazia(campo: string, valor: unknown): void {
+  if (typeof valor !== 'string' || valor.trim() === '') {
+    throw new EntradaInvalidaError(campo, `${campo} deve ser uma string nao vazia`);
+  }
+}
+
+function validarUuid(campo: string, valor: unknown): void {
+  if (typeof valor !== 'string' || !UUID_REGEX.test(valor)) {
+    throw new EntradaInvalidaError(campo, `${campo} deve estar no formato UUID valido`);
+  }
 }
 
 function validarSaida(data: unknown): ReivindicarMensagemSaida {
@@ -49,20 +83,12 @@ function validarSaida(data: unknown): ReivindicarMensagemSaida {
   }
   const resultado = resultadoBruto as ResultadoReivindicacao;
 
-  const mensagemRecebidaId = campoOpcionalString(linha.mensagem_recebida_id, 'mensagem_recebida_id');
-  const claimToken = campoOpcionalString(linha.claim_token, 'claim_token');
-  const leaseExpiraEm = campoOpcionalString(linha.lease_expira_em, 'lease_expira_em');
-  const interpretacaoPersistidaEm = campoOpcionalString(linha.interpretacao_persistida_em, 'interpretacao_persistida_em');
+  const mensagemRecebidaId = campoOpcionalUuid(linha.mensagem_recebida_id, 'mensagem_recebida_id');
+  const claimToken = campoOpcionalUuid(linha.claim_token, 'claim_token');
+  const leaseExpiraEm = campoOpcionalTimestamp(linha.lease_expira_em, 'lease_expira_em');
+  const interpretacaoPersistidaEm = campoOpcionalTimestamp(linha.interpretacao_persistida_em, 'interpretacao_persistida_em');
 
-  // claim_token so pode existir nos resultados reivindicada_* — nao confia
-  // cegamente no payload da RPC, mesmo que o resultado em si seja valido.
-  if (resultado === 'nao_elegivel') {
-    if (claimToken !== null) {
-      throw new ErroRpcTecnico(NOME_RPC, "resultado 'nao_elegivel' nunca deve retornar claim_token");
-    }
-  } else if (claimToken === null || mensagemRecebidaId === null || leaseExpiraEm === null) {
-    throw new ErroRpcTecnico(NOME_RPC, `resultado '${resultado}' deve retornar mensagem_recebida_id, claim_token e lease_expira_em`);
-  }
+  validarCoerencia(resultado, mensagemRecebidaId, claimToken, leaseExpiraEm, interpretacaoPersistidaEm);
 
   return {
     resultado,
@@ -73,24 +99,63 @@ function validarSaida(data: unknown): ReivindicarMensagemSaida {
   };
 }
 
-function extrairLinhaUnica(data: unknown): Record<string, unknown> {
-  let linha = data;
-  if (Array.isArray(linha)) {
-    if (linha.length !== 1) {
-      throw new ErroRpcTecnico(NOME_RPC, 'retorno da RPC deve conter exatamente uma linha');
+// Coerencia completa do payload contra o contrato real da migration — nunca
+// confia parcialmente no retorno da RPC, mesmo quando `resultado` em si e
+// um valor valido do vocabulario aprovado.
+function validarCoerencia(
+  resultado: ResultadoReivindicacao,
+  mensagemRecebidaId: string | null,
+  claimToken: string | null,
+  leaseExpiraEm: string | null,
+  interpretacaoPersistidaEm: string | null
+): void {
+  if (resultado === 'nao_elegivel') {
+    if (mensagemRecebidaId !== null || claimToken !== null || leaseExpiraEm !== null || interpretacaoPersistidaEm !== null) {
+      throw new ErroRpcTecnico(NOME_RPC, "resultado 'nao_elegivel' deve retornar todos os campos de reivindicacao nulos");
     }
-    linha = linha[0];
+    return;
   }
-  if (linha === null || typeof linha !== 'object') {
+
+  if (mensagemRecebidaId === null || claimToken === null || leaseExpiraEm === null) {
+    throw new ErroRpcTecnico(NOME_RPC, `resultado '${resultado}' deve retornar mensagem_recebida_id, claim_token e lease_expira_em`);
+  }
+
+  if (resultado === 'reivindicada_interpretar' && interpretacaoPersistidaEm !== null) {
+    throw new ErroRpcTecnico(NOME_RPC, "resultado 'reivindicada_interpretar' deve retornar interpretacao_persistida_em nulo");
+  }
+  if (resultado === 'reivindicada_resposta_fixa' && interpretacaoPersistidaEm === null) {
+    throw new ErroRpcTecnico(NOME_RPC, "resultado 'reivindicada_resposta_fixa' deve retornar interpretacao_persistida_em preenchido");
+  }
+}
+
+// Formato estrito: sempre array com exatamente uma linha. Nenhuma tolerancia
+// a formatos alternativos (objeto unico, array vazio, multiplas linhas).
+function extrairLinhaUnica(data: unknown): Record<string, unknown> {
+  if (!Array.isArray(data)) {
+    throw new ErroRpcTecnico(NOME_RPC, 'retorno da RPC deve ser um array');
+  }
+  if (data.length !== 1) {
+    throw new ErroRpcTecnico(NOME_RPC, 'retorno da RPC deve conter exatamente uma linha');
+  }
+  const linha = data[0];
+  if (linha === null || typeof linha !== 'object' || Array.isArray(linha)) {
     throw new ErroRpcTecnico(NOME_RPC, 'retorno da RPC deve ser um objeto');
   }
   return linha as Record<string, unknown>;
 }
 
-function campoOpcionalString(valor: unknown, campo: string): string | null {
+function campoOpcionalUuid(valor: unknown, campo: string): string | null {
   if (valor === null || valor === undefined) return null;
-  if (typeof valor !== 'string') {
-    throw new ErroRpcTecnico(NOME_RPC, `campo '${campo}' deve ser string ou null`);
+  if (typeof valor !== 'string' || !UUID_REGEX.test(valor)) {
+    throw new ErroRpcTecnico(NOME_RPC, `campo '${campo}' deve ser um UUID valido ou null`);
+  }
+  return valor;
+}
+
+function campoOpcionalTimestamp(valor: unknown, campo: string): string | null {
+  if (valor === null || valor === undefined) return null;
+  if (typeof valor !== 'string' || valor.trim() === '' || Number.isNaN(Date.parse(valor))) {
+    throw new ErroRpcTecnico(NOME_RPC, `campo '${campo}' deve ser um timestamp valido ou null`);
   }
   return valor;
 }

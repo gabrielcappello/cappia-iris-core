@@ -494,7 +494,9 @@ Exigir: `id = mensagem_recebida_id`; `clinica_id` correspondente à clínica
 autenticada; `status_processamento = 'processando'`; `claim_token` correspondente;
 `interpretacao_persistida_em IS NOT NULL`.
 
-Atualizar: `status_processamento = 'concluida'`; `concluido_em = now()`.
+Atualizar: `status_processamento = 'concluida'`; `concluido_em` = timestamp UTC
+gerado pelo runtime servidor da Edge Function imediatamente antes deste `UPDATE`
+(ver definição completa após "Finalização de falha anterior à persistência").
 
 Não exigir lease vigente na conclusão. Justificativa: o envio pode terminar depois da
 expiração do lease; exigir lease poderia impedir a conclusão de uma mensagem já
@@ -542,7 +544,8 @@ Condições: `id = mensagem_recebida_id`; `clinica_id` correspondente à clínic
 autenticada; `status_processamento = 'processando'`; `claim_token` do worker;
 `interpretacao_persistida_em IS NULL`.
 
-Atualizações: `status_processamento = 'falhou'`; `concluido_em = now()`.
+Atualizações: `status_processamento = 'falhou'`; `concluido_em` = timestamp UTC
+gerado pelo runtime servidor da Edge Function imediatamente antes deste `UPDATE`.
 
 Não exigir lease vigente. Justificativa: o envio da resposta fixa pode terminar depois
 da expiração do lease; o `claim_token` impede um worker antigo de finalizar depois de
@@ -558,8 +561,13 @@ depois da expiração do lease; não afirmar que a falha foi tratada com sucesso
 limitação pertence à pendência de transporte ainda não idempotente/outbox já
 registrada (ver "Deduplicação e lease"). Nenhum status novo é criado.
 
-`concluido_em` é usado como timestamp terminal tanto para sucesso quanto para
-falha — não é necessária uma coluna `falhou_em` separada.
+`concluido_em` é o timestamp terminal em UTC, usado tanto para sucesso
+(`concluida`) quanto para falha (`falhou`) — não é necessária uma coluna
+`falhou_em` separada. Decisão aprovada: é produzido pelo runtime servidor da
+Edge Function, calculado imediatamente antes do `UPDATE` PostgREST
+correspondente — nunca vem do paciente, da IA ou de qualquer payload externo.
+Não é criada RPC, trigger ou função PostgreSQL apenas para obter esse
+timestamp.
 
 ### Distinção dos caminhos terminais
 

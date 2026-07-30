@@ -1,5 +1,20 @@
+import { EntradaInvalidaError, ErroRpcTecnico } from './erros.ts';
 import type { ClienteBancoDados } from './tipos.ts';
 import type { ClaimMensagem, ResultadoConclusao, ResultadoFalha } from './mensagens-recebidas-tipos.ts';
+
+const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+function validarClaim(claim: ClaimMensagem): void {
+  validarUuid('mensagem_recebida_id', claim.mensagem_recebida_id);
+  validarUuid('clinica_id', claim.clinica_id);
+  validarUuid('claim_token', claim.claim_token);
+}
+
+function validarUuid(campo: string, valor: unknown): void {
+  if (typeof valor !== 'string' || !UUID_REGEX.test(valor)) {
+    throw new EntradaInvalidaError(campo, `${campo} deve estar no formato UUID valido`);
+  }
+}
 
 /**
  * UPDATE PostgREST condicional unico (sem RPC dedicada) para marcar uma
@@ -11,19 +26,23 @@ import type { ClaimMensagem, ResultadoConclusao, ResultadoFalha } from './mensag
  * depois da expiracao do lease, e o claim_token ja impede um worker
  * substituido de concluir.
  *
- * `concluido_em` e gerado pelo Core (relogio do processo chamador) no
- * momento da chamada, nao pelo PostgreSQL — essa e a unica forma
- * tecnicamente possivel de preencher esse timestamp por um UPDATE PostgREST
- * simples, sem introduzir uma RPC ou trigger novos (fora do escopo desta
- * rodada).
+ * `concluido_em`: decisao aprovada (Gabriel, tarefa 0036) — timestamp
+ * terminal em UTC, gerado pelo runtime servidor da Edge Function
+ * imediatamente antes deste UPDATE, nunca recebido como entrada e nunca
+ * vindo do paciente, da IA ou de qualquer payload externo. Nenhuma RPC ou
+ * trigger nova foi criada apenas para obter este timestamp.
  */
 export async function concluirMensagemCondicional(
   cliente: ClienteBancoDados,
   claim: ClaimMensagem
 ): Promise<ResultadoConclusao> {
+  validarClaim(claim);
+
+  const concluidoEm = new Date().toISOString();
+
   const { data, error } = await cliente
     .from('mensagens_recebidas')
-    .update({ status_processamento: 'concluida', concluido_em: new Date().toISOString() })
+    .update({ status_processamento: 'concluida', concluido_em: concluidoEm })
     .eq('id', claim.mensagem_recebida_id)
     .eq('clinica_id', claim.clinica_id)
     .eq('status_processamento', 'processando')
@@ -32,7 +51,10 @@ export async function concluirMensagemCondicional(
     .select('id')
     .maybeSingle();
 
-  if (error) throw new Error(`falha ao concluir mensagem: ${error.message}`);
+  if (error) {
+    // Nunca propaga error.message do cliente Supabase — motivo tecnico fixo.
+    throw new ErroRpcTecnico('concluir_mensagem_condicional', 'cliente_supabase_falhou');
+  }
   return data ? 'concluida' : 'autorizacao_invalida';
 }
 
@@ -45,16 +67,21 @@ export async function concluirMensagemCondicional(
  * concluirMensagemCondicional), separando os dois caminhos terminais. Nao
  * exige lease vigente, pela mesma razao de concluirMensagemCondicional.
  *
- * Mesma ressalva sobre `concluido_em`: gerado pelo Core, nao pelo
- * PostgreSQL, pela mesma limitacao tecnica do UPDATE PostgREST simples.
+ * Mesma decisao aprovada sobre `concluido_em` de concluirMensagemCondicional:
+ * timestamp terminal em UTC gerado pelo runtime servidor da Edge Function
+ * imediatamente antes deste UPDATE, nunca recebido como entrada.
  */
 export async function falharMensagemCondicional(
   cliente: ClienteBancoDados,
   claim: ClaimMensagem
 ): Promise<ResultadoFalha> {
+  validarClaim(claim);
+
+  const concluidoEm = new Date().toISOString();
+
   const { data, error } = await cliente
     .from('mensagens_recebidas')
-    .update({ status_processamento: 'falhou', concluido_em: new Date().toISOString() })
+    .update({ status_processamento: 'falhou', concluido_em: concluidoEm })
     .eq('id', claim.mensagem_recebida_id)
     .eq('clinica_id', claim.clinica_id)
     .eq('status_processamento', 'processando')
@@ -63,6 +90,9 @@ export async function falharMensagemCondicional(
     .select('id')
     .maybeSingle();
 
-  if (error) throw new Error(`falha ao marcar mensagem como falhou: ${error.message}`);
+  if (error) {
+    // Nunca propaga error.message do cliente Supabase — motivo tecnico fixo.
+    throw new ErroRpcTecnico('falhar_mensagem_condicional', 'cliente_supabase_falhou');
+  }
   return data ? 'falhou' : 'autorizacao_invalida';
 }

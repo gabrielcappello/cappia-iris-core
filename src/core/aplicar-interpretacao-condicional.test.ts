@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { aplicarInterpretacaoCondicional } from './aplicar-interpretacao-condicional.ts';
-import { ErroRpcTecnico } from './erros.ts';
+import { EntradaInvalidaError, ErroRpcTecnico } from './erros.ts';
 import { ClienteRpcFalso } from './teste-cliente-rpc-falso.ts';
 import type { AplicarInterpretacaoCondicionalEntrada } from './mensagens-recebidas-tipos.ts';
 
@@ -135,12 +135,31 @@ test('teste9: array com mais de uma linha e rejeitado', async () => {
   await assert.rejects(() => aplicarInterpretacaoCondicional(cliente, ENTRADA), ErroRpcTecnico);
 });
 
-test('teste10: erro tecnico reportado pelo cliente e propagado como ErroRpcTecnico', async () => {
+test('teste9b: retorno como objeto unico (nao array) e rejeitado -- nenhuma tolerancia a formatos alternativos', async () => {
+  const cliente = new ClienteRpcFalso({
+    aplicar_interpretacao_condicional: {
+      data: { resultado: 'conflito_concorrente', conversa_id: null, dados: null, atualizado_em: null },
+      error: null,
+    },
+  });
+
+  await assert.rejects(() => aplicarInterpretacaoCondicional(cliente, ENTRADA), ErroRpcTecnico);
+});
+
+test('teste10: erro tecnico reportado pelo cliente e propagado como ErroRpcTecnico com motivo fixo', async () => {
   const cliente = new ClienteRpcFalso({
     aplicar_interpretacao_condicional: { data: null, error: { message: 'timeout' } },
   });
 
-  await assert.rejects(() => aplicarInterpretacaoCondicional(cliente, ENTRADA), ErroRpcTecnico);
+  await assert.rejects(
+    () => aplicarInterpretacaoCondicional(cliente, ENTRADA),
+    (erro: unknown) => {
+      assert.ok(erro instanceof ErroRpcTecnico);
+      assert.equal(erro.rpc, 'aplicar_interpretacao_condicional');
+      assert.ok(erro.message.includes('cliente_supabase_falhou'), 'motivo deve ser o codigo tecnico fixo');
+      return true;
+    }
+  );
   assert.equal(cliente.chamadas.length, 1);
 });
 
@@ -157,4 +176,112 @@ test('teste11: nunca ha releitura nem nova tentativa apos conflito_concorrente o
 
     assert.equal(cliente.chamadas.length, 1, `resultado '${resultado}' deve disparar exatamente uma chamada .rpc()`);
   }
+});
+
+// --- teste12: formato invalido dos campos de saida (UUID/timestamp) ---
+
+test('teste12: persistida com conversa_id que nao e UUID e rejeitado', async () => {
+  const cliente = new ClienteRpcFalso({
+    aplicar_interpretacao_condicional: {
+      data: [{ resultado: 'persistida', conversa_id: 'nao-e-um-uuid', dados: { nome: 'Joao' }, atualizado_em: new Date().toISOString() }],
+      error: null,
+    },
+  });
+
+  await assert.rejects(() => aplicarInterpretacaoCondicional(cliente, ENTRADA), ErroRpcTecnico);
+});
+
+test('teste13: persistida com atualizado_em que nao e timestamp valido e rejeitado', async () => {
+  const cliente = new ClienteRpcFalso({
+    aplicar_interpretacao_condicional: {
+      data: [{ resultado: 'persistida', conversa_id: ENTRADA.conversa_id, dados: { nome: 'Joao' }, atualizado_em: 'ontem' }],
+      error: null,
+    },
+  });
+
+  await assert.rejects(() => aplicarInterpretacaoCondicional(cliente, ENTRADA), ErroRpcTecnico);
+});
+
+// --- teste14: sanitizacao -- error.message do cliente Supabase nunca vaza ---
+
+test('teste14: error.message do cliente contendo telefone/CPF/claim_token/SQL nunca aparece no erro propagado', async () => {
+  const mensagemSensivel = [
+    `telefone=${ENTRADA.telefone_normalizado}`,
+    'cpf=11122233344',
+    `claim_token=${ENTRADA.claim_token}`,
+    "update estado_conversa set dados = '{}' where id = '123'",
+  ].join(' ');
+  const cliente = new ClienteRpcFalso({
+    aplicar_interpretacao_condicional: { data: null, error: { message: mensagemSensivel } },
+  });
+
+  await assert.rejects(
+    () => aplicarInterpretacaoCondicional(cliente, ENTRADA),
+    (erro: unknown) => {
+      assert.ok(erro instanceof ErroRpcTecnico);
+      const serializado = JSON.stringify(erro);
+      const propriedadesPublicas = Object.keys(erro).map((chave) => String((erro as Record<string, unknown>)[chave]));
+      for (const trecho of [ENTRADA.telefone_normalizado, '11122233344', ENTRADA.claim_token, 'update estado_conversa']) {
+        assert.ok(!erro.message.includes(trecho), `erro.message nao deve conter: ${trecho}`);
+        assert.ok(!erro.stack?.includes(trecho), `stack nao deve conter: ${trecho}`);
+        assert.ok(!serializado?.includes(trecho), `JSON.stringify nao deve conter: ${trecho}`);
+        assert.ok(!propriedadesPublicas.some((valor) => valor.includes(trecho)), `propriedades publicas nao devem conter: ${trecho}`);
+      }
+      return true;
+    }
+  );
+});
+
+// --- teste15: validacao minima das entradas, antes de qualquer chamada ao Supabase ---
+
+async function esperarRejeicaoSemChamada(
+  entrada: AplicarInterpretacaoCondicionalEntrada,
+  valorInvalido: string
+): Promise<void> {
+  const cliente = new ClienteRpcFalso({
+    aplicar_interpretacao_condicional: {
+      data: [{ resultado: 'conflito_concorrente', conversa_id: null, dados: null, atualizado_em: null }],
+      error: null,
+    },
+  });
+
+  await assert.rejects(
+    () => aplicarInterpretacaoCondicional(cliente, entrada),
+    (erro: unknown) => {
+      assert.ok(erro instanceof EntradaInvalidaError);
+      if (valorInvalido !== '') {
+        assert.ok(!erro.message.includes(valorInvalido), 'mensagem de erro nao deve conter o valor invalido');
+      }
+      return true;
+    }
+  );
+  assert.equal(cliente.chamadas.length, 0, 'entrada invalida nao deve chamar o cliente Supabase');
+}
+
+test('teste15: mensagem_recebida_id com UUID invalido e rejeitado antes do Supabase', async () => {
+  await esperarRejeicaoSemChamada({ ...ENTRADA, mensagem_recebida_id: 'nao-e-um-uuid' }, 'nao-e-um-uuid');
+});
+
+test('teste16: clinica_id com UUID invalido e rejeitado antes do Supabase', async () => {
+  await esperarRejeicaoSemChamada({ ...ENTRADA, clinica_id: 'nao-e-um-uuid' }, 'nao-e-um-uuid');
+});
+
+test('teste17: telefone_normalizado invalido e rejeitado antes do Supabase', async () => {
+  await esperarRejeicaoSemChamada({ ...ENTRADA, telefone_normalizado: '11999999999' }, '11999999999');
+});
+
+test('teste18: claim_token com UUID invalido e rejeitado antes do Supabase', async () => {
+  await esperarRejeicaoSemChamada({ ...ENTRADA, claim_token: 'nao-e-um-uuid' }, 'nao-e-um-uuid');
+});
+
+test('teste19: conversa_id com UUID invalido e rejeitado antes do Supabase', async () => {
+  await esperarRejeicaoSemChamada({ ...ENTRADA, conversa_id: 'nao-e-um-uuid' }, 'nao-e-um-uuid');
+});
+
+test('teste20: snapshot_atualizado_em invalido e rejeitado antes do Supabase', async () => {
+  await esperarRejeicaoSemChamada({ ...ENTRADA, snapshot_atualizado_em: 'ontem' }, 'ontem');
+});
+
+test('teste21: alteracoes_aplicaveis como array e rejeitado antes do Supabase', async () => {
+  await esperarRejeicaoSemChamada({ ...ENTRADA, alteracoes_aplicaveis: [] } as never, '');
 });
