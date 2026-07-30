@@ -100,7 +100,9 @@ mais recente.
   - `processando` (expirado) `→ processando` com novo `claim_token`.
 - Lease: **60 segundos**.
 - Somente o proprietário do `claim_token` vigente pode: persistir a interpretação;
-  finalizar o processamento; autorizar a produção lógica da resposta.
+  autorizar a produção lógica da resposta; enviar a resposta; marcar o processamento
+  como `concluida`. Se qualquer revalidação falhar, a etapa seguinte correspondente não
+  é executada.
 - `concluida` não processa nem responde novamente.
 - `processando` com lease válido não processa nem responde novamente.
 - `falhou` não é reinterpretada automaticamente.
@@ -220,25 +222,29 @@ Nenhuma falha pode produzir:
 9. executar `extrairAlteracoes`;
 10. validar integralmente a saída;
 11. executar `preAplicar`;
-12. revalidar `claim_token`, status `processando` e lease ainda vigente;
-13. persistir uma única vez, via `aplicarInterpretacaoCondicional`, contra o
-    `atualizado_em` original (condição completa registrada em "Concorrência");
-14. em conflito concorrente, não aplicar nada;
-15. recalcular deterministicamente o próximo estado (controlador);
+12. revalidar `claim_token`, status `processando` e lease vigente, antes da
+    persistência;
+13. persistir condicionalmente a interpretação, via `aplicarInterpretacaoCondicional`,
+    contra o `atualizado_em` original (condição completa registrada em
+    "Concorrência"); em conflito concorrente, não aplicar nada;
+14. executar o controlador determinístico (recalcular o próximo estado);
+15. revalidar `claim_token`, status `processando` e lease vigente, antes de produzir a
+    resposta;
 16. produzir a resposta por template determinístico (ou, futuramente, pela porta de
     redação natural);
-17. revalidar `claim_token`, status `processando` e lease ainda vigente, antes de
-    registrar a conclusão lógica;
-18. registrar a conclusão lógica em `mensagens_recebidas`;
-19. revalidar `claim_token`, status `processando` e lease ainda vigente, antes de
-    entregar a resposta;
-20. entregar pelo transporte;
-21. nunca repetir automaticamente o mesmo `message_id`.
+17. revalidar `claim_token`, status `processando` e lease vigente, antes do envio;
+18. entregar a resposta pelo transporte;
+19. revalidar `claim_token` vigente e marcar `concluida` condicionalmente ao token — a
+    transição final exige `status_processamento = 'processando'` **e** `claim_token`
+    igual ao token vigente do worker;
+20. nunca repetir automaticamente o mesmo `message_id`.
 
-Em cada um dos três pontos de revalidação (12, 17, 19): apenas o proprietário do
+Há quatro pontos de revalidação (12, 15, 17, 19): em cada um, apenas o proprietário do
 `claim_token` vigente pode prosseguir; se o claim não pertence mais ao processamento
-atual (expirado ou reivindicado por outro worker), a etapa correspondente
-(persistência, conclusão lógica ou entrega) não é executada.
+atual (expirado ou reivindicado por outro worker), a etapa correspondente (persistência,
+produção da resposta, envio, ou a transição final para `concluida`) não é executada.
+Depois que a transição para `concluida` ocorre (passo 19), nenhuma validação
+subsequente exige `status_processamento = 'processando'`.
 
 ## Invariantes
 
@@ -257,8 +263,13 @@ atual (expirado ou reivindicado por outro worker), a etapa correspondente
 - Nenhuma mensagem é interpretada mais de uma vez pelo mesmo `message_id`.
 - Nenhuma interpretação é reaplicada sobre uma versão diferente daquela para a qual foi
   calculada.
-- Somente o proprietário do `claim_token` vigente pode persistir e finalizar — um worker
-  cujo claim expirou nunca finaliza, mesmo que ainda esteja em execução.
+- Somente o proprietário do `claim_token` vigente pode persistir a interpretação,
+  autorizar a produção da resposta, enviá-la e marcar `concluida` — um worker cujo
+  claim expirou ou foi substituído não executa nenhuma dessas ações, mesmo que ainda
+  esteja em execução.
+- A transição para `concluida` exige `status_processamento = 'processando'` e
+  `claim_token` igual ao token vigente do worker; depois dessa transição, nenhuma
+  validação subsequente do fluxo exige `status_processamento = 'processando'`.
 - `concluida` e `processando` (com lease válido) nunca disparam novo processamento nem
   nova resposta.
 - `falhou` nunca é reinterpretada automaticamente.
@@ -306,8 +317,8 @@ nesta rodada):
 - mensagem `processando` com lease válido não gera novo processamento nem nova resposta;
 - mensagem `processando` com lease expirado pode ser reivindicada por um novo
   `claim_token`;
-- worker com `claim_token` antigo não consegue persistir nem finalizar após um novo claim
-  ter sido emitido;
+- worker com `claim_token` antigo (expirado ou substituído) não persiste, não produz a
+  resposta, não envia e não marca `concluida`;
 - `falhou` não é reinterpretada automaticamente;
 - lease de 60 segundos é respeitado na decisão de permitir ou não uma nova reivindicação.
 
@@ -335,10 +346,17 @@ nesta rodada):
 ### Fluxo completo
 
 - as etapas do fluxo aprovado executam na ordem descrita, sem pular ou reordenar etapas
-  obrigatórias (em especial: claim antes da IA; revalidação do `claim_token` antes da
-  persistência condicional; persistência condicional antes de recalcular o controlador;
-  revalidação do `claim_token` antes de registrar a conclusão lógica; revalidação do
-  `claim_token` antes de entregar a resposta).
+  obrigatórias (em especial: claim antes da IA; persistência condicional antes de
+  executar o controlador);
+- revalidação de `claim_token`/status/lease antes da persistência condicional;
+- revalidação de `claim_token`/status/lease antes de produzir a resposta;
+- revalidação de `claim_token`/status/lease antes do envio pelo transporte;
+- a conclusão (`concluida`) é condicional ao `claim_token` vigente e só ocorre depois do
+  envio;
+- worker com `claim_token` antigo (expirado ou substituído) não persiste, não produz a
+  resposta, não envia e não marca `concluida`;
+- nenhuma validação, em nenhum ponto do fluxo, exige `status_processamento =
+  'processando'` depois que a mensagem foi marcada `concluida`.
 
 ### Integração, robustez e isolamento
 
