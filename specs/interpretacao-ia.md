@@ -76,25 +76,40 @@ Na mesma transação, a operação deve:
    - `claim_token` igual ao token apresentado pelo worker;
    - `lease_expira_em` ainda vigente;
    - `interpretacao_persistida_em IS NULL`;
+   - `resultado_continuacao IS NULL`;
 3. confirmar simultaneamente, em `estado_conversa` (`conversa_id` é o campo recebido
    pelo Core; a coluna real é `id`):
    - `id = snapshot.conversa_id`;
    - `clinica_id = snapshot.clinica_id`;
    - `telefone_normalizado = snapshot.telefone_normalizado`;
    - `atualizado_em = snapshot.atualizado_em`;
-4. somente se todas as condições acima forem verdadeiras: aplicar todas as alterações
-   autorizadas em `estado_conversa`, atualizar `atualizado_em`, gravar
-   `interpretacao_persistida_em = now()` na linha correspondente de
-   `mensagens_recebidas`, e retornar o estado efetivamente persistido;
+4. somente se todas as condições acima forem verdadeiras: aplicar em `estado_conversa`
+   as alterações efetivas, quando existirem (atualizando `atualizado_em`), gravar
+   `resultado_continuacao` e `interpretacao_persistida_em = now()` na linha
+   correspondente de `mensagens_recebidas`, e retornar o estado oficial resultante e o
+   `resultado_continuacao` persistido;
 5. se qualquer condição falhar: não alterar `estado_conversa`; não gravar
-   `interpretacao_persistida_em`; não aplicar parcialmente; não reler e reaplicar; não
-   chamar o modelo novamente; retornar a falha determinística apropriada.
+   `resultado_continuacao` nem `interpretacao_persistida_em`; não aplicar
+   parcialmente; não reler e reaplicar; não chamar o modelo novamente; retornar a falha
+   determinística apropriada.
 
 A operação é **tudo-ou-nada**: não existe estado intermediário observável entre a
-validação do claim/versão e a persistência. A alteração em `estado_conversa` e a
-gravação de `interpretacao_persistida_em` ocorrem juntas, na mesma transação: nunca
-existe `estado_conversa` alterado sem `interpretacao_persistida_em` preenchido, nem
-`interpretacao_persistida_em` preenchido sem `estado_conversa` alterado.
+validação do claim/versão e a persistência. Quando não existem alterações efetivas em
+`estado_conversa.dados` — saída válida vazia, alteração idempotente, interpretação
+composta somente por conflitos, ou qualquer combinação válida que não resulte em
+nenhum dado diferente no estado — `estado_conversa.dados` pode permanecer inalterado;
+isso **não é persistência parcial**, desde que `resultado_continuacao` e
+`interpretacao_persistida_em` sejam gravados juntos, na mesma transação. Nesse caso, o
+resultado válido persistido é exatamente `resultado_continuacao` e
+`interpretacao_persistida_em`. Nunca pode existir:
+
+- alteração efetiva em `estado_conversa` sem `resultado_continuacao` e sem
+  `interpretacao_persistida_em`;
+- `interpretacao_persistida_em` preenchido sem `resultado_continuacao` persistido;
+- `resultado_continuacao` persistido sem `interpretacao_persistida_em` preenchido;
+- um conflito necessário ao controlador existindo apenas em memória depois da
+  persistência;
+- persistência parcial quando a transação falhar.
 
 - Se a versão mudou (verificada dentro da mesma transação da operação atômica acima):
   - não aplicar nenhuma alteração;
@@ -135,8 +150,43 @@ mais recente.
     - `null`: nenhuma interpretação desse `message_id` foi confirmada como persistida;
     - não `null`: a interpretação desse `message_id` já foi aplicada em
       `estado_conversa`.
-  Nenhuma dessas colunas é implementada nesta rodada; `interpretacao_persistida_em` é
-  usado de forma uniforme em todo este documento com essa semântica.
+  - `resultado_continuacao jsonb null` — resultado mínimo de continuação, necessário
+    para um reclaim posterior à persistência retomar deterministicamente o
+    atendimento (inclusive quando houver conflitos, resultado vazio, resultado
+    idempotente, ou resultado composto somente por conflitos). Contrato documental
+    mínimo:
+
+    ```ts
+    interface ResultadoContinuacaoInterpretacao {
+      conflitos: Array<{
+        campo: string;
+        valor_atual: string;
+        valor_informado: string;
+      }>;
+    }
+    ```
+
+    Semântica:
+    - guarda somente o resultado transitório necessário para o controlador retomar o
+      fluxo;
+    - não guarda a resposta bruta do modelo;
+    - não guarda mensagens do paciente;
+    - não guarda novamente todo o estado da conversa — o estado oficial permanece em
+      `estado_conversa`; `resultado_continuacao` fornece apenas os conflitos que não
+      podem ser reconstruídos a partir do estado oficial;
+    - não guarda `alteracoes_interpretadas` nem `alteracoes_aplicaveis` depois que as
+      alterações aplicáveis já foram processadas;
+    - conflitos vazios são representados por `{ conflitos: [] }`.
+
+    Relação obrigatória com `interpretacao_persistida_em`:
+    - `interpretacao_persistida_em IS NULL` ⇒ `resultado_continuacao` também
+      permanece `null`;
+    - `interpretacao_persistida_em IS NOT NULL` ⇒ `resultado_continuacao` deve estar
+      preenchido, mesmo que seja `{ conflitos: [] }`. Um marcador preenchido sem
+      `resultado_continuacao` persistido nunca é um estado válido.
+  Nenhuma dessas colunas é implementada nesta rodada; `interpretacao_persistida_em` e
+  `resultado_continuacao` são usados de forma uniforme em todo este documento com essa
+  semântica.
 - Transições de estado aprovadas:
   - `recebida → processando`;
   - `processando` (expirado) `→ processando` com novo `claim_token`.
@@ -180,12 +230,22 @@ depende de claim, status, lease, versão **e marcador `null`** válidos, todos n
 transação (ver "Concorrência" → "Contrato atômico obrigatório").
 
 **Reclaim com `interpretacao_persistida_em IS NOT NULL`** (interpretação já
-persistida): o novo worker não chama o modelo, não executa uma segunda interpretação,
-não executa `preAplicar` novamente, e não persiste novamente a interpretação. Ele
-retoma somente as etapas determinísticas posteriores à persistência (ver "Fluxo final
-aprovado"), permanece sujeito aos gates externos de produção e envio, e tenta marcar
-`concluida` somente de forma condicional ao claim vigente. Não há fallback nem
-reconstrução de uma nova interpretação a partir do texto.
+persistida): o novo worker carrega o `estado_conversa` oficial e o
+`resultado_continuacao` persistido. Não chama o modelo, não executa uma segunda
+interpretação, não executa `extrairAlteracoes`, não valida nova saída, não executa
+`preAplicar` novamente, e não persiste novamente a interpretação. Entrega o estado
+oficial e os conflitos persistidos ao controlador, retoma somente as etapas
+determinísticas posteriores à persistência (ver "Fluxo final aprovado"), permanece
+sujeito aos gates externos de produção e envio, e tenta marcar `concluida` somente de
+forma condicional ao claim vigente. Não há fallback nem reconstrução de uma nova
+interpretação a partir do texto.
+
+Para um `resultado_continuacao` somente conflitante, o controlador usa os conflitos
+persistidos para produzir a pergunta de esclarecimento. Para resultado vazio ou
+idempotente, usa `resultado_continuacao.conflitos = []` e o estado oficial existente —
+em ambos os casos, isso conta como uma interpretação validamente persistida, mesmo sem
+alteração em `estado_conversa.dados`, e a ausência de mudança no estado não provoca
+nova chamada ao modelo.
 
 `mensagens_recebidas`, combinada com o contrato atômico de
 `aplicarInterpretacaoCondicional`, garante uma única interpretação persistida e uma
@@ -301,8 +361,17 @@ Nenhuma falha pode produzir:
 
 - aplicação parcial;
 - fallback silencioso;
-- interpretação por texto livre;
-- nova interpretação automática do mesmo `message_id`.
+- interpretação por texto livre.
+
+Quanto a uma nova chamada ao modelo para o mesmo `message_id` depois de uma falha, a
+regra precisa (ver "Política de tentativas") é:
+
+- falha ocorrida antes da persistência do marcador (`interpretacao_persistida_em IS
+  NULL`): após expiração do lease, um reclaim pode chamar o modelo novamente;
+- falha ocorrida depois da persistência do marcador (`interpretacao_persistida_em IS
+  NOT NULL`) — inclusive quando o resultado persistido é vazio, idempotente ou
+  somente conflitante: nenhuma nova chamada ao modelo é permitida, e nenhuma segunda
+  persistência da interpretação é permitida.
 
 ## Fluxo final aprovado
 
@@ -325,45 +394,67 @@ Nenhuma falha pode produzir:
 10. executar `extrairAlteracoes`;
 11. validar integralmente a saída;
 12. executar `preAplicar`;
-13. executar `aplicarInterpretacaoCondicional`, que revalida atomicamente
-    `claim_token`, status `processando`, lease vigente, `atualizado_em` do snapshot **e**
-    `interpretacao_persistida_em IS NULL`, **na mesma transação** que persiste as
-    alterações em `estado_conversa` e grava `interpretacao_persistida_em = now()`
+13. construir `ResultadoContinuacaoInterpretacao` com os conflitos devolvidos por
+    `preAplicar` (`{ conflitos: [] }` quando não houver conflito — inclui saída válida
+    vazia, alteração idempotente, ou qualquer combinação válida que não resulte em
+    nenhum dado diferente no estado);
+14. executar `aplicarInterpretacaoCondicional`, que revalida atomicamente
+    `claim_token`, status `processando`, lease vigente, `atualizado_em` do snapshot,
+    `interpretacao_persistida_em IS NULL` **e** `resultado_continuacao IS NULL`, **na
+    mesma transação** que aplica em `estado_conversa` as alterações efetivas — quando
+    existirem — e grava `resultado_continuacao` e `interpretacao_persistida_em = now()`
     (contrato atômico completo registrado em "Concorrência"); se o claim estiver
     inválido, nada é persistido; se `atualizado_em` mudou, nada é persistido; se
-    `interpretacao_persistida_em` já não for mais `null`, nada é persistido.
+    `interpretacao_persistida_em` ou `resultado_continuacao` já não forem mais `null`,
+    nada é persistido.
 
-Somente após sucesso do passo 13, segue para o sufixo comum a partir do passo 14.
+Somente após sucesso do passo 14, segue para o sufixo comum a partir do passo 15. Uma
+interpretação sem alteração efetiva em `estado_conversa.dados` (saída vazia,
+idempotente, ou somente conflitos) ainda conta como sucesso do passo 14, desde que
+`resultado_continuacao` e `interpretacao_persistida_em` tenham sido gravados — isso não
+é persistência parcial nem impede seguir para o controlador.
 
 ### Caminho B — `interpretacao_persistida_em IS NOT NULL` (interpretação já persistida por uma tentativa anterior)
 
-Pula diretamente para o sufixo comum a partir do passo 14 — sem carregar snapshot para
-interpretação, sem chamar o modelo, sem validar saída, sem executar `preAplicar` e sem
-tentar persistir novamente (ver "Deduplicação e lease" → "Reclaim e
-`interpretacao_persistida_em`").
+O worker carrega o `estado_conversa` oficial e o `resultado_continuacao` persistido.
+Não chama o modelo, não executa uma segunda interpretação, não executa
+`extrairAlteracoes`, não valida nova saída, não executa `preAplicar` novamente, e não
+tenta nova persistência da interpretação (ver "Deduplicação e lease" → "Reclaim e
+`interpretacao_persistida_em`"). Entrega o estado oficial e os conflitos persistidos ao
+controlador e segue diretamente para o sufixo comum a partir do passo 15 —
+permanecendo sujeito aos mesmos gates externos e à mesma conclusão condicional ao claim
+vigente que o Caminho A.
+
+Para um `resultado_continuacao` somente conflitante, o controlador usa os conflitos
+persistidos para produzir a pergunta de esclarecimento. Para resultado vazio ou
+idempotente, usa `resultado_continuacao.conflitos = []` e o estado oficial existente.
+
+Nenhum dos dois caminhos pode executar o controlador (passo 15) sem
+`resultado_continuacao` persistido **e** `interpretacao_persistida_em` preenchido.
 
 ### Sufixo comum (etapas determinísticas posteriores à persistência)
 
-14. executar o controlador determinístico (recalcular o próximo estado a partir de
-    `estado_conversa` atual) — só alcançado após sucesso da persistência (Caminho A) ou
-    por reclaim com marcador já preenchido (Caminho B);
-15. revalidar `claim_token`, status `processando` e lease vigente, antes de produzir a
+15. executar o controlador determinístico (recalcular o próximo estado a partir de
+    `estado_conversa` atual e do `resultado_continuacao`) — só alcançado após sucesso
+    da persistência (Caminho A) ou por reclaim com marcador e resultado já preenchidos
+    (Caminho B);
+16. revalidar `claim_token`, status `processando` e lease vigente, antes de produzir a
     resposta;
-16. produzir a resposta por template determinístico (ou, futuramente, pela porta de
+17. produzir a resposta por template determinístico (ou, futuramente, pela porta de
     redação natural);
-17. revalidar `claim_token`, status `processando` e lease vigente, antes do envio;
-18. entregar a resposta pelo transporte;
-19. revalidar `claim_token` vigente e marcar `concluida` condicionalmente ao token — a
+18. revalidar `claim_token`, status `processando` e lease vigente, antes do envio;
+19. entregar a resposta pelo transporte;
+20. revalidar `claim_token` vigente e marcar `concluida` condicionalmente ao token — a
     transição final exige `status_processamento = 'processando'` **e** `claim_token`
     igual ao token vigente do worker;
-20. nunca repetir automaticamente o mesmo `message_id`.
+21. nunca repetir automaticamente o mesmo `message_id`.
 
-A revalidação do passo 13 é **atômica e transacional** — parte da mesma operação que
-persiste em `estado_conversa` e grava `interpretacao_persistida_em` (ver
-"Concorrência"); não é uma consulta de revalidação separada da escrita. Essa é uma
+A revalidação do passo 14 é **atômica e transacional** — parte da mesma operação que
+persiste em `estado_conversa`, `resultado_continuacao` e `interpretacao_persistida_em`
+(ver "Concorrência"); não é uma consulta de revalidação separada da escrita. Essa é uma
 garantia absoluta.
 
-Os passos 15 e 17 (antes de produzir e antes de enviar) são **gates operacionais**, não
+Os passos 16 e 18 (antes de produzir e antes de enviar) são **gates operacionais**, não
 operações atômicas: o gate autoriza prosseguir com base no estado do claim observado
 naquele instante, mas não bloqueia atomicamente uma mudança de claim ocorrida
 imediatamente depois — se o claim não pertence mais ao processamento atual (expirado ou
@@ -374,14 +465,14 @@ pertence à pendência de transporte já registrada (idempotência do transporte
 transacional — ver "Deduplicação e lease"). Isso vale tanto para um worker chegando pelo
 Caminho A quanto pelo Caminho B.
 
-O passo 19 (revalidar `claim_token` vigente e marcar `concluida`) é uma garantia
+O passo 20 (revalidar `claim_token` vigente e marcar `concluida`) é uma garantia
 **absoluta**: a transição exige `status_processamento = 'processando'` **e**
 `claim_token` igual ao token vigente do worker, verificados na mesma operação
 condicional que grava `concluida` — um worker com token antigo nunca marca `concluida`.
 Depois que essa transição ocorre, nenhuma validação subsequente exige
 `status_processamento = 'processando'`.
 
-O envio pelo transporte (passo 18) não é, e não deve ser tratado como, transacional com
+O envio pelo transporte (passo 19) não é, e não deve ser tratado como, transacional com
 o banco.
 
 ## Invariantes
@@ -405,20 +496,36 @@ o banco.
   desfaz integralmente a operação — nunca parcialmente.
 - Somente o estado efetivamente retornado pela operação transacional é considerado
   persistido.
-- `interpretacao_persistida_em` é gravado atomicamente com a alteração em
-  `estado_conversa` — nunca existe uma das duas alterações sem a outra (nenhuma
-  combinação parcial entre `estado_conversa` e o marcador é permitida).
+- `resultado_continuacao` é persistido atomicamente com `interpretacao_persistida_em`:
+  nunca existe um dos dois preenchido sem o outro (`interpretacao_persistida_em`
+  preenchido sem `resultado_continuacao` é inválido; `resultado_continuacao`
+  preenchido sem `interpretacao_persistida_em` também é inválido).
+- Uma alteração efetiva em `estado_conversa`, quando existe, é atômica com
+  `resultado_continuacao` e `interpretacao_persistida_em` — as três ocorrem juntas na
+  mesma transação, ou nenhuma ocorre.
+- Uma interpretação válida pode ser persistida **sem** alteração em
+  `estado_conversa.dados` (saída vazia, alteração idempotente, ou interpretação
+  composta somente por conflitos); nesse caso, `resultado_continuacao` e
+  `interpretacao_persistida_em` continuam sendo atômicos entre si, e o estado
+  permanecer inalterado é uma decisão válida, não uma persistência parcial.
+- Um conflito necessário ao controlador nunca existe somente em memória depois da
+  persistência — se `interpretacao_persistida_em` está preenchido, os conflitos
+  relevantes estão em `resultado_continuacao`.
 - Somente uma persistência de interpretação existe por `message_id`: a condição
-  `interpretacao_persistida_em IS NULL` garante isso na mesma transação da persistência.
+  `interpretacao_persistida_em IS NULL` (e `resultado_continuacao IS NULL`) garante
+  isso na mesma transação da persistência.
 - `interpretacao_persistida_em` preenchido proíbe qualquer nova chamada ao modelo para
-  esse `message_id`, proíbe nova execução de `preAplicar`, e proíbe nova persistência.
+  esse `message_id` — mesmo quando o estado não mudou (resultado vazio, idempotente ou
+  somente conflitante) — proíbe nova execução de `preAplicar`, e proíbe nova
+  persistência.
 - Um reclaim anterior à persistência (`interpretacao_persistida_em IS NULL`) pode
   interpretar — inclusive chamando o modelo novamente, se uma tentativa anterior também
   não persistiu; não há garantia de exatamente uma chamada ao modelo antes da
   persistência (ver "Política de tentativas").
-- Um reclaim posterior à persistência (`interpretacao_persistida_em IS NOT NULL`) retoma
-  somente as etapas determinísticas posteriores à persistência (ver "Fluxo final
-  aprovado" → "Sufixo comum").
+- Um reclaim posterior à persistência (`interpretacao_persistida_em IS NOT NULL`) usa o
+  estado oficial de `estado_conversa` combinado com o `resultado_continuacao`
+  persistido, e retoma somente as etapas determinísticas posteriores à persistência
+  (ver "Fluxo final aprovado" → "Sufixo comum").
 - Conflito de valor e conflito concorrente nunca se confundem: o primeiro é decidido pelo
   controlador por campo; o segundo invalida a interpretação inteira.
 - `corrigir` e `remover` só são válidos quando a versão (`atualizado_em`) não mudou entre
@@ -447,9 +554,12 @@ o banco.
   preenchidos.
 - `clinica_id`, telefone, IDs, agenda, disponibilidade, credenciais e registros clínicos
   nunca entram no payload do modelo.
-- Toda falha coberta pela resposta fixa produz exatamente essa resposta — nunca aplicação
-  parcial, fallback silencioso, interpretação por texto livre, ou nova interpretação
-  automática do mesmo `message_id`.
+- Toda falha coberta pela resposta fixa produz exatamente essa resposta — nunca
+  aplicação parcial, fallback silencioso, ou interpretação por texto livre. Quanto a
+  uma nova chamada ao modelo para o mesmo `message_id` depois de uma falha: permitida
+  por reclaim enquanto `interpretacao_persistida_em` for `null`; proibida, junto com
+  qualquer nova persistência, a partir do momento em que o marcador é gravado (ver
+  "Política de tentativas").
 
 ## Testes obrigatórios
 
@@ -514,6 +624,40 @@ com outro cenário:
 12. reclaim posterior à persistência: retoma apenas controlador, gates, envio e
     conclusão condicional.
 
+### Resultado mínimo de continuação (`resultado_continuacao`)
+
+Cenários obrigatórios sobre a persistência do resultado mínimo de continuação e sua
+relação com `interpretacao_persistida_em` — cada um preserva sua asserção específica,
+sem fusão com outro cenário:
+
+1. resultado vazio válido: estado não muda, `resultado_continuacao = { conflitos: [] }`
+   e o marcador é preenchido;
+2. resultado idempotente: estado pode permanecer igual, resultado e marcador são
+   persistidos e não há segunda chamada ao modelo;
+3. resultado somente conflitante: estado permanece igual, conflitos são persistidos e o
+   marcador é preenchido;
+4. resultado misto: alterações aplicáveis atualizam o estado e conflitos são
+   persistidos na mesma transação;
+5. crash depois de persistir resultado somente conflitante: reclaim não chama o modelo
+   e reconstrói a pergunta com os conflitos persistidos;
+6. crash depois de resultado vazio: reclaim não chama o modelo;
+7. crash depois de resultado idempotente: reclaim não chama o modelo;
+8. falha ao persistir `resultado_continuacao`: estado e marcador sofrem rollback;
+9. falha ao persistir o marcador: estado e `resultado_continuacao` sofrem rollback;
+10. falha ao atualizar o estado quando havia alteração efetiva: `resultado_continuacao`
+    e marcador não são persistidos;
+11. marcador preenchido sem `resultado_continuacao`: rejeitado como estado
+    inconsistente;
+12. `resultado_continuacao` preenchido sem marcador: rejeitado como estado
+    inconsistente;
+13. falha anterior à persistência do marcador: reclaim pode chamar o modelo novamente;
+14. falha posterior à persistência do marcador: zero segunda chamada ao modelo;
+15. reclaim posterior à persistência: o controlador recebe o estado oficial e os
+    conflitos persistidos;
+16. o teste antigo de "nenhuma falha provoca nova interpretação automática do mesmo
+    `message_id`" é substituído pela distinção entre falha antes e depois da
+    persistência do marcador (ver "### Falhas").
+
 ### Conflitos
 
 - conflito de valor não impede a aplicação de outros campos independentes na mesma
@@ -546,7 +690,11 @@ com outro cenário:
   adaptador) produz exatamente a resposta fixa;
 - nenhum cenário de falha produz aplicação parcial;
 - nenhum cenário de falha produz fallback silencioso ou interpretação por texto livre;
-- nenhum cenário de falha dispara nova interpretação automática do mesmo `message_id`.
+- falha ocorrida antes da persistência do marcador: reclaim pode chamar o modelo
+  novamente após o lease expirar (substitui o teste antigo de proibição absoluta — ver
+  "Resultado mínimo de continuação (`resultado_continuacao`)");
+- falha ocorrida depois da persistência do marcador: zero segunda chamada ao modelo e
+  zero segunda persistência.
 
 ### Entrada e PII
 
