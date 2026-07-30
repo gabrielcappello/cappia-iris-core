@@ -1,7 +1,7 @@
 // Testes de unidade do adaptador OpenAI usando um FETCH FALSO injetado —
 // nenhuma chamada real de API ocorre em nenhum teste deste arquivo.
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { describe, test } from 'node:test';
 import {
   converterParaContratoInterno,
   criarClienteModeloOpenAI,
@@ -954,55 +954,10 @@ test('extra: executar() bem-sucedido devolve o mapa interno pronto para validarS
 // =====================================================================
 
 // --- Correcao 1: revalidar o orcamento apos a espera ---
-
-test('correcao1: revalidacao apos a espera bloqueia a segunda tentativa de forma deterministica, sem depender de jitter natural do setTimeout', async () => {
-  // Tecnica: substitui Date.now globalmente por um relogio falso de duas
-  // fases (nao mexe em setTimeout, entao aguardar() continua sendo uma
-  // espera real, so que minuscula: 5ms). A fase muda de "antes" (0) para
-  // "depois" (1000) atraves de um setTimeout(...,0) agendado dentro do
-  // proprio fetch falso da tentativa 1 -- por garantia da propria
-  // especificacao de timers do JavaScript, um timer de delay 0 SEMPRE
-  // dispara antes de um timer de delay >0 agendado por perto (aqui,
-  // esperaEntreTentativasMs=5), entao a mudanca de fase e GARANTIDA
-  // acontecer antes da checagem pos-espera rodar -- nao ha dependencia de
-  // quanto o setTimeout realmente atrasa (overshoot), apenas da ORDEM
-  // relativa entre dois timers de delays diferentes, que o event loop
-  // sempre respeita. A checagem PRE-espera roda de forma sincrona (antes
-  // de qualquer timer dela disparar), entao sempre ve o relogio na fase
-  // "antes". Restaura Date.now no finally, isolado por teste.
-  const timeoutPorTentativaMs = 200;
-  const esperaEntreTentativasMs = 5;
-  const prazoTotalMs = 300; // >= esperaEntreTentativasMs(nominal, fase "antes") + timeoutPorTentativaMs -> passa a checagem PRE-espera; < 1000(fase "depois") -> falha a checagem POS-espera
-
-  const DateNowOriginal = Date.now;
-  let faseDepois = false;
-  Date.now = () => (faseDepois ? 1000 : 0);
-
-  const { fetchFalso, chamadas } = criarFetchFalso([
-    () => {
-      setTimeout(() => {
-        faseDepois = true;
-      }, 0);
-      return respostaErroHttp(503, {});
-    },
-    () => respostaSucesso([]),
-  ]);
-
-  const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs, esperaEntreTentativasMs, prazoTotalMs });
-
-  let erro: unknown;
-  try {
-    await cliente.executar(entradaValida());
-  } catch (e) {
-    erro = e;
-  } finally {
-    Date.now = DateNowOriginal;
-  }
-
-  assertCategoria(erro, 'indisponibilidade');
-  assert.equal(erro.tentativas, 1, 'a segunda tentativa nao deveria ter iniciado');
-  assert.equal(chamadas.length, 1, 'nenhum segundo fetch deveria ocorrer');
-});
+//
+// O teste que prova a revalidacao pos-espera (que substitui Date.now)
+// fica na secao isolada ao final do arquivo, junto com os demais testes
+// que alteram globais -- ver "testes que substituem globais".
 
 test('correcao1b: com orcamento generoso, a revalidacao apos a espera nao bloqueia a segunda tentativa (regressao)', async () => {
   const { fetchFalso, chamadas } = criarFetchFalso([() => respostaErroHttp(503, {}), () => respostaSucesso([])]);
@@ -1128,40 +1083,20 @@ test('correcao3c: resposta rapida dentro do prazo continua sendo aceita normalme
 });
 
 // --- Correcao 4: Retry-After em segundos so no formato estrito ^[0-9]+$ ---
+//
+// O teste com a lista completa de formatos numericos invalidos (correcao4)
+// agora usa Date.parse controlado para provar rejeicao mesmo no pior caso
+// -- fica na secao isolada ao final do arquivo.
 
-test('correcao4: formatos numericos invalidos (decimal, sinal, espacos, notacao exponencial, Infinity, NaN) sao ignorados, com fallback para esperaEntreTentativasMs', async () => {
-  // ' 5'/'5 ' nao entram aqui: Headers normaliza (retira) OWS nas bordas
-  // do valor do header por conta propria, entao esses dois casos nunca
-  // chegariam com espaco ate o nosso codigo. '5 0' cobre espaco INTERNO,
-  // que Headers preserva.
-  const valoresInvalidos = ['1.5', '+5', '-5', '5 0', '1e10', '1E3', 'Infinity', '-Infinity', 'NaN'];
-
-  for (const valorInvalido of valoresInvalidos) {
-    const { fetchFalso, chamadas } = criarFetchFalso([
-      () => respostaErroHttp(429, {}, { 'Retry-After': valorInvalido }),
-      () => respostaSucesso([]),
-    ]);
-    const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 15, timeoutPorTentativaMs: 200, prazoTotalMs: 5000 });
-    const inicio = Date.now();
-    await cliente.executar(entradaValida());
-    const duracao = Date.now() - inicio;
-    assert.equal(chamadas.length, 2, `Retry-After=${valorInvalido} deveria permitir a segunda tentativa (fallback)`);
-    assert.ok(duracao < 200, `Retry-After=${valorInvalido} nao deveria ser tratado como segundos validos (levou ${duracao}ms)`);
-  }
-});
-
-test('correcao4b: Retry-After em segundos cujo valor convertido ultrapassa Number.MAX_SAFE_INTEGER e ignorado', async () => {
+test('correcao4b: Retry-After em segundos cujo valor convertido ultrapassa Number.MAX_SAFE_INTEGER e ignorado -- provado por chamadas, sem duracao', async () => {
   const segundosEnormes = '9999999999999999999999'; // digitos puros, finito, mas muito maior que MAX_SAFE_INTEGER
   const { fetchFalso, chamadas } = criarFetchFalso([
     () => respostaErroHttp(429, {}, { 'Retry-After': segundosEnormes }),
     () => respostaSucesso([]),
   ]);
   const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 15, timeoutPorTentativaMs: 200, prazoTotalMs: 5000 });
-  const inicio = Date.now();
   await cliente.executar(entradaValida());
-  const duracao = Date.now() - inicio;
-  assert.equal(chamadas.length, 2);
-  assert.ok(duracao < 200, `Retry-After absurdamente grande nao deveria travar a segunda tentativa (levou ${duracao}ms)`);
+  assert.equal(chamadas.length, 2, 'valor acima de MAX_SAFE_INTEGER deveria ser ignorado, permitindo a segunda tentativa via fallback');
 });
 
 test('correcao4c: Retry-After em segundos puros continua sendo aceito (regressao, inclui zero)', async () => {
@@ -1171,26 +1106,36 @@ test('correcao4c: Retry-After em segundos puros continua sendo aceito (regressao
   assert.equal(chamadas.length, 2);
 });
 
-test('correcao4d: Retry-After com digitos suficientes para estourar para Infinity e ignorado', async () => {
+test('correcao4d: Retry-After com digitos suficientes para estourar para Infinity e ignorado -- provado por chamadas, sem duracao', async () => {
   const segundosQueEstouram = '9'.repeat(320);
   const { fetchFalso, chamadas } = criarFetchFalso([
     () => respostaErroHttp(429, {}, { 'Retry-After': segundosQueEstouram }),
     () => respostaSucesso([]),
   ]);
   const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 200, prazoTotalMs: 5000 });
-  const inicio = Date.now();
   await cliente.executar(entradaValida());
-  const duracao = Date.now() - inicio;
-  assert.equal(chamadas.length, 2);
-  assert.ok(duracao < 200);
+  assert.equal(chamadas.length, 2, 'valor que estoura para Infinity deveria ser ignorado, permitindo a segunda tentativa via fallback');
 });
 
-test('correcao4e: Retry-After com zeros a esquerda (ex.: "003") corresponde ao formato estrito e e aceito', async () => {
+test('correcao4e: Retry-After com zeros a esquerda (ex.: "003") corresponde ao formato estrito e e aceito -- provado por orcamento, sem espera real', async () => {
+  // "003" -> 3000ms de espera aplicavel. Com prazoTotalMs=1000, esse
+  // orcamento jamais comporta espera(3000)+tentativa completa(100): se
+  // "003" fosse (corretamente) aceito como 3000ms, a segunda tentativa
+  // nunca comeca (uma unica chamada). Se fosse (incorretamente) rejeitado,
+  // o fallback (5ms) caberia facilmente, permitindo a segunda tentativa.
+  // O gate de orcamento (que roda ANTES de qualquer espera real) decide
+  // isso sem nunca chegar a esperar de verdade.
   const { fetchFalso, chamadas } = criarFetchFalso([() => respostaErroHttp(429, {}, { 'Retry-After': '003' }), () => respostaSucesso([])]);
-  const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 200, prazoTotalMs: 4000 });
-  await cliente.executar(entradaValida());
-  const intervalo = chamadas[1].momento - chamadas[0].momento;
-  assert.ok(intervalo >= 2900, `"003" deveria ser interpretado como 3000ms, esperou ${intervalo}ms`);
+  const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 100, prazoTotalMs: 1000 });
+  let erro: unknown;
+  try {
+    await cliente.executar(entradaValida());
+  } catch (e) {
+    erro = e;
+  }
+  assertCategoria(erro, 'limite_taxa');
+  assert.equal(erro.tentativas, 1, '"003" deveria ser interpretado como 3000ms de espera, orcamento insuficiente para a segunda tentativa');
+  assert.equal(chamadas.length, 1);
 });
 
 // --- Correcao 5: exigir status "completed" ---
@@ -1289,46 +1234,53 @@ test('correcao-geral: no maximo duas tentativas mesmo combinando Retry-After val
 // =====================================================================
 
 // --- Correcao 1: Retry-After so aceita HTTP-date canonica (round-trip) ---
+//
+// Os cenarios que exigem relogio controlado (HTTP-date aceita provada por
+// orcamento; decimal "1.5" provado com Date.parse manipulado) ficam na
+// secao isolada ao final do arquivo. Os tres abaixo (ISO, data local,
+// espacamento nao canonico, e o numerico ambiguo) nao precisam de relogio
+// controlado: a decisao de aceitar/rejeitar independe do valor de
+// Date.now, e a prova e inteiramente por orcamento + numero de chamadas
+// (nunca por duracao medida).
 
-test('correcao4-1: Retry-After em HTTP-date canonica (toUTCString) continua aceito (regressao)', async () => {
-  const dataFutura = new Date(Date.now() + 2200).toUTCString();
-  const { fetchFalso, chamadas } = criarFetchFalso([
-    () => respostaErroHttp(429, {}, { 'Retry-After': dataFutura }),
-    () => respostaSucesso([]),
-  ]);
-  const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 500, prazoTotalMs: 10000 });
-  await cliente.executar(entradaValida());
-  assert.equal(chamadas.length, 2);
-  const intervalo = chamadas[1].momento - chamadas[0].momento;
-  assert.ok(intervalo >= 1000, `deveria respeitar o Retry-After como data canonica, esperou ${intervalo}ms`);
-});
-
-test('correcao4-2: Retry-After em formato ISO 8601 e rejeitado (nao e a forma canonica de toUTCString)', async () => {
-  const dataIso = new Date(Date.now() + 2200).toISOString();
+test('correcao4-2: Retry-After em formato ISO 8601 e rejeitado -- provado por orcamento e chamadas, sem medir duracao', async () => {
+  // Offset grande (500s) deliberado: se o ISO fosse (incorretamente)
+  // aceito como uma data futura, representaria ~500_000ms de espera,
+  // que jamais caberia no orcamento (prazoTotalMs=1000) -- so uma
+  // chamada ocorreria. A rejeicao correta usa o fallback
+  // (esperaEntreTentativasMs=5ms), que cabe facilmente, permitindo a
+  // segunda tentativa. Duas chamadas provam a rejeicao sem medir tempo.
+  const dataIso = new Date(Date.now() + 500_000).toISOString();
   const { fetchFalso, chamadas } = criarFetchFalso([
     () => respostaErroHttp(429, {}, { 'Retry-After': dataIso }),
     () => respostaSucesso([]),
   ]);
-  const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 200, prazoTotalMs: 5000 });
-  const inicio = Date.now();
+  const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 100, prazoTotalMs: 1000 });
   await cliente.executar(entradaValida());
-  const duracao = Date.now() - inicio;
-  assert.equal(chamadas.length, 2);
-  assert.ok(duracao < 200, `ISO 8601 nao deveria ser aceito como Retry-After (levou ${duracao}ms)`);
+  assert.equal(chamadas.length, 2, 'ISO 8601 deveria ser rejeitado, permitindo a segunda tentativa via fallback');
 });
 
-test('correcao4-3: Retry-After em formato de data local (toString) e rejeitado', async () => {
-  const dataLocal = new Date(Date.now() + 2200).toString();
+test('correcao4-3: Retry-After em formato de data local (toString) e rejeitado -- provado por orcamento e chamadas, sem medir duracao', async () => {
+  const dataLocal = new Date(Date.now() + 500_000).toString();
   const { fetchFalso, chamadas } = criarFetchFalso([
     () => respostaErroHttp(429, {}, { 'Retry-After': dataLocal }),
     () => respostaSucesso([]),
   ]);
-  const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 200, prazoTotalMs: 5000 });
-  const inicio = Date.now();
+  const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 100, prazoTotalMs: 1000 });
   await cliente.executar(entradaValida());
-  const duracao = Date.now() - inicio;
-  assert.equal(chamadas.length, 2);
-  assert.ok(duracao < 200, `formato de data local nao deveria ser aceito como Retry-After (levou ${duracao}ms)`);
+  assert.equal(chamadas.length, 2, 'data local deveria ser rejeitada, permitindo a segunda tentativa via fallback');
+});
+
+test('correcao4-6: data valida mas com espacamento fora do padrao canonico e rejeitada -- provado por orcamento e chamadas, sem medir duracao', async () => {
+  const dataFutura = new Date(Date.now() + 500_000).toUTCString();
+  const dataComEspacoExtra = dataFutura.replace(', ', ',  '); // espaco duplo apos a virgula
+  const { fetchFalso, chamadas } = criarFetchFalso([
+    () => respostaErroHttp(429, {}, { 'Retry-After': dataComEspacoExtra }),
+    () => respostaSucesso([]),
+  ]);
+  const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 100, prazoTotalMs: 1000 });
+  await cliente.executar(entradaValida());
+  assert.equal(chamadas.length, 2, 'espacamento fora do padrao deveria ser rejeitado, permitindo a segunda tentativa via fallback');
 });
 
 test('correcao4-4: valor numerico ambiguo (epoch em segundos) e tratado como delta-segundos, nunca como data', async () => {
@@ -1352,34 +1304,33 @@ test('correcao4-4: valor numerico ambiguo (epoch em segundos) e tratado como del
   assert.equal(chamadas.length, 1);
 });
 
-test('correcao4-5: decimal rejeitado como delta-segundos tambem nao e aceito como data (fallback correto)', async () => {
-  const { fetchFalso, chamadas } = criarFetchFalso([() => respostaErroHttp(429, {}, { 'Retry-After': '1.5' }), () => respostaSucesso([])]);
-  const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 200, prazoTotalMs: 5000 });
-  const inicio = Date.now();
-  await cliente.executar(entradaValida());
-  const duracao = Date.now() - inicio;
-  assert.equal(chamadas.length, 2);
-  assert.ok(duracao < 200, `"1.5" nao deveria ser aceito nem como segundos nem como data (levou ${duracao}ms)`);
-});
-
-test('correcao4-6: data valida mas com espacamento fora do padrao canonico e rejeitada (round-trip exato falha)', async () => {
-  const dataFutura = new Date(Date.now() + 2200).toUTCString();
-  const dataComEspacoExtra = dataFutura.replace(', ', ',  '); // espaco duplo apos a virgula
-  const { fetchFalso, chamadas } = criarFetchFalso([
-    () => respostaErroHttp(429, {}, { 'Retry-After': dataComEspacoExtra }),
-    () => respostaSucesso([]),
-  ]);
-  const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 200, prazoTotalMs: 5000 });
-  const inicio = Date.now();
-  await cliente.executar(entradaValida());
-  const duracao = Date.now() - inicio;
-  assert.equal(chamadas.length, 2);
-  assert.ok(duracao < 200, `data com espacamento fora do padrao nao deveria ser aceita (levou ${duracao}ms)`);
-});
+// correcao4-1 (HTTP-date canonica aceita) e correcao4-5 (decimal "1.5",
+// com Date.parse controlado) ficam na secao isolada ao final do arquivo
+// -- ambas exigem relogio/Date.parse controlado para provar o resultado
+// sem depender de espera real ou de duracao medida.
 
 // --- Correcao 2: WeakMap privado, nenhuma forma de reflexao revela Retry-After ---
 
-test('correcao4-7: WeakMap nao cria propriedade propria no erro -- Object.getOwnPropertyNames so mostra campos aprovados e padrao de Error', async () => {
+// Conjunto exato de propriedades publicas que a instancia de
+// ErroClienteModeloOpenAI pode ter: os seis campos aprovados mais as tres
+// propriedades padrao de qualquer instancia de Error (name, message,
+// stack). Usado para comparacao de conjunto exato (nao so "pertence a
+// lista"), tanto em Object.getOwnPropertyNames quanto em Reflect.ownKeys
+// -- qualquer propriedade a mais (ex.: retryAfterMs) ou a menos deve
+// fazer o teste falhar.
+const PROPRIEDADES_PUBLICAS_ESPERADAS_DO_ERRO = [
+  'categoria',
+  'codigo',
+  'tentativas',
+  'duracaoMs',
+  'modelo',
+  'statusHttp',
+  'name',
+  'message',
+  'stack',
+].sort();
+
+test('correcao4-7: Object.getOwnPropertyNames corresponde exatamente as nove propriedades permitidas (nenhuma a mais, nenhuma a menos)', async () => {
   const { fetchFalso } = criarFetchFalso([() => respostaErroHttp(429, {}, { 'Retry-After': '3600' })]);
   const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 100, prazoTotalMs: 200 });
   let erro: unknown;
@@ -1389,13 +1340,8 @@ test('correcao4-7: WeakMap nao cria propriedade propria no erro -- Object.getOwn
     erro = e;
   }
   assertCategoria(erro, 'limite_taxa');
-  const camposAprovados = ['categoria', 'codigo', 'tentativas', 'duracaoMs', 'modelo', 'statusHttp'];
-  const camposPadraoDeError = ['name', 'message', 'stack'];
-  const nomes = Object.getOwnPropertyNames(erro as object);
-  for (const nome of nomes) {
-    assert.ok(camposAprovados.includes(nome) || camposPadraoDeError.includes(nome), `propriedade inesperada: ${nome}`);
-  }
-  assert.ok(!nomes.includes('retryAfterMs'));
+  const nomes = Object.getOwnPropertyNames(erro as object).sort();
+  assert.deepEqual(nomes, PROPRIEDADES_PUBLICAS_ESPERADAS_DO_ERRO);
 });
 
 test('correcao4-8: Object.getOwnPropertySymbols nao revela nenhum Retry-After', async () => {
@@ -1411,7 +1357,7 @@ test('correcao4-8: Object.getOwnPropertySymbols nao revela nenhum Retry-After', 
   assert.deepEqual(Object.getOwnPropertySymbols(erro as object), []);
 });
 
-test('correcao4-9: Reflect.ownKeys nao revela nenhum Retry-After (nem symbol, nem string oculta)', async () => {
+test('correcao4-9: Reflect.ownKeys corresponde exatamente as mesmas nove chaves string, sem nenhum Symbol', async () => {
   const { fetchFalso } = criarFetchFalso([() => respostaErroHttp(429, {}, { 'Retry-After': '3600' })]);
   const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 100, prazoTotalMs: 200 });
   let erro: unknown;
@@ -1421,12 +1367,15 @@ test('correcao4-9: Reflect.ownKeys nao revela nenhum Retry-After (nem symbol, ne
     erro = e;
   }
   assertCategoria(erro, 'limite_taxa');
-  const camposAprovados = ['categoria', 'codigo', 'tentativas', 'duracaoMs', 'modelo', 'statusHttp'];
-  const camposPadraoDeError = ['name', 'message', 'stack'];
   const chaves = Reflect.ownKeys(erro as object);
-  for (const chave of chaves) {
-    assert.ok(typeof chave === 'string' && (camposAprovados.includes(chave) || camposPadraoDeError.includes(chave)));
-  }
+  assert.equal(chaves.length, PROPRIEDADES_PUBLICAS_ESPERADAS_DO_ERRO.length, 'nenhuma chave alem das nove esperadas (nem string extra, nem symbol)');
+  assert.deepEqual(
+    chaves.filter((chave) => typeof chave === 'symbol'),
+    [],
+    'nenhuma chave Symbol deveria existir'
+  );
+  const chavesString = chaves.filter((chave): chave is string => typeof chave === 'string').sort();
+  assert.deepEqual(chavesString, PROPRIEDADES_PUBLICAS_ESPERADAS_DO_ERRO);
 });
 
 test('correcao4-10: JSON.stringify (direto e aninhado) nao revela Retry-After', async () => {
@@ -1446,110 +1395,10 @@ test('correcao4-10: JSON.stringify (direto e aninhado) nao revela Retry-After', 
 });
 
 // --- Correcao 3 e 4: timeout prevalece sobre classificacao tardia; limite e >= ---
-
-test('correcao4-11: processamento estrutural tardio (output ausente) retorna timeout, nao resposta_nao_estruturada', async () => {
-  const { fetchFalso } = criarFetchFalso([() => respostaOutputAusente()]);
-  const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs: 20, esperaEntreTentativasMs: 5, prazoTotalMs: 20 });
-  let erro: unknown;
-  await comJsonParseAtrasado(30, async () => {
-    try {
-      await cliente.executar(entradaValida());
-    } catch (e) {
-      erro = e;
-    }
-  });
-  assertCategoria(erro, 'timeout');
-  assert.equal(erro.tentativas, 1);
-});
-
-test('correcao4-12: conversao portatil tardia (campo desconhecido) retorna timeout, nao resposta_invalida', async () => {
-  function respostaComAlteracaoInvalida() {
-    const corpo = {
-      status: 'completed',
-      output: [
-        {
-          type: 'message',
-          content: [{ type: 'output_text', text: JSON.stringify({ alteracoes: [{ campo: 'campo_desconhecido', acao: 'informar', valor: 'x' }] }) }],
-        },
-      ],
-    };
-    return new Response(JSON.stringify(corpo), { status: 200 });
-  }
-  const { fetchFalso } = criarFetchFalso([() => respostaComAlteracaoInvalida()]);
-  const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs: 20, esperaEntreTentativasMs: 5, prazoTotalMs: 20 });
-  let erro: unknown;
-  await comJsonParseAtrasado(15, async () => {
-    try {
-      await cliente.executar(entradaValida());
-    } catch (e) {
-      erro = e;
-    }
-  });
-  assertCategoria(erro, 'timeout');
-});
-
-test('correcao4-13: recusa/filtro tardio retorna timeout quando o prazo ja expirou', async () => {
-  const { fetchFalso } = criarFetchFalso([() => respostaRecusaNoSegundoItemDeContent('motivo interno')]);
-  const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs: 20, esperaEntreTentativasMs: 5, prazoTotalMs: 20 });
-  let erro: unknown;
-  await comJsonParseAtrasado(30, async () => {
-    try {
-      await cliente.executar(entradaValida());
-    } catch (e) {
-      erro = e;
-    }
-  });
-  assertCategoria(erro, 'timeout');
-});
-
-test('correcao4-14: classificacoes originais sao preservadas quando o processamento termina dentro do prazo (regressao)', async () => {
-  const { fetchFalso } = criarFetchFalso([() => respostaOutputAusente()]);
-  const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs: 5000, esperaEntreTentativasMs: 5, prazoTotalMs: 5000 });
-  let erro: unknown;
-  await comJsonParseAtrasado(5, async () => {
-    try {
-      await cliente.executar(entradaValida());
-    } catch (e) {
-      erro = e;
-    }
-  });
-  assertCategoria(erro, 'resposta_nao_estruturada');
-});
-
-test('correcao4-15: decorrido exatamente no limite do timeout da tentativa (ou alem) e tratado como timeout (>=)', async () => {
-  const timeoutPorTentativaMs = 15;
-  const { fetchFalso } = criarFetchFalso([() => respostaSucesso([])]);
-  const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs, esperaEntreTentativasMs: 5, prazoTotalMs: 5000 });
-  let erro: unknown;
-  await comJsonParseAtrasado(timeoutPorTentativaMs, async () => {
-    try {
-      await cliente.executar(entradaValida());
-    } catch (e) {
-      erro = e;
-    }
-  });
-  assertCategoria(erro, 'timeout');
-});
-
-test('correcao4-16: decorrido exatamente no limite do prazo total (ou alem) e tratado como timeout (>=)', async () => {
-  // prazoTotalMs == timeoutPorTentativaMs: configuracao legal mais
-  // apertada (validarConfiguracao exige prazoTotalMs >= timeoutPorTentativaMs).
-  // Nessa configuracao, para a primeira tentativa, os dois limites
-  // coincidem -- e a unica forma de exercitar o limite de prazoTotalMs
-  // sem depender de uma segunda tentativa.
-  const prazoUnico = 15;
-  const { fetchFalso } = criarFetchFalso([() => respostaSucesso([])]);
-  const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs: prazoUnico, esperaEntreTentativasMs: 5, prazoTotalMs: prazoUnico });
-  let erro: unknown;
-  await comJsonParseAtrasado(prazoUnico, async () => {
-    try {
-      await cliente.executar(entradaValida());
-    } catch (e) {
-      erro = e;
-    }
-  });
-  assertCategoria(erro, 'timeout');
-});
+//
+// Os seis cenarios (correcao4-11 a correcao4-16) usam comJsonParseAtrasado,
+// que substitui JSON.parse globalmente -- ficam na secao isolada ao final
+// do arquivo, junto com os demais testes que alteram globais.
 
 // --- Correcao 5: garantias gerais (maximo de tentativas, so fetch falso, zero chamadas reais) ---
 
@@ -1571,4 +1420,329 @@ test('correcao4-18: todos os testes usam somente fetch falso injetado; nenhuma c
   await cliente.executar(entradaValida());
   assert.equal(chamadas.length, 1);
   assert.equal(chamadas[0].url, 'https://api.openai.com/v1/responses');
+});
+
+// =====================================================================
+// Rodada 5 -- correcao apos revisao do Codex sobre o commit 79b5c61,
+// que apontou tres lacunas exclusivamente nos testes (nenhuma mudanca de
+// codigo de producao nesta rodada):
+//
+// 1. correcao4-7/correcao4-9 comparavam "toda propriedade encontrada
+//    pertence a lista permitida", o que deixaria passar uma propriedade
+//    FALTANDO sem detectar -- agora comparam o conjunto ORDENADO exato
+//    via assert.deepEqual (ver PROPRIEDADES_PUBLICAS_ESPERADAS_DO_ERRO,
+//    definida acima, junto de correcao4-7).
+//
+// 2. Todo teste que substitui Date.now, JSON.parse ou Date.parse
+//    globalmente agora fica agrupado nesta unica describe com
+//    concurrency explicitamente desativada (nao dependemos do
+//    comportamento sequencial implicito do runner). Cada substituicao
+//    salva a referencia original, ocorre dentro do proprio teste, e e
+//    restaurada incondicionalmente em finally -- inclusive quando o
+//    callback lanca. Duas provas de restauracao explicitas fecham a
+//    secao.
+//
+// 3. Os testes de Retry-After que dependiam de duracao de parede
+//    (duracao < Xms, ou esperar segundos de verdade) foram reescritos
+//    para provar aceitacao/rejeicao somente por orcamento configurado +
+//    numero de chamadas ao fetch + categoria/tentativas do erro --
+//    quando a decisao correta so e distinguivel de uma aceitacao indevida
+//    via uma data proxima/ambigua (caso do decimal "1.5", e da lista
+//    completa de formatos invalidos), Date.parse e Date.now sao
+//    controlados para forcar o pior caso (uma data futura distante) e
+//    provar que o round-trip ainda assim rejeita.
+// =====================================================================
+
+describe('testes que substituem globais (Date.now, JSON.parse, Date.parse) -- concurrency serializada explicitamente', { concurrency: 1 }, () => {
+  test('correcao1: revalidacao apos a espera bloqueia a segunda tentativa de forma deterministica, sem depender de jitter natural do setTimeout', async () => {
+    // Tecnica: substitui Date.now globalmente por um relogio falso de duas
+    // fases (nao mexe em setTimeout, entao aguardar() continua sendo uma
+    // espera real, so que minuscula: 5ms). A fase muda de "antes" (0) para
+    // "depois" (1000) atraves de um setTimeout(...,0) agendado dentro do
+    // proprio fetch falso da tentativa 1 -- por garantia da propria
+    // especificacao de timers do JavaScript, um timer de delay 0 SEMPRE
+    // dispara antes de um timer de delay >0 agendado por perto (aqui,
+    // esperaEntreTentativasMs=5), entao a mudanca de fase e GARANTIDA
+    // acontecer antes da checagem pos-espera rodar -- nao ha dependencia de
+    // quanto o setTimeout realmente atrasa (overshoot), apenas da ORDEM
+    // relativa entre dois timers de delays diferentes, que o event loop
+    // sempre respeita. A checagem PRE-espera roda de forma sincrona (antes
+    // de qualquer timer dela disparar), entao sempre ve o relogio na fase
+    // "antes". Restaura Date.now no finally, isolado por teste, com prova
+    // explicita de restauracao logo em seguida.
+    const timeoutPorTentativaMs = 200;
+    const esperaEntreTentativasMs = 5;
+    const prazoTotalMs = 300; // >= esperaEntreTentativasMs(nominal, fase "antes") + timeoutPorTentativaMs -> passa a checagem PRE-espera; < 1000(fase "depois") -> falha a checagem POS-espera
+
+    const DateNowOriginal = Date.now;
+    let faseDepois = false;
+    Date.now = () => (faseDepois ? 1000 : 0);
+
+    const { fetchFalso, chamadas } = criarFetchFalso([
+      () => {
+        setTimeout(() => {
+          faseDepois = true;
+        }, 0);
+        return respostaErroHttp(503, {});
+      },
+      () => respostaSucesso([]),
+    ]);
+
+    const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs, esperaEntreTentativasMs, prazoTotalMs });
+
+    let erro: unknown;
+    try {
+      await cliente.executar(entradaValida());
+    } catch (e) {
+      erro = e;
+    } finally {
+      Date.now = DateNowOriginal;
+    }
+
+    assert.equal(Date.now, DateNowOriginal, 'Date.now deve ser exatamente a referencia original apos o teste');
+    assertCategoria(erro, 'indisponibilidade');
+    assert.equal(erro.tentativas, 1, 'a segunda tentativa nao deveria ter iniciado');
+    assert.equal(chamadas.length, 1, 'nenhum segundo fetch deveria ocorrer');
+  });
+
+  test('correcao4: formatos numericos invalidos (decimal, sinal, espaco interno, notacao exponencial, Infinity, NaN) sao rejeitados -- provado por orcamento e chamadas, com Date.parse controlado para simular o pior caso', async () => {
+    // ' 5'/'5 ' nao entram aqui: Headers normaliza (retira) OWS nas bordas
+    // do valor do header por conta propria, entao esses dois casos nunca
+    // chegariam com espaco ate o nosso codigo. '5 0' cobre espaco INTERNO,
+    // que Headers preserva.
+    const valoresInvalidos = ['1.5', '+5', '-5', '5 0', '1e10', '1E3', 'Infinity', '-Infinity', 'NaN'];
+
+    // Date.parse nativo ja rejeita (NaN) a maioria destes valores, mas
+    // '+5' e '-5' retornam uma data valida (embora no passado) em alguns
+    // runtimes -- para nao depender disso, forcamos TODOS os valores da
+    // lista a produzir, via Date.parse, uma data FUTURA distante (que,
+    // se fosse aceita pelo round-trip, tornaria o orcamento insuficiente
+    // para a segunda tentativa). Assim, "duas chamadas ocorrem" so pode
+    // significar que o round-trip corretamente rejeitou o texto literal
+    // (nenhum deles pode ser igual a um toUTCString() real).
+    const parseOriginal = Date.parse;
+    const timestampFuturoSeAceito = Date.now() + 500_000;
+    Date.parse = ((valor: string) => (valoresInvalidos.includes(valor) ? timestampFuturoSeAceito : parseOriginal(valor))) as typeof Date.parse;
+
+    try {
+      for (const valorInvalido of valoresInvalidos) {
+        const { fetchFalso, chamadas } = criarFetchFalso([
+          () => respostaErroHttp(429, {}, { 'Retry-After': valorInvalido }),
+          () => respostaSucesso([]),
+        ]);
+        const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 100, prazoTotalMs: 1000 });
+        await cliente.executar(entradaValida());
+        assert.equal(
+          chamadas.length,
+          2,
+          `Retry-After=${valorInvalido} deveria ser rejeitado (round-trip nunca bate com o texto literal), permitindo a segunda tentativa via fallback -- mesmo com Date.parse manipulado para simular uma aceitacao indevida como data futura distante`
+        );
+      }
+    } finally {
+      Date.parse = parseOriginal;
+    }
+    assert.equal(Date.parse, parseOriginal, 'Date.parse deve ser exatamente a referencia original apos o teste');
+  });
+
+  test('correcao4-1: Retry-After em HTTP-date canonica (toUTCString) e aceito -- provado por orcamento, sem espera real', async () => {
+    // Relogio congelado num instante fixo: o header e construido como
+    // exatamente agoraFixo+500_000ms via toUTCString (garantidamente
+    // canonico, round-trip estavel). Com prazoTotalMs=1000, se a data for
+    // aceita (como deve ser), a espera aplicavel (500_000ms) jamais cabe
+    // no orcamento -- uma unica chamada ocorre, sem nenhuma espera real.
+    const agoraFixo = 1_700_000_000_000;
+    const segundosFuturos = 500;
+    const dataCanonica = new Date(agoraFixo + segundosFuturos * 1000).toUTCString();
+
+    const timeoutPorTentativaMs = 100;
+    const esperaEntreTentativasMs = 5;
+    const prazoTotalMs = 1000;
+
+    const DateNowOriginal = Date.now;
+    Date.now = () => agoraFixo;
+
+    const { fetchFalso, chamadas } = criarFetchFalso([
+      () => respostaErroHttp(429, {}, { 'Retry-After': dataCanonica }),
+      () => respostaSucesso([]),
+    ]);
+    const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs, esperaEntreTentativasMs, prazoTotalMs });
+
+    let erro: unknown;
+    try {
+      await cliente.executar(entradaValida());
+    } catch (e) {
+      erro = e;
+    } finally {
+      Date.now = DateNowOriginal;
+    }
+
+    assert.equal(Date.now, DateNowOriginal, 'Date.now deve ser exatamente a referencia original apos o teste');
+    assertCategoria(erro, 'limite_taxa');
+    assert.equal(erro.tentativas, 1, 'a data canonica deveria ter sido aceita como uma espera enorme, impedindo a segunda tentativa');
+    assert.equal(chamadas.length, 1);
+  });
+
+  test('correcao4-5: decimal "1.5" e rejeitado de forma distinguivel -- Date.parse controlado simula uma aceitacao incorreta e prova que o round-trip a rejeita mesmo assim', async () => {
+    const agoraFixo = 1_700_000_000_000;
+    const timestampFuturoSeAceito = agoraFixo + 500_000; // se "1.5" fosse (incorretamente) aceito como data, resultaria numa espera enorme
+    const parseOriginal = Date.parse;
+    const DateNowOriginal = Date.now;
+
+    Date.now = () => agoraFixo;
+    Date.parse = ((valor: string) => (valor === '1.5' ? timestampFuturoSeAceito : parseOriginal(valor))) as typeof Date.parse;
+
+    const { fetchFalso, chamadas } = criarFetchFalso([
+      () => respostaErroHttp(429, {}, { 'Retry-After': '1.5' }),
+      () => respostaSucesso([]),
+    ]);
+
+    try {
+      const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 100, prazoTotalMs: 1000 });
+      await cliente.executar(entradaValida());
+    } finally {
+      Date.parse = parseOriginal;
+      Date.now = DateNowOriginal;
+    }
+
+    assert.equal(Date.parse, parseOriginal, 'Date.parse deve ser exatamente a referencia original apos o teste');
+    assert.equal(Date.now, DateNowOriginal, 'Date.now deve ser exatamente a referencia original apos o teste');
+    assert.equal(
+      chamadas.length,
+      2,
+      '"1.5" deveria ser rejeitado (round-trip nunca produz "1.5"), permitindo a segunda tentativa via fallback -- mesmo com Date.parse manipulado para simular uma data futura plausivel'
+    );
+  });
+
+  test('correcao4-11: processamento estrutural tardio (output ausente) retorna timeout, nao resposta_nao_estruturada', async () => {
+    const { fetchFalso } = criarFetchFalso([() => respostaOutputAusente()]);
+    const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs: 20, esperaEntreTentativasMs: 5, prazoTotalMs: 20 });
+    let erro: unknown;
+    await comJsonParseAtrasado(30, async () => {
+      try {
+        await cliente.executar(entradaValida());
+      } catch (e) {
+        erro = e;
+      }
+    });
+    assertCategoria(erro, 'timeout');
+    assert.equal(erro.tentativas, 1);
+  });
+
+  test('correcao4-12: conversao portatil tardia (campo desconhecido) retorna timeout, nao resposta_invalida', async () => {
+    function respostaComAlteracaoInvalida() {
+      const corpo = {
+        status: 'completed',
+        output: [
+          {
+            type: 'message',
+            content: [
+              { type: 'output_text', text: JSON.stringify({ alteracoes: [{ campo: 'campo_desconhecido', acao: 'informar', valor: 'x' }] }) },
+            ],
+          },
+        ],
+      };
+      return new Response(JSON.stringify(corpo), { status: 200 });
+    }
+    const { fetchFalso } = criarFetchFalso([() => respostaComAlteracaoInvalida()]);
+    const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs: 20, esperaEntreTentativasMs: 5, prazoTotalMs: 20 });
+    let erro: unknown;
+    await comJsonParseAtrasado(15, async () => {
+      try {
+        await cliente.executar(entradaValida());
+      } catch (e) {
+        erro = e;
+      }
+    });
+    assertCategoria(erro, 'timeout');
+  });
+
+  test('correcao4-13: recusa/filtro tardio retorna timeout quando o prazo ja expirou', async () => {
+    const { fetchFalso } = criarFetchFalso([() => respostaRecusaNoSegundoItemDeContent('motivo interno')]);
+    const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs: 20, esperaEntreTentativasMs: 5, prazoTotalMs: 20 });
+    let erro: unknown;
+    await comJsonParseAtrasado(30, async () => {
+      try {
+        await cliente.executar(entradaValida());
+      } catch (e) {
+        erro = e;
+      }
+    });
+    assertCategoria(erro, 'timeout');
+  });
+
+  test('correcao4-14: classificacoes originais sao preservadas quando o processamento termina dentro do prazo (regressao)', async () => {
+    const { fetchFalso } = criarFetchFalso([() => respostaOutputAusente()]);
+    const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs: 5000, esperaEntreTentativasMs: 5, prazoTotalMs: 5000 });
+    let erro: unknown;
+    await comJsonParseAtrasado(5, async () => {
+      try {
+        await cliente.executar(entradaValida());
+      } catch (e) {
+        erro = e;
+      }
+    });
+    assertCategoria(erro, 'resposta_nao_estruturada');
+  });
+
+  test('correcao4-15: decorrido exatamente no limite do timeout da tentativa (ou alem) e tratado como timeout (>=)', async () => {
+    const timeoutPorTentativaMs = 15;
+    const { fetchFalso } = criarFetchFalso([() => respostaSucesso([])]);
+    const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs, esperaEntreTentativasMs: 5, prazoTotalMs: 5000 });
+    let erro: unknown;
+    await comJsonParseAtrasado(timeoutPorTentativaMs, async () => {
+      try {
+        await cliente.executar(entradaValida());
+      } catch (e) {
+        erro = e;
+      }
+    });
+    assertCategoria(erro, 'timeout');
+  });
+
+  test('correcao4-16: decorrido exatamente no limite do prazo total (ou alem) e tratado como timeout (>=)', async () => {
+    // prazoTotalMs == timeoutPorTentativaMs: configuracao legal mais
+    // apertada (validarConfiguracao exige prazoTotalMs >= timeoutPorTentativaMs).
+    // Nessa configuracao, para a primeira tentativa, os dois limites
+    // coincidem -- e a unica forma de exercitar o limite de prazoTotalMs
+    // sem depender de uma segunda tentativa.
+    const prazoUnico = 15;
+    const { fetchFalso } = criarFetchFalso([() => respostaSucesso([])]);
+    const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs: prazoUnico, esperaEntreTentativasMs: 5, prazoTotalMs: prazoUnico });
+    let erro: unknown;
+    await comJsonParseAtrasado(prazoUnico, async () => {
+      try {
+        await cliente.executar(entradaValida());
+      } catch (e) {
+        erro = e;
+      }
+    });
+    assertCategoria(erro, 'timeout');
+  });
+
+  test('prova-restauracao: JSON.parse volta a ser a referencia original apos comJsonParseAtrasado, mesmo quando o callback lanca', async () => {
+    const parseOriginal = JSON.parse;
+    await assert.rejects(() =>
+      comJsonParseAtrasado(1, async () => {
+        throw new Error('erro proposital dentro do callback, para provar que o finally restaura mesmo assim');
+      })
+    );
+    assert.equal(JSON.parse, parseOriginal, 'JSON.parse deve ser exatamente a referencia original apos o helper terminar, mesmo com excecao');
+  });
+
+  test('prova-restauracao: Date.now volta a ser a referencia original apos um teste que o substitui, mesmo quando cliente.executar lanca', async () => {
+    const DateNowOriginal = Date.now;
+    Date.now = () => 42;
+    let erro: unknown;
+    try {
+      const { fetchFalso } = criarFetchFalso([() => respostaErroHttp(401, {})]);
+      const cliente = criarCliente({ fetch: fetchFalso });
+      await cliente.executar(entradaValida());
+    } catch (e) {
+      erro = e;
+    } finally {
+      Date.now = DateNowOriginal;
+    }
+    assert.equal(Date.now, DateNowOriginal, 'Date.now deve ser exatamente a referencia original apos o teste, mesmo com excecao lancada dentro do bloco protegido');
+    assertCategoria(erro, 'autenticacao');
+  });
 });
