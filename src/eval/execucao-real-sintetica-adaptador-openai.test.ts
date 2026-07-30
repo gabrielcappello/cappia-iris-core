@@ -8,10 +8,37 @@ import {
   CAMPOS_ESPERADOS,
   PAYLOAD_SINTETICO_AUTORIZADO,
   criarFetchComLimiteExterno,
+  executarPrincipal,
   executarUma,
   inspecionarCorpoRequisicao,
   validarConversao,
 } from './execucao-real-sintetica-adaptador-openai.ts';
+
+const PROPRIEDADES_SUCESSO_ESPERADAS = [
+  'aprovado',
+  'status_http',
+  'modelo_ok',
+  'store_false',
+  'strict_true',
+  'tools_ausentes',
+  'conversao_ok',
+  'campos',
+  'invocacoes_fetch',
+  'chamadas_externas',
+  'segunda_chamada_bloqueada',
+  'duracao_ms',
+].sort();
+
+const PROPRIEDADES_ERRO_ESPERADAS = [
+  'aprovado',
+  'categoria',
+  'codigo',
+  'status_http',
+  'invocacoes_fetch',
+  'chamadas_externas',
+  'segunda_chamada_bloqueada',
+  'duracao_ms',
+].sort();
 
 const CHAVE_FALSA = 'sk-teste-marcador-chave-XYZ789-nunca-deve-aparecer-em-lugar-nenhum';
 const MARCADOR_RESPOSTA_BRUTA = 'MARCADOR_RESPOSTA_BRUTA_UNICO_XYZ123_NUNCA_DEVE_VAZAR';
@@ -63,6 +90,15 @@ function criarFetchFalsoComContadorReal(gerador: () => Response) {
     return gerador();
   }) as typeof fetch;
   return { fetchFalso, obterChamadasReais: () => chamadasReais };
+}
+
+// Fetch falso que reprova o teste se for chamado -- usado em cenarios que
+// devem bloquear antes de qualquer tentativa de rede (chave ausente,
+// estrutura invalida, etc.).
+function criarFetchQueNuncaDeveSerChamado(): typeof fetch {
+  return (async () => {
+    throw new Error('fetch nao deveria ter sido chamado neste cenario');
+  }) as unknown as typeof fetch;
 }
 
 // --- inspecionarCorpoRequisicao ---
@@ -153,6 +189,107 @@ test('inspecionarCorpoRequisicao: corpo que nao e JSON valido reprova todos os c
     toolsAusentes: false,
     payloadAutorizado: false,
   });
+});
+
+// --- Validacao integral do array `input` (nao usa .find(); nao aceita a
+// primeira ocorrencia de um role) -- cada cenario abaixo precisa reprovar
+// a inspecao E bloquear o wrapper antes de qualquer chamada a rede. ---
+
+const CONTEUDO_USER_VALIDO = JSON.stringify({
+  mensagens_atuais: [...PAYLOAD_SINTETICO_AUTORIZADO.mensagens_atuais],
+  dados_atuais: {},
+});
+const ITEM_SYSTEM_VALIDO = { role: 'system', content: 'instrucoes' };
+const ITEM_USER_VALIDO = { role: 'user', content: CONTEUDO_USER_VALIDO };
+
+function construirCorpoComInput(input: unknown): string {
+  return JSON.stringify({
+    model: 'gpt-4.1-mini-2025-04-14',
+    store: false,
+    text: { format: { type: 'json_schema', strict: true } },
+    input,
+  });
+}
+
+// Nota: "payload user com propriedade extra" (cenario 17 da revisao) ja e
+// coberto, isoladamente, pelo teste "payload com propriedade extra (ex.:
+// clinica_id)" acima -- nao duplicado aqui.
+const CENARIOS_INPUT_INVALIDO: Array<{ nome: string; input: unknown }> = [
+  { nome: '1: input ausente', input: undefined },
+  { nome: '2: input nao e array', input: 'nao-array' },
+  { nome: '3: input vazio', input: [] },
+  { nome: '4: input contem somente system', input: [ITEM_SYSTEM_VALIDO] },
+  { nome: '5: input contem somente user', input: [ITEM_USER_VALIDO] },
+  { nome: '6: tres ou mais mensagens (extra generica apos o par valido)', input: [ITEM_SYSTEM_VALIDO, ITEM_USER_VALIDO, ITEM_SYSTEM_VALIDO] },
+  { nome: '7: user autorizada seguida de outra user', input: [ITEM_SYSTEM_VALIDO, ITEM_USER_VALIDO, ITEM_USER_VALIDO] },
+  { nome: '8: user autorizada seguida de assistant', input: [ITEM_SYSTEM_VALIDO, ITEM_USER_VALIDO, { role: 'assistant', content: 'x' }] },
+  { nome: '9: user autorizada seguida de developer', input: [ITEM_SYSTEM_VALIDO, ITEM_USER_VALIDO, { role: 'developer', content: 'x' }] },
+  { nome: '10: user autorizada seguida de role desconhecido', input: [ITEM_SYSTEM_VALIDO, ITEM_USER_VALIDO, { role: 'ferramenta_x', content: 'x' }] },
+  { nome: '11: duas mensagens system', input: [ITEM_SYSTEM_VALIDO, ITEM_SYSTEM_VALIDO] },
+  { nome: '12: ordem invertida (user antes de system)', input: [ITEM_USER_VALIDO, ITEM_SYSTEM_VALIDO] },
+  { nome: '13: role system com content nao string', input: [{ role: 'system', content: 123 }, ITEM_USER_VALIDO] },
+  { nome: '14: role user com content nao string', input: [ITEM_SYSTEM_VALIDO, { role: 'user', content: 123 }] },
+  { nome: '15: propriedade extra no objeto system', input: [{ role: 'system', content: 'instrucoes', extra: 'y' }, ITEM_USER_VALIDO] },
+  { nome: '16: propriedade extra no objeto user', input: [ITEM_SYSTEM_VALIDO, { role: 'user', content: CONTEUDO_USER_VALIDO, extra: 'y' }] },
+  {
+    nome: '18: payload user com mensagens_atuais diferente',
+    input: [ITEM_SYSTEM_VALIDO, { role: 'user', content: JSON.stringify({ mensagens_atuais: ['outro texto qualquer'], dados_atuais: {} }) }],
+  },
+  {
+    nome: '19: payload user com mais de uma mensagem',
+    input: [
+      ITEM_SYSTEM_VALIDO,
+      { role: 'user', content: JSON.stringify({ mensagens_atuais: [...PAYLOAD_SINTETICO_AUTORIZADO.mensagens_atuais, 'outra mensagem'], dados_atuais: {} }) },
+    ],
+  },
+  {
+    nome: '20: payload user com dados_atuais nao vazio',
+    input: [ITEM_SYSTEM_VALIDO, { role: 'user', content: JSON.stringify({ mensagens_atuais: [...PAYLOAD_SINTETICO_AUTORIZADO.mensagens_atuais], dados_atuais: { nome: 'x' } }) }],
+  },
+  { nome: '21: payload user que nao e JSON valido', input: [ITEM_SYSTEM_VALIDO, { role: 'user', content: 'isto nao e json {' }] },
+];
+
+test('inspecionarCorpoRequisicao: 20 cenarios de input invalido (sem .find(), validacao integral do array) reprovam payloadAutorizado', () => {
+  for (const cenario of CENARIOS_INPUT_INVALIDO) {
+    const inspecao = inspecionarCorpoRequisicao(construirCorpoComInput(cenario.input));
+    assert.equal(inspecao.payloadAutorizado, false, `cenario "${cenario.nome}" deveria reprovar payloadAutorizado`);
+  }
+});
+
+test('wrapper: os mesmos 20 cenarios de input invalido bloqueiam ANTES da rede (chamadasExternas=0, rede falsa nunca alcancada)', async () => {
+  for (const cenario of CENARIOS_INPUT_INVALIDO) {
+    const { fetchFalso, obterChamadasReais } = criarFetchFalsoComContadorReal(() => respostaSucessoValida());
+    const { fetchWrapper, obterContadores } = criarFetchComLimiteExterno(fetchFalso);
+    await assert.rejects(
+      () => fetchWrapper('https://api.openai.com/v1/responses', { method: 'POST', body: construirCorpoComInput(cenario.input) }),
+      new RegExp('.*'),
+      `cenario "${cenario.nome}" deveria bloquear antes da rede`
+    );
+    assert.equal(obterContadores().chamadasExternas, 0, `cenario "${cenario.nome}": chamadasExternas deveria ser 0`);
+    assert.equal(obterChamadasReais(), 0, `cenario "${cenario.nome}": a rede falsa nunca deveria ser alcancada`);
+  }
+});
+
+test('wrapper: body ausente, undefined, nao-string ou principal invalido bloqueiam antes da rede (cenarios 22-25)', async () => {
+  const casosBody: Array<{ nome: string; opcoes: RequestInit }> = [
+    { nome: '22: body ausente', opcoes: { method: 'POST' } },
+    { nome: '23: body undefined', opcoes: { method: 'POST', body: undefined } },
+    { nome: '24a: body e um objeto (nao string)', opcoes: { method: 'POST', body: { foo: 'bar' } as unknown as BodyInit } },
+    { nome: '24b: body e um Buffer (nao string)', opcoes: { method: 'POST', body: Buffer.from('x') as unknown as BodyInit } },
+    { nome: '25: corpo principal nao e JSON valido', opcoes: { method: 'POST', body: 'isto nao e json {' } },
+  ];
+
+  for (const caso of casosBody) {
+    const { fetchFalso, obterChamadasReais } = criarFetchFalsoComContadorReal(() => respostaSucessoValida());
+    const { fetchWrapper, obterContadores } = criarFetchComLimiteExterno(fetchFalso);
+    await assert.rejects(
+      () => fetchWrapper('https://api.openai.com/v1/responses', caso.opcoes),
+      new RegExp('.*'),
+      `cenario "${caso.nome}" deveria bloquear antes da rede`
+    );
+    assert.equal(obterContadores().chamadasExternas, 0, `cenario "${caso.nome}": chamadasExternas deveria ser 0`);
+    assert.equal(obterChamadasReais(), 0, `cenario "${caso.nome}": a rede falsa nunca deveria ser alcancada`);
+  }
 });
 
 // --- validarConversao ---
@@ -362,4 +499,131 @@ test('executarUma: nenhuma chamada real de rede ocorre (todas as respostas vem d
   assert.equal(obterChamadasReais(), 1);
   // confirma que o fetch usado nunca e o global -- e sempre a funcao falsa local
   assert.notEqual(fetchFalso, globalThis.fetch);
+});
+
+test('executarUma: evidencia de sucesso contem exatamente o conjunto aprovado de propriedades', async () => {
+  const { fetchFalso } = criarFetchFalsoComContadorReal(() => respostaSucessoValida());
+  const evidencia = await executarUma(fetchFalso, CHAVE_FALSA);
+  assert.deepEqual(Object.keys(evidencia).sort(), PROPRIEDADES_SUCESSO_ESPERADAS);
+});
+
+test('executarUma: evidencia de erro contem exatamente o conjunto aprovado de propriedades', async () => {
+  const { fetchFalso } = criarFetchFalsoComContadorReal(() => respostaErroHttp(401));
+  const evidencia = await executarUma(fetchFalso, CHAVE_FALSA);
+  assert.deepEqual(Object.keys(evidencia).sort(), PROPRIEDADES_ERRO_ESPERADAS);
+});
+
+// --- executarPrincipal: exercita o MESMO caminho usado por main() em
+// execucao real (dependencias injetaveis: fetch, leitura de chave, saida),
+// sem nunca tocar rede, ambiente ou console de verdade. ---
+
+test('executarPrincipal: sucesso -- saida chamada exatamente uma vez, aprovado=true, codigo de retorno 0, nada sensivel vaza', async () => {
+  const { fetchFalso } = criarFetchFalsoComContadorReal(() => respostaSucessoValida());
+  const chamadasSaida: unknown[] = [];
+  const codigo = await executarPrincipal({
+    fetchSubjacente: fetchFalso,
+    obterChaveApi: () => CHAVE_FALSA,
+    saida: (evidencia) => chamadasSaida.push(evidencia),
+  });
+
+  assert.equal(codigo, 0);
+  assert.equal(chamadasSaida.length, 1, 'a funcao de saida deveria ter sido chamada exatamente uma vez');
+  const evidencia = chamadasSaida[0] as Record<string, unknown>;
+  assert.equal(evidencia.aprovado, true);
+  assert.deepEqual(Object.keys(evidencia).sort(), PROPRIEDADES_SUCESSO_ESPERADAS);
+  const serializado = JSON.stringify(evidencia);
+  assert.ok(!serializado.includes(CHAVE_FALSA));
+  assert.ok(!serializado.includes(TEXTO_MENSAGEM_PAYLOAD));
+  assert.ok(!serializado.includes(MARCADOR_RESPOSTA_BRUTA));
+});
+
+test('executarPrincipal: erro 401 -- saida chamada exatamente uma vez, aprovado=false, codigo de retorno diferente de zero', async () => {
+  const { fetchFalso } = criarFetchFalsoComContadorReal(() => respostaErroHttp(401));
+  const chamadasSaida: unknown[] = [];
+  const codigo = await executarPrincipal({
+    fetchSubjacente: fetchFalso,
+    obterChaveApi: () => CHAVE_FALSA,
+    saida: (evidencia) => chamadasSaida.push(evidencia),
+  });
+
+  assert.notEqual(codigo, 0);
+  assert.equal(chamadasSaida.length, 1);
+  const evidencia = chamadasSaida[0] as Record<string, unknown>;
+  assert.equal(evidencia.aprovado, false);
+  assert.equal(evidencia.categoria, 'autenticacao');
+  assert.deepEqual(Object.keys(evidencia).sort(), PROPRIEDADES_ERRO_ESPERADAS);
+  const serializado = JSON.stringify(evidencia);
+  assert.ok(!serializado.includes(MARCADOR_RESPOSTA_BRUTA));
+  assert.ok(!serializado.includes(CHAVE_FALSA));
+});
+
+test('executarPrincipal: falha retentavel (503) com segunda tentativa bloqueada -- saida chamada exatamente uma vez, reprovado', async () => {
+  const { fetchFalso } = criarFetchFalsoComContadorReal(() => respostaErroHttp(503));
+  const chamadasSaida: unknown[] = [];
+  const codigo = await executarPrincipal({
+    fetchSubjacente: fetchFalso,
+    obterChaveApi: () => CHAVE_FALSA,
+    saida: (evidencia) => chamadasSaida.push(evidencia),
+  });
+
+  assert.notEqual(codigo, 0);
+  assert.equal(chamadasSaida.length, 1);
+  const evidencia = chamadasSaida[0] as Record<string, unknown>;
+  assert.equal(evidencia.aprovado, false);
+  assert.equal(evidencia.segunda_chamada_bloqueada, true);
+  assert.deepEqual(Object.keys(evidencia).sort(), PROPRIEDADES_ERRO_ESPERADAS);
+  const serializado = JSON.stringify(evidencia);
+  assert.ok(!serializado.includes(MARCADOR_RESPOSTA_BRUTA));
+});
+
+test('executarPrincipal: chave ausente -- nenhuma chamada ao fetch, saida chamada exatamente uma vez, codigo=chave_ausente', async () => {
+  const chamadasSaida: unknown[] = [];
+  const codigo = await executarPrincipal({
+    fetchSubjacente: criarFetchQueNuncaDeveSerChamado(),
+    obterChaveApi: () => undefined,
+    saida: (evidencia) => chamadasSaida.push(evidencia),
+  });
+
+  assert.notEqual(codigo, 0);
+  assert.equal(chamadasSaida.length, 1);
+  const evidencia = chamadasSaida[0] as Record<string, unknown>;
+  assert.equal(evidencia.aprovado, false);
+  assert.equal(evidencia.codigo, 'chave_ausente');
+  assert.equal(evidencia.invocacoes_fetch, 0);
+  assert.equal(evidencia.chamadas_externas, 0);
+  assert.deepEqual(Object.keys(evidencia).sort(), PROPRIEDADES_ERRO_ESPERADAS);
+  assert.ok(!JSON.stringify(evidencia).includes(CHAVE_FALSA));
+});
+
+test('executarPrincipal: chave ausente tambem cobre string vazia', async () => {
+  const chamadasSaida: unknown[] = [];
+  const codigo = await executarPrincipal({
+    fetchSubjacente: criarFetchQueNuncaDeveSerChamado(),
+    obterChaveApi: () => '   ',
+    saida: (evidencia) => chamadasSaida.push(evidencia),
+  });
+  assert.notEqual(codigo, 0);
+  assert.equal((chamadasSaida[0] as Record<string, unknown>).codigo, 'chave_ausente');
+});
+
+test('executarPrincipal: erro inesperado no caminho principal -- saida sanitizada, sem mensagem nem stack do erro real', async () => {
+  const MENSAGEM_SENSIVEL = 'mensagem sensivel de teste que nunca deveria vazar XYZ999';
+  const chamadasSaida: unknown[] = [];
+  const codigo = await executarPrincipal({
+    fetchSubjacente: criarFetchQueNuncaDeveSerChamado(),
+    obterChaveApi: () => {
+      throw new Error(MENSAGEM_SENSIVEL);
+    },
+    saida: (evidencia) => chamadasSaida.push(evidencia),
+  });
+
+  assert.notEqual(codigo, 0);
+  assert.equal(chamadasSaida.length, 1, 'a funcao de saida deveria ter sido chamada exatamente uma vez, mesmo com erro inesperado');
+  const evidencia = chamadasSaida[0] as Record<string, unknown>;
+  assert.equal(evidencia.aprovado, false);
+  assert.equal(evidencia.codigo, 'erro_nao_tratado_no_runner');
+  assert.deepEqual(Object.keys(evidencia).sort(), PROPRIEDADES_ERRO_ESPERADAS);
+  const serializado = JSON.stringify(evidencia);
+  assert.ok(!serializado.includes(MENSAGEM_SENSIVEL), 'a mensagem do erro real nunca pode vazar na evidencia');
+  assert.ok(!serializado.toLowerCase().includes('stack'), 'nenhum stack deveria ser serializado');
 });

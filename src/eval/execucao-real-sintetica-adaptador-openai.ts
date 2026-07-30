@@ -132,6 +132,65 @@ function inspecaoEstruturalValida(inspecao: InspecaoEstrutural): boolean {
   );
 }
 
+// Um item de `input` so e aceito com EXATAMENTE as propriedades role e
+// content (nenhuma propriedade paralela que pudesse carregar conteudo nao
+// autorizado) -- confirmado contra o corpo real montado pelo adaptador em
+// src/core/cliente-modelo-openai.ts (`{ role, content }`, nunca mais que
+// isso, em nenhum dos dois itens de `input`).
+function ehItemDeMensagemValido(item: unknown, roleEsperado: 'system' | 'user'): item is { role: string; content: string } {
+  if (item === null || typeof item !== 'object' || Array.isArray(item)) return false;
+  const chaves = Object.keys(item as Record<string, unknown>).sort();
+  if (JSON.stringify(chaves) !== JSON.stringify(['content', 'role'])) return false;
+  const objeto = item as { role: unknown; content: unknown };
+  if (objeto.role !== roleEsperado) return false;
+  if (typeof objeto.content !== 'string') return false;
+  return true;
+}
+
+// O conteudo da mensagem user (JSON serializado dentro de `content`) so e
+// aceito com EXATAMENTE as duas propriedades mensagens_atuais/dados_atuais,
+// uma unica mensagem com o texto exatamente autorizado, e dados_atuais
+// exatamente vazio -- nenhuma propriedade adicional, nenhuma mensagem
+// adicional, nenhum valor divergente.
+function ehPayloadDeUsuarioAutorizado(conteudoTexto: string): boolean {
+  let conteudo: unknown;
+  try {
+    conteudo = JSON.parse(conteudoTexto);
+  } catch {
+    return false;
+  }
+  if (conteudo === null || typeof conteudo !== 'object' || Array.isArray(conteudo)) return false;
+
+  const chaves = Object.keys(conteudo as Record<string, unknown>).sort();
+  if (JSON.stringify(chaves) !== JSON.stringify(['dados_atuais', 'mensagens_atuais'])) return false;
+
+  const objeto = conteudo as { mensagens_atuais: unknown; dados_atuais: unknown };
+  if (JSON.stringify(objeto.mensagens_atuais) !== JSON.stringify([...PAYLOAD_SINTETICO_AUTORIZADO.mensagens_atuais])) {
+    return false;
+  }
+  if (objeto.dados_atuais === null || typeof objeto.dados_atuais !== 'object' || Array.isArray(objeto.dados_atuais)) {
+    return false;
+  }
+  if (Object.keys(objeto.dados_atuais as Record<string, unknown>).length !== 0) return false;
+
+  return true;
+}
+
+// Valida o array `input` INTEGRALMENTE -- nao usa .find() nem aceita a
+// primeira ocorrencia de um role: exige exatamente dois itens, na ordem
+// exata (system, depois user), cada um com exatamente as propriedades
+// role/content, nenhum item adicional (mais uma mensagem system, mais uma
+// user, assistant, developer, tool ou qualquer role desconhecido reprova
+// so pelo tamanho ou pela posicao), e o conteudo da mensagem user
+// exatamente igual ao payload sintetico autorizado.
+function ehInputAutorizado(input: unknown): boolean {
+  if (!Array.isArray(input)) return false;
+  if (input.length !== 2) return false;
+  if (!ehItemDeMensagemValido(input[0], 'system')) return false;
+  if (!ehItemDeMensagemValido(input[1], 'user')) return false;
+  return ehPayloadDeUsuarioAutorizado(input[1].content);
+}
+
 // Analisa o corpo da requisicao SOMENTE EM MEMORIA (nunca impresso nem
 // persistido) e devolve so booleanos estruturais.
 export function inspecionarCorpoRequisicao(corpoBruto: string): InspecaoEstrutural {
@@ -159,24 +218,7 @@ export function inspecionarCorpoRequisicao(corpoBruto: string): InspecaoEstrutur
   const formatoJsonSchema = text?.format?.type === 'json_schema';
   const strictTrue = text?.format?.strict === true;
   const toolsAusentes = !('tools' in envelope);
-
-  let payloadAutorizado = false;
-  try {
-    const input = envelope.input;
-    const mensagemUsuario = Array.isArray(input)
-      ? (input as Array<{ role?: string; content?: unknown }>).find((item) => item?.role === 'user')
-      : undefined;
-    const conteudo = typeof mensagemUsuario?.content === 'string' ? JSON.parse(mensagemUsuario.content) : null;
-    payloadAutorizado =
-      conteudo !== null &&
-      typeof conteudo === 'object' &&
-      !Array.isArray(conteudo) &&
-      Object.keys(conteudo).sort().join(',') === 'dados_atuais,mensagens_atuais' &&
-      JSON.stringify(conteudo.mensagens_atuais) === JSON.stringify(PAYLOAD_SINTETICO_AUTORIZADO.mensagens_atuais) &&
-      JSON.stringify(conteudo.dados_atuais) === JSON.stringify(PAYLOAD_SINTETICO_AUTORIZADO.dados_atuais);
-  } catch {
-    payloadAutorizado = false;
-  }
+  const payloadAutorizado = ehInputAutorizado(envelope.input);
 
   return { modeloOk, storeFalse, formatoJsonSchema, strictTrue, toolsAusentes, payloadAutorizado };
 }
@@ -347,32 +389,79 @@ export async function executarUma(fetchSubjacente: typeof fetch, chaveApi: strin
   }
 }
 
-function imprimirEvidencia(evidencia: Evidencia): void {
+export function imprimirEvidencia(evidencia: Evidencia): void {
   // Unica saida deste runner -- somente o objeto sanitizado, nunca
   // payload, chave, corpo bruto ou headers.
   console.log(JSON.stringify(evidencia, null, 2));
 }
 
-async function main(): Promise<void> {
-  const chaveApi = process.env.IRIS_EVAL_OPENAI_API_KEY;
-  if (typeof chaveApi !== 'string' || chaveApi.trim() === '') {
-    imprimirEvidencia({
-      aprovado: false,
-      categoria: null,
-      codigo: 'chave_ausente',
-      status_http: null,
-      invocacoes_fetch: 0,
-      chamadas_externas: 0,
-      segunda_chamada_bloqueada: false,
-      duracao_ms: 0,
-    });
-    process.exitCode = 1;
-    return;
-  }
+const EVIDENCIA_CHAVE_AUSENTE: EvidenciaErro = {
+  aprovado: false,
+  categoria: null,
+  codigo: 'chave_ausente',
+  status_http: null,
+  invocacoes_fetch: 0,
+  chamadas_externas: 0,
+  segunda_chamada_bloqueada: false,
+  duracao_ms: 0,
+};
 
-  const evidencia = await executarUma(fetch, chaveApi);
-  imprimirEvidencia(evidencia);
-  process.exitCode = evidencia.aprovado ? 0 : 1;
+const EVIDENCIA_ERRO_NAO_TRATADO: EvidenciaErro = {
+  aprovado: false,
+  categoria: null,
+  codigo: 'erro_nao_tratado_no_runner',
+  status_http: null,
+  invocacoes_fetch: 0,
+  chamadas_externas: 0,
+  segunda_chamada_bloqueada: false,
+  duracao_ms: 0,
+};
+
+// Dependencias explicitas do caminho principal -- todas injetaveis, para
+// que o teste exercite exatamente o mesmo caminho que main() usa em
+// execucao real, sem nunca tocar rede, ambiente ou console de verdade.
+export interface DependenciasExecucaoPrincipal {
+  fetchSubjacente: typeof fetch;
+  obterChaveApi: () => string | undefined;
+  saida: (evidencia: Evidencia) => void;
+}
+
+// Funcao principal testavel: le a chave (via obterChaveApi injetavel),
+// executa uma tentativa e imprime (via saida injetavel) exatamente uma
+// evidencia sanitizada. Nunca aceita payload externo nem chave por
+// argumento -- essas garantias continuam fixas no proprio codigo
+// (PAYLOAD_SINTETICO_AUTORIZADO, e obterChaveApi so pode vir da variavel
+// de ambiente em producao real). Devolve o codigo de saida (0 == aprovado).
+export async function executarPrincipal(dependencias: DependenciasExecucaoPrincipal): Promise<number> {
+  try {
+    const chaveApi = dependencias.obterChaveApi();
+    if (typeof chaveApi !== 'string' || chaveApi.trim() === '') {
+      dependencias.saida(EVIDENCIA_CHAVE_AUSENTE);
+      return 1;
+    }
+
+    const evidencia = await executarUma(dependencias.fetchSubjacente, chaveApi);
+    dependencias.saida(evidencia);
+    return evidencia.aprovado ? 0 : 1;
+  } catch {
+    // Nunca loga o erro capturado aqui -- pode conter stack, mensagem do
+    // provedor ou qualquer outro contexto sensivel. So o codigo fixo e
+    // sanitizado sai.
+    dependencias.saida(EVIDENCIA_ERRO_NAO_TRATADO);
+    return 1;
+  }
+}
+
+// main() e so um adaptador minimo da execucao direta: liga
+// executarPrincipal as dependencias reais (fetch global,
+// IRIS_EVAL_OPENAI_API_KEY, console.log via imprimirEvidencia) -- toda a
+// logica testavel vive em executarPrincipal/executarUma.
+async function main(): Promise<void> {
+  process.exitCode = await executarPrincipal({
+    fetchSubjacente: fetch,
+    obterChaveApi: () => process.env.IRIS_EVAL_OPENAI_API_KEY,
+    saida: imprimirEvidencia,
+  });
 }
 
 // So dispara main() quando este arquivo e executado diretamente (node
@@ -380,18 +469,5 @@ async function main(): Promise<void> {
 // importado (por exemplo, pelo proprio arquivo de teste deste runner).
 const ehExecucaoDireta = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (ehExecucaoDireta) {
-  main().catch((erro) => {
-    imprimirEvidencia({
-      aprovado: false,
-      categoria: null,
-      codigo: 'erro_nao_tratado_no_runner',
-      status_http: null,
-      invocacoes_fetch: 0,
-      chamadas_externas: 0,
-      segunda_chamada_bloqueada: false,
-      duracao_ms: 0,
-    });
-    process.exitCode = 1;
-    void erro; // nunca logado -- pode conter contexto sensivel do stack
-  });
+  void main();
 }
