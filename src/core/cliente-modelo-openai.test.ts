@@ -199,6 +199,14 @@ function respostaComStatusInvalido(status: unknown) {
   return new Response(JSON.stringify(corpo), { status: 200 });
 }
 
+// Esvazia a fila de microtarefas por `vezes` voltas -- usado para deixar
+// um trecho assincrono baseado so em Promises (sem nenhum timer) avancar
+// ate seu proximo ponto de espera real, antes de mexer em timers falsos
+// (t.mock.timers). Nao usa nenhum timer, real ou falso.
+async function flushMicrotasks(vezes = 8): Promise<void> {
+  for (let i = 0; i < vezes; i++) await Promise.resolve();
+}
+
 // Bloqueio sincrono deliberado e controlado (spin em Date.now()), usado
 // somente em testes -- torna o tempo decorrido preciso e independente de
 // jitter do event loop, ao contrario de um atraso baseado em setTimeout.
@@ -643,52 +651,39 @@ test('21: quando ha orcamento, a segunda tentativa recebe o timeout completo (nu
 
 // --- 22-25: Retry-After ---
 
-test('22: Retry-After em segundos e respeitado', async () => {
+test('22: Retry-After em segundos e respeitado -- provado por orcamento, sem espera real', async () => {
+  // Retry-After: "1" -> 1000ms de espera aplicavel. Com prazoTotalMs=1000
+  // (insuficiente para comportar espera(1000)+tentativa completa(100)), o
+  // gate de orcamento -- que roda ANTES de qualquer espera real -- bloqueia
+  // a segunda tentativa. Uma unica chamada prova que "1" foi interpretado
+  // como 1000ms, sem nunca esperar de verdade.
   const { fetchFalso, chamadas } = criarFetchFalso([
     () => respostaErroHttp(429, {}, { 'Retry-After': '1' }),
     () => respostaSucesso([]),
   ]);
-  const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 200, prazoTotalMs: 5000 });
-  await cliente.executar(entradaValida());
-  assert.equal(chamadas.length, 2);
-  const intervalo = chamadas[1].momento - chamadas[0].momento;
-  assert.ok(intervalo >= 950, `deveria esperar ~1000ms (Retry-After), esperou ${intervalo}ms`);
+  const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 100, prazoTotalMs: 1000 });
+  let erro: unknown;
+  try {
+    await cliente.executar(entradaValida());
+  } catch (e) {
+    erro = e;
+  }
+  assertCategoria(erro, 'limite_taxa');
+  assert.equal(erro.tentativas, 1, '"1" deveria ser interpretado como 1000ms de espera, orcamento insuficiente para a segunda tentativa');
+  assert.equal(chamadas.length, 1);
 });
 
-test('23: Retry-After como data HTTP e respeitado', async () => {
-  // toUTCString() so tem precisao de SEGUNDOS (sem milissegundos) -- um
-  // offset pequeno (ex.: +300ms) pode arredondar para baixo e virar
-  // "no passado" ao ser reinterpretado, zerando a espera. Por isso o
-  // offset usado aqui e de +2200ms: mesmo no pior caso de arredondamento
-  // (perda de ate ~999ms), ainda sobra mais de 1s de espera real,
-  // claramente distinguivel de esperaEntreTentativasMs (5ms).
-  const dataFutura = new Date(Date.now() + 2200).toUTCString();
-  const { fetchFalso, chamadas } = criarFetchFalso([
-    () => respostaErroHttp(429, {}, { 'Retry-After': dataFutura }),
-    () => respostaSucesso([]),
-  ]);
-  const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 500, prazoTotalMs: 10000 });
-  await cliente.executar(entradaValida());
-  assert.equal(chamadas.length, 2);
-  const intervalo = chamadas[1].momento - chamadas[0].momento;
-  assert.ok(
-    intervalo >= 1000,
-    `deveria esperar bem mais que esperaEntreTentativasMs (5ms) por causa do Retry-After como data, esperou ${intervalo}ms`
-  );
-});
+// Teste 23 (Retry-After como data HTTP e respeitado) foi removido: a
+// mesma garantia -- HTTP-date canonica aceita, provada sem nenhuma espera
+// real -- ja e demonstrada deterministicamente por correcao4-1 (secao
+// isolada ao final do arquivo, relogio congelado + orcamento insuficiente).
 
-test('24: Retry-After invalido usa somente a espera configurada', async () => {
-  const { fetchFalso, chamadas } = criarFetchFalso([
-    () => respostaErroHttp(429, {}, { 'Retry-After': 'nao-e-um-valor-valido' }),
-    () => respostaSucesso([]),
-  ]);
-  const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 20, timeoutPorTentativaMs: 200, prazoTotalMs: 5000 });
-  const inicio = Date.now();
-  await cliente.executar(entradaValida());
-  const duracao = Date.now() - inicio;
-  assert.equal(chamadas.length, 2);
-  assert.ok(duracao < 200, `Retry-After invalido nao deveria estender a espera muito alem de esperaEntreTentativasMs (levou ${duracao}ms)`);
-});
+// Teste 24 (Retry-After invalido usa somente a espera configurada) foi
+// removido: a mesma garantia -- formato invalido cai para o fallback,
+// provado por duas chamadas ao fetch, sem medir duracao -- ja e coberta
+// por correcao4 (loop, secao isolada, agora incluindo o texto arbitrario
+// "nao-e-um-valor-valido" que esse teste usava) e por correcao4-5
+// (decimal "1.5", com Date.parse controlado para o pior caso).
 
 test('25: Retry-After grande demais impede a segunda tentativa', async () => {
   const { fetchFalso, chamadas } = criarFetchFalso([
@@ -954,10 +949,64 @@ test('extra: executar() bem-sucedido devolve o mapa interno pronto para validarS
 // =====================================================================
 
 // --- Correcao 1: revalidar o orcamento apos a espera ---
-//
-// O teste que prova a revalidacao pos-espera (que substitui Date.now)
-// fica na secao isolada ao final do arquivo, junto com os demais testes
-// que alteram globais -- ver "testes que substituem globais".
+
+test(
+  'correcao1: revalidacao apos a espera bloqueia a segunda tentativa -- provado com timers falsos deterministicos do node:test (t.mock.timers), sem Date.now manual nem setTimeout real',
+  async (t) => {
+    // t.mock.timers.enable() mocka setTimeout/clearTimeout e Date juntos:
+    // t.mock.timers.tick(ms) dispara os timers cujo prazo caiba dentro de
+    // ms E avanca Date.now() pela mesma quantia, na mesma operacao
+    // atomica -- sem nenhuma espera real, sem depender de qual timer
+    // "dispara primeiro" (nao ha corrida nenhuma). O node:test restaura
+    // os timers reais automaticamente ao fim deste teste.
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 });
+
+    const timeoutPorTentativaMs = 100;
+    const esperaEntreTentativasMs = 50;
+    // No instante 0, esperaEntreTentativasMs(50)+timeoutPorTentativaMs(100)
+    // = 150 <= prazoTotalMs(200) -> a checagem PRE-espera passa com folga.
+    const prazoTotalMs = 200;
+
+    const { fetchFalso, chamadas } = criarFetchFalso([() => respostaErroHttp(503, {}), () => respostaSucesso([])]);
+    const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs, esperaEntreTentativasMs, prazoTotalMs });
+
+    let erro: unknown;
+    let liquidada = false;
+    const promessa = cliente
+      .executar(entradaValida())
+      .catch((e) => {
+        erro = e;
+      })
+      .finally(() => {
+        liquidada = true;
+      });
+
+    // A tentativa 1 (fetch falso) resolve via microtask, sem nenhum
+    // timer -- flush suficiente deixa a tentativa 1 falhar e a checagem
+    // PRE-espera rodar, tudo isso ainda no instante 0 do relogio falso.
+    await flushMicrotasks();
+    assert.equal(
+      liquidada,
+      false,
+      'apos a tentativa 1 falhar, a promessa nao deveria estar resolvida ainda -- prova que a checagem PRE-espera permitiu chegar a espera (aguardar), em vez de rejeitar sincronamente'
+    );
+
+    // Avanca o relogio falso muito alem do orcamento disponivel: 200 e
+    // mais que suficiente para disparar o timer da espera (50ms) E, na
+    // mesma operacao, avancar Date.now() para 200 -- fazendo a checagem
+    // POS-espera (que roda logo depois do timer disparar) enxergar um
+    // relogio ja alem do prazo total (200), sem sobrar timeoutPorTentativaMs
+    // completo. Nao ha setTimeout real nem substituicao manual de
+    // Date.now neste teste -- somente a API oficial de timers falsos.
+    t.mock.timers.tick(200);
+    await flushMicrotasks();
+    await promessa;
+
+    assertCategoria(erro, 'indisponibilidade');
+    assert.equal(erro.tentativas, 1, 'a segunda tentativa nao deveria ter iniciado');
+    assert.equal(chamadas.length, 1, 'nenhum segundo fetch deveria ocorrer');
+  }
+);
 
 test('correcao1b: com orcamento generoso, a revalidacao apos a espera nao bloqueia a segunda tentativa (regressao)', async () => {
   const { fetchFalso, chamadas } = criarFetchFalso([() => respostaErroHttp(503, {}), () => respostaSucesso([])]);
@@ -1454,63 +1503,20 @@ test('correcao4-18: todos os testes usam somente fetch falso injetado; nenhuma c
 // =====================================================================
 
 describe('testes que substituem globais (Date.now, JSON.parse, Date.parse) -- concurrency serializada explicitamente', { concurrency: 1 }, () => {
-  test('correcao1: revalidacao apos a espera bloqueia a segunda tentativa de forma deterministica, sem depender de jitter natural do setTimeout', async () => {
-    // Tecnica: substitui Date.now globalmente por um relogio falso de duas
-    // fases (nao mexe em setTimeout, entao aguardar() continua sendo uma
-    // espera real, so que minuscula: 5ms). A fase muda de "antes" (0) para
-    // "depois" (1000) atraves de um setTimeout(...,0) agendado dentro do
-    // proprio fetch falso da tentativa 1 -- por garantia da propria
-    // especificacao de timers do JavaScript, um timer de delay 0 SEMPRE
-    // dispara antes de um timer de delay >0 agendado por perto (aqui,
-    // esperaEntreTentativasMs=5), entao a mudanca de fase e GARANTIDA
-    // acontecer antes da checagem pos-espera rodar -- nao ha dependencia de
-    // quanto o setTimeout realmente atrasa (overshoot), apenas da ORDEM
-    // relativa entre dois timers de delays diferentes, que o event loop
-    // sempre respeita. A checagem PRE-espera roda de forma sincrona (antes
-    // de qualquer timer dela disparar), entao sempre ve o relogio na fase
-    // "antes". Restaura Date.now no finally, isolado por teste, com prova
-    // explicita de restauracao logo em seguida.
-    const timeoutPorTentativaMs = 200;
-    const esperaEntreTentativasMs = 5;
-    const prazoTotalMs = 300; // >= esperaEntreTentativasMs(nominal, fase "antes") + timeoutPorTentativaMs -> passa a checagem PRE-espera; < 1000(fase "depois") -> falha a checagem POS-espera
+  // A revalidacao pos-espera (antigo "correcao1") agora e provada com
+  // t.mock.timers (ver a secao "Correcao 1: revalidar o orcamento apos a
+  // espera", perto do teste 21) -- os timers falsos do node:test tem
+  // isolamento e restauracao proprios por TestContext, entao esse teste
+  // nao precisa (nem deve) ficar agrupado com as substituicoes manuais de
+  // Date.now/JSON.parse/Date.parse abaixo.
 
-    const DateNowOriginal = Date.now;
-    let faseDepois = false;
-    Date.now = () => (faseDepois ? 1000 : 0);
-
-    const { fetchFalso, chamadas } = criarFetchFalso([
-      () => {
-        setTimeout(() => {
-          faseDepois = true;
-        }, 0);
-        return respostaErroHttp(503, {});
-      },
-      () => respostaSucesso([]),
-    ]);
-
-    const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs, esperaEntreTentativasMs, prazoTotalMs });
-
-    let erro: unknown;
-    try {
-      await cliente.executar(entradaValida());
-    } catch (e) {
-      erro = e;
-    } finally {
-      Date.now = DateNowOriginal;
-    }
-
-    assert.equal(Date.now, DateNowOriginal, 'Date.now deve ser exatamente a referencia original apos o teste');
-    assertCategoria(erro, 'indisponibilidade');
-    assert.equal(erro.tentativas, 1, 'a segunda tentativa nao deveria ter iniciado');
-    assert.equal(chamadas.length, 1, 'nenhum segundo fetch deveria ocorrer');
-  });
-
-  test('correcao4: formatos numericos invalidos (decimal, sinal, espaco interno, notacao exponencial, Infinity, NaN) sao rejeitados -- provado por orcamento e chamadas, com Date.parse controlado para simular o pior caso', async () => {
+  test('correcao4: formatos numericos invalidos (decimal, sinal, espaco interno, notacao exponencial, Infinity, NaN, texto arbitrario) sao rejeitados -- provado por orcamento e chamadas, com Date.parse controlado para simular o pior caso', async () => {
     // ' 5'/'5 ' nao entram aqui: Headers normaliza (retira) OWS nas bordas
     // do valor do header por conta propria, entao esses dois casos nunca
     // chegariam com espaco ate o nosso codigo. '5 0' cobre espaco INTERNO,
-    // que Headers preserva.
-    const valoresInvalidos = ['1.5', '+5', '-5', '5 0', '1e10', '1E3', 'Infinity', '-Infinity', 'NaN'];
+    // que Headers preserva. 'nao-e-um-valor-valido' cobre texto arbitrario
+    // sem nenhuma forma numerica (equivalente ao antigo teste 24, removido).
+    const valoresInvalidos = ['1.5', '+5', '-5', '5 0', '1e10', '1E3', 'Infinity', '-Infinity', 'NaN', 'nao-e-um-valor-valido'];
 
     // Date.parse nativo ja rejeita (NaN) a maioria destes valores, mas
     // '+5' e '-5' retornam uma data valida (embora no passado) em alguns
