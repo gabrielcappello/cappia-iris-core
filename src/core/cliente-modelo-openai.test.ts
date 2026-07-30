@@ -199,14 +199,6 @@ function respostaComStatusInvalido(status: unknown) {
   return new Response(JSON.stringify(corpo), { status: 200 });
 }
 
-// Esvazia a fila de microtarefas por `vezes` voltas -- usado para deixar
-// um trecho assincrono baseado so em Promises (sem nenhum timer) avancar
-// ate seu proximo ponto de espera real, antes de mexer em timers falsos
-// (t.mock.timers). Nao usa nenhum timer, real ou falso.
-async function flushMicrotasks(vezes = 8): Promise<void> {
-  for (let i = 0; i < vezes; i++) await Promise.resolve();
-}
-
 // Bloqueio sincrono deliberado e controlado (spin em Date.now()), usado
 // somente em testes -- torna o tempo decorrido preciso e independente de
 // jitter do event loop, ao contrario de um atraso baseado em setTimeout.
@@ -951,14 +943,13 @@ test('extra: executar() bem-sucedido devolve o mapa interno pronto para validarS
 // --- Correcao 1: revalidar o orcamento apos a espera ---
 
 test(
-  'correcao1: revalidacao apos a espera bloqueia a segunda tentativa -- provado com timers falsos deterministicos do node:test (t.mock.timers), sem Date.now manual nem setTimeout real',
+  'correcao1: revalidacao apos a espera bloqueia a segunda tentativa -- provado observando os proprios timers falsos (setTimeout/clearTimeout) do node:test, sem contagem arbitraria de microtarefas',
   async (t) => {
     // t.mock.timers.enable() mocka setTimeout/clearTimeout e Date juntos:
     // t.mock.timers.tick(ms) dispara os timers cujo prazo caiba dentro de
     // ms E avanca Date.now() pela mesma quantia, na mesma operacao
-    // atomica -- sem nenhuma espera real, sem depender de qual timer
-    // "dispara primeiro" (nao ha corrida nenhuma). O node:test restaura
-    // os timers reais automaticamente ao fim deste teste.
+    // atomica -- sem nenhuma espera real. O node:test restaura os timers
+    // reais automaticamente ao fim deste teste.
     t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 });
 
     const timeoutPorTentativaMs = 100;
@@ -967,44 +958,92 @@ test(
     // = 150 <= prazoTotalMs(200) -> a checagem PRE-espera passa com folga.
     const prazoTotalMs = 200;
 
-    const { fetchFalso, chamadas } = criarFetchFalso([() => respostaErroHttp(503, {}), () => respostaSucesso([])]);
-    const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs, esperaEntreTentativasMs, prazoTotalMs });
+    // Captura as referencias JA FALSIFICADAS por t.mock.timers.enable
+    // (nao as reais -- enable() ja rodou acima) -- os wrappers abaixo
+    // existem so para OBSERVAR delay/handle de cada chamada, delegando
+    // sempre para essas referencias falsas capturadas.
+    const setTimeoutFalso = globalThis.setTimeout;
+    const clearTimeoutFalso = globalThis.clearTimeout;
 
-    let erro: unknown;
-    let liquidada = false;
-    const promessa = cliente
-      .executar(entradaValida())
-      .catch((e) => {
+    let handleTentativa1: unknown = null;
+    let timeoutTentativa1Cancelado = false;
+    let timerEsperaRegistrado = false;
+    let resolverBarreira!: () => void;
+    // Barreira OBSERVAVEL: resolve somente quando os proprios timers
+    // falsos confirmam as duas condicoes abaixo -- nenhuma contagem fixa
+    // de microtarefas, nenhum pressuposto sobre ordem de agendamento.
+    const barreiraTimersObservados = new Promise<void>((resolve) => {
+      resolverBarreira = resolve;
+    });
+
+    function verificarBarreira(): void {
+      if (timeoutTentativa1Cancelado && timerEsperaRegistrado) resolverBarreira();
+    }
+
+    globalThis.setTimeout = ((fn: (...args: unknown[]) => void, delay?: number, ...args: unknown[]) => {
+      const handle = setTimeoutFalso(fn as never, delay, ...args);
+      if (delay === timeoutPorTentativaMs && handleTentativa1 === null) {
+        handleTentativa1 = handle; // timer de abort da tentativa 1
+      } else if (delay === esperaEntreTentativasMs) {
+        timerEsperaRegistrado = true; // timer interno de aguardar()
+        verificarBarreira();
+      }
+      return handle;
+    }) as typeof setTimeout;
+
+    globalThis.clearTimeout = ((handle: unknown) => {
+      if (handleTentativa1 !== null && handle === handleTentativa1) {
+        timeoutTentativa1Cancelado = true;
+        verificarBarreira();
+      }
+      return clearTimeoutFalso(handle as never);
+    }) as typeof clearTimeout;
+
+    try {
+      const { fetchFalso, chamadas } = criarFetchFalso([() => respostaErroHttp(503, {}), () => respostaSucesso([])]);
+      const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs, esperaEntreTentativasMs, prazoTotalMs });
+
+      const promessa = cliente.executar(entradaValida());
+      promessa.catch(() => {}); // evita aviso de rejeicao nao tratada entre a criacao e o await final
+
+      await barreiraTimersObservados;
+
+      // Confirma ANTES do tick, via os timers falsos observados (nao via
+      // duracao nem contagem de microtarefas):
+      assert.equal(chamadas.length, 1, 'exatamente um fetch deveria ter ocorrido antes do tick');
+      assert.equal(
+        timeoutTentativa1Cancelado,
+        true,
+        'o timeout (abort) da tentativa 1 deveria ter sido cancelado (clearTimeout) antes do tick'
+      );
+      assert.equal(
+        timerEsperaRegistrado,
+        true,
+        'o timer de aguardar(esperaEntreTentativasMs) deveria ter sido registrado antes do tick -- prova que a checagem PRE-espera permitiu chegar a espera, em vez de bloquear sincronamente'
+      );
+
+      // Avanca o relogio falso muito alem do orcamento disponivel: 200 e
+      // mais que suficiente para disparar o timer da espera (50ms) E, na
+      // mesma operacao, avancar Date.now() para 200 -- fazendo a checagem
+      // POS-espera (que roda logo depois do timer disparar) enxergar um
+      // relogio ja alem do prazo total (200), sem sobrar timeoutPorTentativaMs
+      // completo.
+      t.mock.timers.tick(200);
+
+      let erro: unknown;
+      try {
+        await promessa;
+      } catch (e) {
         erro = e;
-      })
-      .finally(() => {
-        liquidada = true;
-      });
+      }
 
-    // A tentativa 1 (fetch falso) resolve via microtask, sem nenhum
-    // timer -- flush suficiente deixa a tentativa 1 falhar e a checagem
-    // PRE-espera rodar, tudo isso ainda no instante 0 do relogio falso.
-    await flushMicrotasks();
-    assert.equal(
-      liquidada,
-      false,
-      'apos a tentativa 1 falhar, a promessa nao deveria estar resolvida ainda -- prova que a checagem PRE-espera permitiu chegar a espera (aguardar), em vez de rejeitar sincronamente'
-    );
-
-    // Avanca o relogio falso muito alem do orcamento disponivel: 200 e
-    // mais que suficiente para disparar o timer da espera (50ms) E, na
-    // mesma operacao, avancar Date.now() para 200 -- fazendo a checagem
-    // POS-espera (que roda logo depois do timer disparar) enxergar um
-    // relogio ja alem do prazo total (200), sem sobrar timeoutPorTentativaMs
-    // completo. Nao ha setTimeout real nem substituicao manual de
-    // Date.now neste teste -- somente a API oficial de timers falsos.
-    t.mock.timers.tick(200);
-    await flushMicrotasks();
-    await promessa;
-
-    assertCategoria(erro, 'indisponibilidade');
-    assert.equal(erro.tentativas, 1, 'a segunda tentativa nao deveria ter iniciado');
-    assert.equal(chamadas.length, 1, 'nenhum segundo fetch deveria ocorrer');
+      assertCategoria(erro, 'indisponibilidade');
+      assert.equal(erro.tentativas, 1, 'a segunda tentativa nao deveria ter iniciado');
+      assert.equal(chamadas.length, 1, 'nenhum segundo fetch deveria ocorrer');
+    } finally {
+      globalThis.setTimeout = setTimeoutFalso;
+      globalThis.clearTimeout = clearTimeoutFalso;
+    }
   }
 );
 
