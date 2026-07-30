@@ -128,21 +128,38 @@ mais recente.
   - `recebida → processando`;
   - `processando` (expirado) `→ processando` com novo `claim_token`.
 - Lease: **60 segundos**.
-- Somente o proprietário do `claim_token` vigente pode: persistir a interpretação;
-  autorizar a produção lógica da resposta; enviar a resposta; marcar o processamento
-  como `concluida`. Se qualquer revalidação falhar, a etapa seguinte correspondente não
-  é executada.
+- Somente o proprietário do `claim_token` vigente pode persistir a interpretação (gate
+  atômico, parte da mesma transação da persistência — ver "Concorrência" → "Contrato
+  atômico obrigatório") e marcar o processamento como `concluida` (transição
+  condicional ao token vigente, também atômica). Essas duas ações são **garantias
+  absolutas**.
+- Antes de autorizar a produção lógica da resposta e antes de enviá-la, o Core consulta
+  novamente o claim vigente (**gates operacionais**, não atômicos): se a perda do claim
+  já for detectada nesse gate, a etapa correspondente (produção ou envio) não é
+  executada. Esses gates reduzem o risco, mas não tornam a produção ou o envio atômicos
+  com `mensagens_recebidas` — o claim pode mudar depois do gate e antes da ação
+  seguinte. Impedir absolutamente uma produção ou um envio por um worker que perdeu o
+  claim depois do gate depende futuramente de transporte idempotente ou de um padrão
+  outbox transacional.
 - `concluida` não processa nem responde novamente.
 - `processando` com lease válido não processa nem responde novamente.
 - `falhou` não é reinterpretada automaticamente.
 - `processando` com lease expirado pode ser reivindicada por um novo worker.
-- O worker antigo (dono do `claim_token` anterior) não pode finalizar após um novo claim
-  ter sido emitido.
+- O worker antigo (dono do `claim_token` anterior) não persiste nem marca `concluida`
+  depois de um novo claim ter sido emitido — garantias absolutas. Produção e envio pelo
+  worker antigo são bloqueados apenas quando a perda do claim é detectada no gate
+  correspondente (ver acima) — não há garantia absoluta contra uma corrida ocorrida
+  depois desse gate.
 
-`mensagens_recebidas` garante uma única interpretação e uma única produção lógica de
-resposta. Entrega externa exatamente uma vez (ao transporte/paciente) **dependerá
-futuramente** de idempotência do transporte ou de um padrão outbox — não está resolvida
-nesta especificação.
+`mensagens_recebidas`, combinada com o contrato atômico de
+`aplicarInterpretacaoCondicional`, garante uma única interpretação persistida e uma
+única transição para `concluida` por `message_id`. Não garante, por si só, uma única
+produção lógica de resposta nem uma única tentativa de envio: os gates antes da
+produção e antes do envio reduzem o risco de duplicação, mas não são atômicos com a
+tabela. Impedir produção ou envio duplicados por um worker que perdeu o claim depois do
+gate, e garantir entrega externa exatamente uma vez (ao transporte/paciente),
+**dependerá futuramente** de idempotência do transporte ou de um padrão outbox
+transacional — não está resolvida nesta especificação.
 
 ## Política de tentativas
 
@@ -271,15 +288,27 @@ Nenhuma falha pode produzir:
 
 A revalidação do passo 12 é **atômica e transacional** — parte da mesma operação que
 persiste em `estado_conversa` (ver "Concorrência"); não é uma consulta de revalidação
-separada da escrita. As revalidações dos passos 14, 16 e 18 são gates operacionais
-externos a essa transação: se o claim não pertence mais ao processamento atual (expirado
-ou reivindicado por outro worker) em qualquer um desses pontos, a etapa correspondente
-(produção da resposta, envio, ou a transição final para `concluida`) não é executada. O
-envio pelo transporte (passo 17) não é, e não deve ser tratado como, transacional com o
-banco — a garantia de entrega externa exatamente uma vez continua pendente de
-idempotência do transporte ou de um padrão outbox (ver "Deduplicação e lease"). Depois
-que a transição para `concluida` ocorre (passo 18), nenhuma validação subsequente exige
+separada da escrita. Essa é uma garantia absoluta.
+
+Os passos 14 e 16 (antes de produzir e antes de enviar) são **gates operacionais**, não
+operações atômicas: o gate autoriza prosseguir com base no estado do claim observado
+naquele instante, mas não bloqueia atomicamente uma mudança de claim ocorrida
+imediatamente depois — se o claim não pertence mais ao processamento atual (expirado ou
+reivindicado por outro worker) no momento do gate, a etapa correspondente (produção ou
+envio) não é executada; mas não há garantia absoluta de que um worker que perde o claim
+entre o gate e a ação seguinte deixe de produzir ou de enviar. Essa corrida externa
+pertence à pendência de transporte já registrada (idempotência do transporte ou outbox
+transacional — ver "Deduplicação e lease").
+
+O passo 18 (revalidar `claim_token` vigente e marcar `concluida`) é uma garantia
+**absoluta**: a transição exige `status_processamento = 'processando'` **e**
+`claim_token` igual ao token vigente do worker, verificados na mesma operação
+condicional que grava `concluida` — um worker com token antigo nunca marca `concluida`.
+Depois que essa transição ocorre, nenhuma validação subsequente exige
 `status_processamento = 'processando'`.
+
+O envio pelo transporte (passo 17) não é, e não deve ser tratado como, transacional com
+o banco.
 
 ## Invariantes
 
@@ -309,13 +338,18 @@ que a transição para `concluida` ocorre (passo 18), nenhuma validação subseq
 - Nenhuma mensagem é interpretada mais de uma vez pelo mesmo `message_id`.
 - Nenhuma interpretação é reaplicada sobre uma versão diferente daquela para a qual foi
   calculada.
-- Somente o proprietário do `claim_token` vigente pode persistir a interpretação,
-  autorizar a produção da resposta, enviá-la e marcar `concluida` — um worker cujo
-  claim expirou ou foi substituído não executa nenhuma dessas ações, mesmo que ainda
-  esteja em execução.
-- A transição para `concluida` exige `status_processamento = 'processando'` e
-  `claim_token` igual ao token vigente do worker; depois dessa transição, nenhuma
-  validação subsequente do fluxo exige `status_processamento = 'processando'`.
+- Um worker com `claim_token` antigo (expirado ou substituído) nunca persiste em
+  `estado_conversa` nem marca `concluida` — ambas são **garantias absolutas**. A
+  transição para `concluida` exige `status_processamento = 'processando'` **e**
+  `claim_token` igual ao token vigente do worker, verificados na mesma operação
+  condicional que grava `concluida`; depois dessa transição, nenhuma validação
+  subsequente do fluxo exige `status_processamento = 'processando'`.
+- Um claim inválido detectado no gate antes da produção da resposta bloqueia a
+  produção; um claim inválido detectado no gate antes do envio bloqueia o início do
+  envio. Essas são **garantias condicionais** dos gates, não atômicas: reduzem o risco,
+  mas o claim pode mudar depois do gate e antes da ação seguinte, e essa corrida não
+  pode ser impedida apenas pelo gate — impedi-la de forma absoluta depende futuramente
+  de transporte idempotente ou de um padrão outbox transacional.
 - `concluida` e `processando` (com lease válido) nunca disparam novo processamento nem
   nova resposta.
 - `falhou` nunca é reinterpretada automaticamente.
@@ -378,8 +412,11 @@ um preserva sua asserção específica, sem fusão com outro cenário:
 - mensagem `processando` com lease válido não gera novo processamento nem nova resposta;
 - mensagem `processando` com lease expirado pode ser reivindicada por um novo
   `claim_token`;
-- worker com `claim_token` antigo (expirado ou substituído) não persiste, não produz a
-  resposta, não envia e não marca `concluida`;
+- worker com `claim_token` antigo (expirado ou substituído) não persiste e não marca
+  `concluida` (garantias absolutas); a produção e o envio por esse worker são
+  bloqueados quando a perda do claim é detectada no gate correspondente, mas isso não é
+  uma garantia absoluta contra uma corrida ocorrida depois do gate (ver "Gates
+  externos");
 - `falhou` não é reinterpretada automaticamente;
 - lease de 60 segundos é respeitado na decisão de permitir ou não uma nova reivindicação.
 
@@ -416,10 +453,28 @@ um preserva sua asserção específica, sem fusão com outro cenário:
 - revalidação de `claim_token`/status/lease antes do envio pelo transporte;
 - a conclusão (`concluida`) é condicional ao `claim_token` vigente e só ocorre depois do
   envio;
-- worker com `claim_token` antigo (expirado ou substituído) não persiste, não produz a
-  resposta, não envia e não marca `concluida`;
+- worker com `claim_token` antigo (expirado ou substituído) não persiste e não marca
+  `concluida` (garantias absolutas); produção e envio por esse worker são apenas
+  bloqueados quando a perda do claim é detectada no gate correspondente (ver "Gates
+  externos" para os cenários de corrida);
 - nenhuma validação, em nenhum ponto do fluxo, exige `status_processamento =
   'processando'` depois que a mensagem foi marcada `concluida`.
+
+### Gates externos (produção e envio)
+
+Cenários obrigatórios sobre os gates não atômicos de produção e envio — cada um
+preserva sua asserção específica, sem fusão com outro cenário:
+
+1. claim inválido no gate de produção: a produção não ocorre;
+2. claim inválido no gate de envio: o envio não é iniciado;
+3. worker com token antigo: não persiste e não marca `concluida` (garantias
+   absolutas, verificadas independentemente dos gates de produção e envio);
+4. corrida depois do gate de produção (claim muda entre o gate e a produção):
+   documentada como risco externo, sem exigir garantia impossível;
+5. corrida depois do gate de envio (claim muda entre o gate e o envio): documentada
+   como pendência de transporte idempotente ou outbox;
+6. nenhum teste afirma que os gates de produção ou de envio, isoladamente, garantem
+   exatamente uma produção ou exatamente um envio.
 
 ### Integração, robustez e isolamento
 
