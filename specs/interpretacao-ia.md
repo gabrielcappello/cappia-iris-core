@@ -40,28 +40,57 @@ Classificação aprovada para esta integração:
 
 - `atualizado_em` é a versão de `estado_conversa.dados` nesta primeira integração.
 - A interpretação usa o snapshot original, lido antes de chamar o modelo.
-- Será criada futuramente a função interna:
+- Será criada futuramente a função interna, com a identidade do claim como parte do
+  contrato (assinatura documental — **não implementada nesta rodada**):
 
 ```ts
+interface ClaimInterpretacao {
+  mensagem_recebida_id: string;
+  claim_token: string;
+}
+
 aplicarInterpretacaoCondicional(
   cliente,
   snapshot,
+  claim,
   alteracoes
 ): Promise<ResultadoAplicacaoInterpretacao>
 ```
 
 - Essa função fará **uma única tentativa** de persistência (sem o retry interno de
   `aplicarDados`).
-- `conversa_id` é o campo recebido pelo Core; a coluna real em `estado_conversa` é
-  `id`. A condição da escrita deve ser, explicitamente:
 
-  ```sql
-  id = snapshot.conversa_id
-  AND clinica_id = snapshot.clinica_id
-  AND telefone_normalizado = snapshot.telefone_normalizado
-  AND atualizado_em = snapshot.atualizado_em
-  ```
-- Se a versão mudou entre a leitura do snapshot e a tentativa de escrita:
+### Contrato atômico obrigatório
+
+`aplicarInterpretacaoCondicional` deve executar **uma única operação transacional** no
+PostgreSQL (futura função/RPC ou mecanismo equivalente). Chamadas PostgREST separadas —
+uma consulta de revalidação seguida de uma escrita distinta — **não atendem a esse
+contrato**: entre duas operações separadas, o lease pode expirar ou outro worker pode
+reivindicar (`reclaim`) a mensagem, e o worker antigo ainda poderia persistir.
+
+Na mesma transação, a operação deve:
+
+1. localizar e bloquear a linha correspondente em `mensagens_recebidas`;
+2. confirmar simultaneamente, em `mensagens_recebidas`:
+   - `status_processamento = 'processando'`;
+   - `claim_token` igual ao token apresentado pelo worker;
+   - `lease_expira_em` ainda vigente;
+3. confirmar simultaneamente, em `estado_conversa` (`conversa_id` é o campo recebido
+   pelo Core; a coluna real é `id`):
+   - `id = snapshot.conversa_id`;
+   - `clinica_id = snapshot.clinica_id`;
+   - `telefone_normalizado = snapshot.telefone_normalizado`;
+   - `atualizado_em = snapshot.atualizado_em`;
+4. somente se todas as condições acima forem verdadeiras: aplicar todas as alterações
+   autorizadas, atualizar `atualizado_em`, e retornar o estado efetivamente persistido;
+5. se qualquer condição falhar: não alterar `estado_conversa`; não aplicar
+   parcialmente; não reler e reaplicar; não chamar o modelo novamente; retornar a falha
+   determinística apropriada.
+
+A operação é **tudo-ou-nada**: não existe estado intermediário observável entre a
+validação do claim/versão e a persistência.
+
+- Se a versão mudou (verificada dentro da mesma transação da operação atômica acima):
   - não aplicar nenhuma alteração;
   - não reler e reaplicar;
   - não chamar o modelo novamente;
@@ -222,29 +251,35 @@ Nenhuma falha pode produzir:
 9. executar `extrairAlteracoes`;
 10. validar integralmente a saída;
 11. executar `preAplicar`;
-12. revalidar `claim_token`, status `processando` e lease vigente, antes da
-    persistência;
-13. persistir condicionalmente a interpretação, via `aplicarInterpretacaoCondicional`,
-    contra o `atualizado_em` original (condição completa registrada em
-    "Concorrência"); em conflito concorrente, não aplicar nada;
-14. executar o controlador determinístico (recalcular o próximo estado);
-15. revalidar `claim_token`, status `processando` e lease vigente, antes de produzir a
+12. executar `aplicarInterpretacaoCondicional`, que revalida atomicamente
+    `claim_token`, status `processando`, lease vigente e `atualizado_em` do snapshot,
+    **na mesma transação** que persiste as alterações (contrato atômico completo
+    registrado em "Concorrência"); se o claim estiver inválido, nada é persistido; se
+    `atualizado_em` mudou, nada é persistido;
+13. somente após sucesso da persistência, executar o controlador determinístico
+    (recalcular o próximo estado);
+14. revalidar `claim_token`, status `processando` e lease vigente, antes de produzir a
     resposta;
-16. produzir a resposta por template determinístico (ou, futuramente, pela porta de
+15. produzir a resposta por template determinístico (ou, futuramente, pela porta de
     redação natural);
-17. revalidar `claim_token`, status `processando` e lease vigente, antes do envio;
-18. entregar a resposta pelo transporte;
-19. revalidar `claim_token` vigente e marcar `concluida` condicionalmente ao token — a
+16. revalidar `claim_token`, status `processando` e lease vigente, antes do envio;
+17. entregar a resposta pelo transporte;
+18. revalidar `claim_token` vigente e marcar `concluida` condicionalmente ao token — a
     transição final exige `status_processamento = 'processando'` **e** `claim_token`
     igual ao token vigente do worker;
-20. nunca repetir automaticamente o mesmo `message_id`.
+19. nunca repetir automaticamente o mesmo `message_id`.
 
-Há quatro pontos de revalidação (12, 15, 17, 19): em cada um, apenas o proprietário do
-`claim_token` vigente pode prosseguir; se o claim não pertence mais ao processamento
-atual (expirado ou reivindicado por outro worker), a etapa correspondente (persistência,
-produção da resposta, envio, ou a transição final para `concluida`) não é executada.
-Depois que a transição para `concluida` ocorre (passo 19), nenhuma validação
-subsequente exige `status_processamento = 'processando'`.
+A revalidação do passo 12 é **atômica e transacional** — parte da mesma operação que
+persiste em `estado_conversa` (ver "Concorrência"); não é uma consulta de revalidação
+separada da escrita. As revalidações dos passos 14, 16 e 18 são gates operacionais
+externos a essa transação: se o claim não pertence mais ao processamento atual (expirado
+ou reivindicado por outro worker) em qualquer um desses pontos, a etapa correspondente
+(produção da resposta, envio, ou a transição final para `concluida`) não é executada. O
+envio pelo transporte (passo 17) não é, e não deve ser tratado como, transacional com o
+banco — a garantia de entrega externa exatamente uma vez continua pendente de
+idempotência do transporte ou de um padrão outbox (ver "Deduplicação e lease"). Depois
+que a transição para `concluida` ocorre (passo 18), nenhuma validação subsequente exige
+`status_processamento = 'processando'`.
 
 ## Invariantes
 
@@ -256,6 +291,17 @@ subsequente exige `status_processamento = 'processando'`.
   fora desta integração — não é alterado por esta especificação.
 - `aplicarInterpretacaoCondicional` faz no máximo uma tentativa de persistência; nunca
   relê e reaplica; nunca chama o modelo de novo em caso de conflito concorrente.
+- `aplicarInterpretacaoCondicional` executa a validação do claim e a persistência em
+  `estado_conversa` como uma única operação transacional; nenhuma alteração em
+  `estado_conversa` ocorre sem claim e versão validados na mesma transação.
+- Uma consulta de revalidação separada (fora da transação de persistência) nunca
+  autoriza, por si só, a persistência.
+- Um reclaim ocorrido antes da operação atômica impede o worker antigo de gravar em
+  `estado_conversa`.
+- Falha em qualquer condição da operação atômica (claim, status, lease ou versão)
+  desfaz integralmente a operação — nunca parcialmente.
+- Somente o estado efetivamente retornado pela operação transacional é considerado
+  persistido.
 - Conflito de valor e conflito concorrente nunca se confundem: o primeiro é decidido pelo
   controlador por campo; o segundo invalida a interpretação inteira.
 - `corrigir` e `remover` só são válidos quando a versão (`atualizado_em`) não mudou entre
@@ -299,6 +345,21 @@ nesta rodada):
   `conversa_id` → `id` em "Concorrência");
 - `aplicarDados` (fora desta função) continua com seu comportamento e retry atuais,
   inalterado.
+
+### Contrato atômico (claim + persistência)
+
+Cenários obrigatórios sobre a atomicidade de `aplicarInterpretacaoCondicional` — cada
+um preserva sua asserção específica, sem fusão com outro cenário:
+
+1. reclaim ocorre entre uma eventual pré-verificação e a persistência: o worker antigo
+   não grava;
+2. `claim_token` muda antes da operação transacional: nenhuma alteração é aplicada;
+3. lease expira antes da operação transacional: nenhuma alteração é aplicada;
+4. `atualizado_em` muda antes da operação: nenhuma alteração é aplicada;
+5. claim válido e versão válida: exatamente uma persistência ocorre;
+6. claim válido com versão inválida: rollback integral;
+7. versão válida com claim inválido: rollback integral;
+8. nenhuma chamada separada de revalidação é tratada como garantia suficiente.
 
 ### Conflitos
 
@@ -348,7 +409,9 @@ nesta rodada):
 - as etapas do fluxo aprovado executam na ordem descrita, sem pular ou reordenar etapas
   obrigatórias (em especial: claim antes da IA; persistência condicional antes de
   executar o controlador);
-- revalidação de `claim_token`/status/lease antes da persistência condicional;
+- revalidação atômica de `claim_token`/status/lease/`atualizado_em`, integrada à mesma
+  transação que persiste em `estado_conversa` — nunca uma consulta separada seguida de
+  uma escrita distinta;
 - revalidação de `claim_token`/status/lease antes de produzir a resposta;
 - revalidação de `claim_token`/status/lease antes do envio pelo transporte;
 - a conclusão (`concluida`) é condicional ao `claim_token` vigente e só ocorre depois do
