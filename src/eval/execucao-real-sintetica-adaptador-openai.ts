@@ -132,19 +132,72 @@ function inspecaoEstruturalValida(inspecao: InspecaoEstrutural): boolean {
   );
 }
 
-// Um item de `input` so e aceito com EXATAMENTE as propriedades role e
-// content (nenhuma propriedade paralela que pudesse carregar conteudo nao
-// autorizado) -- confirmado contra o corpo real montado pelo adaptador em
-// src/core/cliente-modelo-openai.ts (`{ role, content }`, nunca mais que
-// isso, em nenhum dos dois itens de `input`).
-function ehItemDeMensagemValido(item: unknown, roleEsperado: 'system' | 'user'): item is { role: string; content: string } {
+// Reproduz LOCALMENTE, so a transformacao estrutural aprovada que
+// construirInstrucoesPortatil (privada em cliente-modelo-openai.ts) aplica
+// sobre INSTRUCOES_EXTRATOR -- nunca duplica o texto integral das
+// instrucoes, so as duas frases explicitamente aprovadas para esta
+// substituicao. Isso permite calcular, de forma independente do
+// adaptador, exatamente o que a mensagem system deveria conter -- e o
+// teste "independencia do adaptador real" (no arquivo de teste) prova que
+// essa expectativa calculada aqui bate com o que o adaptador realmente
+// monta, sem nunca importar nem chamar a funcao privada.
+const FRASE_ESTRUTURAL_FORMATO_INTERNO_ANTIGO =
+  'Responda estritamente no formato do schema fornecido — nenhuma propriedade alem de "alteracoes" no nivel principal, nenhuma propriedade alem de "acao"/"valor" (ou somente "acao" para remover) dentro de cada alteracao.';
+
+const FRASE_ESTRUTURAL_TRANSPORTE_PORTATIL =
+  'Responda estritamente no formato do schema fornecido — a raiz contem somente "alteracoes"; "alteracoes" e uma lista; cada item da lista contem exatamente "campo", "acao" e "valor"; informar e corrigir usam "valor" como string; remover usa "valor": null; nenhuma propriedade adicional e permitida.';
+
+function calcularInstrucaoSystemEsperada(instrucoesBase: string): string {
+  const ocorrencias = instrucoesBase.split(FRASE_ESTRUTURAL_FORMATO_INTERNO_ANTIGO).length - 1;
+  if (ocorrencias !== 1) {
+    throw new Error('instrucoes_base_nao_contem_a_frase_estrutural_esperada_exatamente_uma_vez');
+  }
+  const substituida = instrucoesBase.replace(FRASE_ESTRUTURAL_FORMATO_INTERNO_ANTIGO, FRASE_ESTRUTURAL_TRANSPORTE_PORTATIL);
+
+  // Confirma que a substituicao alterou SOMENTE a frase estrutural --
+  // removendo a respectiva frase de cada versao, o restante precisa ser
+  // byte-identico.
+  const restanteOriginal = instrucoesBase.replace(FRASE_ESTRUTURAL_FORMATO_INTERNO_ANTIGO, '');
+  const restanteSubstituido = substituida.replace(FRASE_ESTRUTURAL_TRANSPORTE_PORTATIL, '');
+  if (restanteOriginal !== restanteSubstituido) {
+    throw new Error('substituicao_alterou_algo_alem_da_frase_estrutural');
+  }
+
+  return substituida;
+}
+
+// Expectativa exata (fixa, calculada uma unica vez na carga do modulo) do
+// conteudo que a mensagem system deveria conter -- nunca impressa nem
+// persistida.
+export const INSTRUCAO_SYSTEM_ESPERADA = calcularInstrucaoSystemEsperada(INSTRUCOES_EXTRATOR);
+
+// O item system so e aceito com EXATAMENTE as propriedades role/content,
+// role==="system", e content IGUAL, por comparacao direta de string, a
+// INSTRUCAO_SYSTEM_ESPERADA -- nenhum prefixo, sufixo, espaco adicional ou
+// instrucao paralela.
+function ehItemSystemValido(item: unknown): item is { role: 'system'; content: string } {
   if (item === null || typeof item !== 'object' || Array.isArray(item)) return false;
   const chaves = Object.keys(item as Record<string, unknown>).sort();
   if (JSON.stringify(chaves) !== JSON.stringify(['content', 'role'])) return false;
   const objeto = item as { role: unknown; content: unknown };
-  if (objeto.role !== roleEsperado) return false;
+  if (objeto.role !== 'system') return false;
   if (typeof objeto.content !== 'string') return false;
-  return true;
+  return objeto.content === INSTRUCAO_SYSTEM_ESPERADA;
+}
+
+// O item user so e aceito com EXATAMENTE as propriedades role e content
+// (nenhuma propriedade paralela que pudesse carregar conteudo nao
+// autorizado) -- confirmado contra o corpo real montado pelo adaptador em
+// src/core/cliente-modelo-openai.ts (`{ role, content }`, nunca mais que
+// isso). O conteudo textual em si (o payload sintetico serializado) e
+// validado separadamente por ehPayloadDeUsuarioAutorizado.
+function ehItemUserValido(item: unknown): item is { role: 'user'; content: string } {
+  if (item === null || typeof item !== 'object' || Array.isArray(item)) return false;
+  const chaves = Object.keys(item as Record<string, unknown>).sort();
+  if (JSON.stringify(chaves) !== JSON.stringify(['content', 'role'])) return false;
+  const objeto = item as { role: unknown; content: unknown };
+  if (objeto.role !== 'user') return false;
+  return typeof objeto.content === 'string';
 }
 
 // O conteudo da mensagem user (JSON serializado dentro de `content`) so e
@@ -181,13 +234,14 @@ function ehPayloadDeUsuarioAutorizado(conteudoTexto: string): boolean {
 // exata (system, depois user), cada um com exatamente as propriedades
 // role/content, nenhum item adicional (mais uma mensagem system, mais uma
 // user, assistant, developer, tool ou qualquer role desconhecido reprova
-// so pelo tamanho ou pela posicao), e o conteudo da mensagem user
-// exatamente igual ao payload sintetico autorizado.
+// so pelo tamanho ou pela posicao), o conteudo system EXATAMENTE igual a
+// INSTRUCAO_SYSTEM_ESPERADA, e o conteudo da mensagem user exatamente
+// igual ao payload sintetico autorizado.
 function ehInputAutorizado(input: unknown): boolean {
   if (!Array.isArray(input)) return false;
   if (input.length !== 2) return false;
-  if (!ehItemDeMensagemValido(input[0], 'system')) return false;
-  if (!ehItemDeMensagemValido(input[1], 'user')) return false;
+  if (!ehItemSystemValido(input[0])) return false;
+  if (!ehItemUserValido(input[1])) return false;
   return ehPayloadDeUsuarioAutorizado(input[1].content);
 }
 
@@ -432,36 +486,51 @@ export interface DependenciasExecucaoPrincipal {
 // argumento -- essas garantias continuam fixas no proprio codigo
 // (PAYLOAD_SINTETICO_AUTORIZADO, e obterChaveApi so pode vir da variavel
 // de ambiente em producao real). Devolve o codigo de saida (0 == aprovado).
+//
+// Estrutura deliberada: a evidencia (e o codigo de saida associado) e
+// calculada INTEIRAMENTE dentro do bloco protegido -- o try/catch cobre
+// somente a leitura da chave e a execucao, nunca a propria chamada de
+// saida. dependencias.saida(evidencia) roda UMA UNICA VEZ, fora desse
+// bloco: se ela propria lancar, o erro escapa direto para quem chamou
+// executarPrincipal, sem ser reinterpretado como falha de execucao e sem
+// nenhuma segunda tentativa de impressao.
 export async function executarPrincipal(dependencias: DependenciasExecucaoPrincipal): Promise<number> {
+  let evidencia: Evidencia;
   try {
     const chaveApi = dependencias.obterChaveApi();
     if (typeof chaveApi !== 'string' || chaveApi.trim() === '') {
-      dependencias.saida(EVIDENCIA_CHAVE_AUSENTE);
-      return 1;
+      evidencia = EVIDENCIA_CHAVE_AUSENTE;
+    } else {
+      evidencia = await executarUma(dependencias.fetchSubjacente, chaveApi);
     }
-
-    const evidencia = await executarUma(dependencias.fetchSubjacente, chaveApi);
-    dependencias.saida(evidencia);
-    return evidencia.aprovado ? 0 : 1;
   } catch {
     // Nunca loga o erro capturado aqui -- pode conter stack, mensagem do
     // provedor ou qualquer outro contexto sensivel. So o codigo fixo e
-    // sanitizado sai.
-    dependencias.saida(EVIDENCIA_ERRO_NAO_TRATADO);
-    return 1;
+    // sanitizado e usado.
+    evidencia = EVIDENCIA_ERRO_NAO_TRATADO;
   }
+
+  dependencias.saida(evidencia);
+  return evidencia.aprovado ? 0 : 1;
 }
 
 // main() e so um adaptador minimo da execucao direta: liga
 // executarPrincipal as dependencias reais (fetch global,
 // IRIS_EVAL_OPENAI_API_KEY, console.log via imprimirEvidencia) -- toda a
-// logica testavel vive em executarPrincipal/executarUma.
+// logica testavel vive em executarPrincipal/executarUma. Se a propria
+// saida (console.log) lancar, executarPrincipal rejeita -- aqui so
+// marcamos codigo de saida diferente de zero, sem tentar imprimir de
+// novo e sem logar o erro (poderia conter contexto sensivel).
 async function main(): Promise<void> {
-  process.exitCode = await executarPrincipal({
-    fetchSubjacente: fetch,
-    obterChaveApi: () => process.env.IRIS_EVAL_OPENAI_API_KEY,
-    saida: imprimirEvidencia,
-  });
+  try {
+    process.exitCode = await executarPrincipal({
+      fetchSubjacente: fetch,
+      obterChaveApi: () => process.env.IRIS_EVAL_OPENAI_API_KEY,
+      saida: imprimirEvidencia,
+    });
+  } catch {
+    process.exitCode = 1;
+  }
 }
 
 // So dispara main() quando este arquivo e executado diretamente (node
