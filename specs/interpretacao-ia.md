@@ -371,7 +371,10 @@ fornecido pelo paciente ou pela IA.
   `nao_elegivel`. Isso evita criar um novo resultado e não revela dados da mensagem
   já existente.
 
-Lease expirado significa, precisamente, `lease_expira_em <= transaction_timestamp()`.
+Lease expirado significa, precisamente, `lease_expira_em <= transaction_timestamp()`;
+lease vigente significa `lease_expira_em > transaction_timestamp()`.
+`transaction_timestamp()` é a referência única de tempo da transação — nunca um
+horário fornecido pelo cliente ou pela Edge Function.
 
 A restrição única `provider + instancia_whatsapp + message_id`, combinada com a
 operação atômica, garante um único vencedor.
@@ -500,31 +503,40 @@ enviada; o token vigente continua impedindo o worker antigo depois de um reclaim
 Resultados mínimos: `concluida`; `autorizacao_invalida`. Erro técnico permanece
 separado.
 
-### Falha antes da persistência — contrato mínimo para `falhou`
+### Finalização de falha anterior à persistência
 
-Quando timeout, erro HTTP, saída inválida, entrada acima do limite,
-indisponibilidade do adaptador ou falha de persistência ocorrer **antes** de
-`interpretacao_persistida_em` ser preenchido:
+Aplicável quando ocorrer, antes de `interpretacao_persistida_em` ser preenchido:
 
-1. o Core produz a resposta fixa ("Não consegui processar sua mensagem agora. Pode
-   tentar novamente?" — ver "Falhas e mensagens duplicadas");
-2. revalida claim, status e lease antes do envio (mesmo gate já aprovado);
-3. envia a resposta fixa;
-4. após envio bem-sucedido, executa um `UPDATE` PostgREST condicional marcando a
-   mensagem como `falhou`.
+- timeout;
+- erro HTTP;
+- saída inválida;
+- entrada acima do limite;
+- indisponibilidade do adaptador;
+- falha de persistência;
+- outro erro técnico tratado pelo Core.
 
-A mensagem **não** usa o `UPDATE` de `concluida`, pois o marcador permanece `null`. O
-estado da conversa não é alterado. Uma falha conhecida e respondida não permanece
-`processando`. Como `falhou` é `nao_elegivel` na reivindicação, nenhuma nova
-interpretação automática ocorre depois disso. Quem grava `falhou`: o Core/Edge
-Function, por `UPDATE` PostgREST condicional — **não é necessária uma nova RPC**.
+Fluxo:
 
-Se o envio da resposta fixa **falhar**, não se deve afirmar que a falha foi tratada
-com sucesso: a linha permanece `processando` e poderá ser recuperada após o lease.
-Essa limitação pertence à pendência de transporte ainda não idempotente/outbox já
-registrada (ver "Deduplicação e lease").
+1. produzir a resposta fixa já aprovada;
+2. revalidar `claim_token`, status `processando` e lease vigente antes do envio;
+3. enviar a resposta fixa;
+4. somente após envio bem-sucedido, executar o `UPDATE` condicional para `falhou`;
+5. não alterar `estado_conversa`;
+6. não preencher `interpretacao_persistida_em`;
+7. não reinterpretar automaticamente essa mensagem.
 
-**Contrato mínimo para `falhou`** — `UPDATE` condicional em `mensagens_recebidas`:
+Resposta fixa, exatamente:
+
+> "Não consegui processar sua mensagem agora. Pode tentar novamente?"
+
+Uma falha conhecida e respondida não permanece `processando`. A mensagem **não** usa
+o `UPDATE` de `concluida`, pois o marcador permanece `null`. Como `falhou` é
+`nao_elegivel` na reivindicação, nenhuma nova interpretação automática ocorre depois
+disso. Quem grava `falhou`: o Core/Edge Function, por `UPDATE` PostgREST condicional —
+**não é necessária uma nova RPC**.
+
+**Contrato mínimo para `falhou`** — segundo `UPDATE` PostgREST condicional em
+`mensagens_recebidas`, sem RPC dedicada:
 
 Condições: `id = mensagem_recebida_id`; `clinica_id` correspondente à clínica
 autenticada; `status_processamento = 'processando'`; `claim_token` do worker;
@@ -532,14 +544,36 @@ autenticada; `status_processamento = 'processando'`; `claim_token` do worker;
 
 Atualizações: `status_processamento = 'falhou'`; `concluido_em = now()`.
 
-Não exigir lease vigente: o envio da resposta fixa pode terminar depois da expiração,
-e o token já impede um worker substituído de finalizar. Exigir marcador `null` é
-necessário para separar os dois caminhos terminais: falha anterior à persistência →
-`falhou`; recuperação posterior ao marcador → resposta fixa e depois `concluida` (ver
-"Conclusão condicional").
+Não exigir lease vigente. Justificativa: o envio da resposta fixa pode terminar depois
+da expiração do lease; o `claim_token` impede um worker antigo de finalizar depois de
+reclaim; `interpretacao_persistida_em IS NULL` separa falha anterior à persistência do
+Caminho B posterior à persistência (ver "Conclusão condicional").
+
+Resultados mínimos: `falhou`; `autorizacao_invalida`. Erro técnico permanece exceção
+controlada.
+
+**Erro no envio da resposta fixa** — se o envio falhar: não marcar `falhou`; não
+marcar `concluida`; manter status `processando`; a mensagem poderá ser recuperada
+depois da expiração do lease; não afirmar que a falha foi tratada com sucesso. Essa
+limitação pertence à pendência de transporte ainda não idempotente/outbox já
+registrada (ver "Deduplicação e lease"). Nenhum status novo é criado.
 
 `concluido_em` é usado como timestamp terminal tanto para sucesso quanto para
 falha — não é necessária uma coluna `falhou_em` separada.
+
+### Distinção dos caminhos terminais
+
+**Sucesso normal**: marcador preenchido; resposta enviada; `UPDATE` condicional para
+`concluida`.
+
+**Recuperação posterior ao marcador**: marcador preenchido; resposta fixa enviada;
+`UPDATE` condicional para `concluida`.
+
+**Falha tratada antes do marcador**: marcador `null`; resposta fixa enviada; `UPDATE`
+condicional para `falhou`.
+
+**Worker abandonado ou erro de envio**: permanece `processando`; não finaliza; poderá
+ser recuperado após o lease.
 
 ### Multiclínica
 
@@ -976,22 +1010,20 @@ outro cenário:
 30. lease expirado sem reclaim não impede a conclusão;
 31. linhas antigas continuam válidas após a migration;
 32. rollback restaura o schema anterior;
-33. mesma chave (`provider + instancia_whatsapp + message_id`) com `clinica_id`
-    incompatível: retorna `nao_elegivel`, sem alterar a linha;
-34. mesma chave com `telefone_normalizado` incompatível: retorna `nao_elegivel`, sem
-    alterar a linha;
-35. nenhuma substituição silenciosa de `clinica_id` ou `telefone_normalizado` na
-    reivindicação;
-36. falha tratada antes do marcador: resposta fixa produzida, sem persistir
-    interpretação;
-37. resposta fixa enviada com sucesso e `falhou` gravado em seguida;
-38. worker com `claim_token` antigo não marca `falhou`;
-39. mensagem `falhou` retorna `nao_elegivel` na reivindicação;
-40. falha conhecida e respondida marca `falhou` sem esperar o lease expirar;
-41. erro no envio da resposta fixa deixa a mensagem `processando`, recuperável após o
-    lease;
-42. mensagem sequencial (mesma conversa, `message_id` diferente) com
-    `snapshot_atualizado_em` já atualizado persiste normalmente.
+33. mesma chave com `clinica_id` incompatível retorna `nao_elegivel`;
+34. mesma chave com `telefone_normalizado` incompatível retorna `nao_elegivel`;
+35. incompatibilidade nunca substitui clínica ou telefone armazenados;
+36. `lease_expira_em` igual a `transaction_timestamp()` é considerado expirado;
+37. falha tratada antes do marcador envia resposta fixa;
+38. após envio bem-sucedido, status muda para `falhou`;
+39. `falhou` preenche `concluido_em`;
+40. token antigo não consegue marcar `falhou`;
+41. marcador preenchido impede marcar `falhou`;
+42. status `falhou` não é reivindicado novamente;
+43. falha conhecida e respondida não permanece `processando`;
+44. erro no envio da resposta fixa mantém status `processando`;
+45. processamento mantido após erro de envio pode ser recuperado após lease;
+46. mensagem posterior com snapshot atualizado persiste normalmente.
 
 ### Conflitos
 
