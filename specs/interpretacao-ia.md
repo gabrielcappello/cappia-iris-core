@@ -276,7 +276,7 @@ haverá serialização adicional por conversa; não haverá persistência de res
 transitórios. Isto é uma decisão consciente de escopo da primeira versão, não um erro
 arquitetural pendente.
 
-## Contrato técnico de banco (Etapa 6 aprovada)
+## Contrato técnico de banco — Etapa 6
 
 ### Estado real confirmado
 
@@ -308,6 +308,11 @@ Nesta primeira migration: nenhum `resultado_continuacao`; nenhuma coluna adicion
 nenhum índice novo; nenhum `CHECK` novo; nenhum backfill obrigatório; nenhuma suposição
 sobre ausência de linhas antigas. `CHECK`s e índices só poderão ser avaliados
 futuramente, com necessidade comprovada.
+
+A migration continua dependente de uma verificação read-only do banco real,
+imediatamente antes da aplicação — sem presumir o resultado dessa verificação (não
+presumir tabela vazia, nem que o banco vivo corresponde integralmente ao schema
+versionado).
 
 ### Operações aprovadas
 
@@ -360,6 +365,13 @@ fornecido pelo paciente ou pela IA.
   `nao_elegivel`.
 - **Linha `falhou`**: não alterar; não reinterpretar automaticamente; retornar
   `nao_elegivel`.
+- **Linha existente com a mesma chave (`provider + instancia_whatsapp + message_id`),
+  mas `clinica_id` ou `telefone_normalizado` diferentes do apresentado**: não alterar
+  a linha; não substituir clínica nem telefone; não retornar token; retornar
+  `nao_elegivel`. Isso evita criar um novo resultado e não revela dados da mensagem
+  já existente.
+
+Lease expirado significa, precisamente, `lease_expira_em <= transaction_timestamp()`.
 
 A restrição única `provider + instancia_whatsapp + message_id`, combinada com a
 operação atômica, garante um único vencedor.
@@ -452,8 +464,11 @@ status persistido.
 - O `UPDATE` condicional de `estado_conversa` é suficiente para o CAS — não é
   necessário `SELECT FOR UPDATE` separado.
 - Nenhuma serialização adicional permanente por conversa será criada.
-- Dois `message_id` diferentes da mesma conversa podem disputar o mesmo CAS; apenas
-  um CAS válido persiste; o segundo recebe `conflito_concorrente`.
+- Dois `message_id` que tentem persistir sobre o mesmo `snapshot_atualizado_em`:
+  somente um CAS persiste; o outro recebe `conflito_concorrente`. Uma mensagem
+  posterior, com `snapshot_atualizado_em` já atualizado (lido depois da primeira
+  persistência), pode persistir normalmente — a restrição é sobre workers usando a
+  mesma versão, não sobre `message_id` diferentes da mesma conversa em geral.
 
 ### Segurança das RPCs
 
@@ -484,6 +499,47 @@ enviada; o token vigente continua impedindo o worker antigo depois de um reclaim
 
 Resultados mínimos: `concluida`; `autorizacao_invalida`. Erro técnico permanece
 separado.
+
+### Falha antes da persistência — contrato mínimo para `falhou`
+
+Quando timeout, erro HTTP, saída inválida, entrada acima do limite,
+indisponibilidade do adaptador ou falha de persistência ocorrer **antes** de
+`interpretacao_persistida_em` ser preenchido:
+
+1. o Core produz a resposta fixa ("Não consegui processar sua mensagem agora. Pode
+   tentar novamente?" — ver "Falhas e mensagens duplicadas");
+2. revalida claim, status e lease antes do envio (mesmo gate já aprovado);
+3. envia a resposta fixa;
+4. após envio bem-sucedido, executa um `UPDATE` PostgREST condicional marcando a
+   mensagem como `falhou`.
+
+A mensagem **não** usa o `UPDATE` de `concluida`, pois o marcador permanece `null`. O
+estado da conversa não é alterado. Uma falha conhecida e respondida não permanece
+`processando`. Como `falhou` é `nao_elegivel` na reivindicação, nenhuma nova
+interpretação automática ocorre depois disso. Quem grava `falhou`: o Core/Edge
+Function, por `UPDATE` PostgREST condicional — **não é necessária uma nova RPC**.
+
+Se o envio da resposta fixa **falhar**, não se deve afirmar que a falha foi tratada
+com sucesso: a linha permanece `processando` e poderá ser recuperada após o lease.
+Essa limitação pertence à pendência de transporte ainda não idempotente/outbox já
+registrada (ver "Deduplicação e lease").
+
+**Contrato mínimo para `falhou`** — `UPDATE` condicional em `mensagens_recebidas`:
+
+Condições: `id = mensagem_recebida_id`; `clinica_id` correspondente à clínica
+autenticada; `status_processamento = 'processando'`; `claim_token` do worker;
+`interpretacao_persistida_em IS NULL`.
+
+Atualizações: `status_processamento = 'falhou'`; `concluido_em = now()`.
+
+Não exigir lease vigente: o envio da resposta fixa pode terminar depois da expiração,
+e o token já impede um worker substituído de finalizar. Exigir marcador `null` é
+necessário para separar os dois caminhos terminais: falha anterior à persistência →
+`falhou`; recuperação posterior ao marcador → resposta fixa e depois `concluida` (ver
+"Conclusão condicional").
+
+`concluido_em` é usado como timestamp terminal tanto para sucesso quanto para
+falha — não é necessária uma coluna `falhou_em` separada.
 
 ### Multiclínica
 
@@ -919,7 +975,23 @@ outro cenário:
 29. conclusão exige marcador preenchido;
 30. lease expirado sem reclaim não impede a conclusão;
 31. linhas antigas continuam válidas após a migration;
-32. rollback restaura o schema anterior.
+32. rollback restaura o schema anterior;
+33. mesma chave (`provider + instancia_whatsapp + message_id`) com `clinica_id`
+    incompatível: retorna `nao_elegivel`, sem alterar a linha;
+34. mesma chave com `telefone_normalizado` incompatível: retorna `nao_elegivel`, sem
+    alterar a linha;
+35. nenhuma substituição silenciosa de `clinica_id` ou `telefone_normalizado` na
+    reivindicação;
+36. falha tratada antes do marcador: resposta fixa produzida, sem persistir
+    interpretação;
+37. resposta fixa enviada com sucesso e `falhou` gravado em seguida;
+38. worker com `claim_token` antigo não marca `falhou`;
+39. mensagem `falhou` retorna `nao_elegivel` na reivindicação;
+40. falha conhecida e respondida marca `falhou` sem esperar o lease expirar;
+41. erro no envio da resposta fixa deixa a mensagem `processando`, recuperável após o
+    lease;
+42. mensagem sequencial (mesma conversa, `message_id` diferente) com
+    `snapshot_atualizado_em` já atualizado persiste normalmente.
 
 ### Conflitos
 
