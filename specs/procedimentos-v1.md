@@ -145,8 +145,12 @@ a proposta e exige aceitação explícita via `aceitar_opcao` (`eventos-conversa
 v1.md` §2: "Consulta/Avaliação não possui evento próprio. O Core reutiliza
 `aceitar_opcao`").
 
-Toda clínica deve possuir Consulta/Avaliação disponível (ativa, `eh_consulta_avaliacao
-= true`) para que o fallback exista.
+Consulta/Avaliação ativa (`eh_consulta_avaliacao = true`) é um requisito esperado da
+configuração de cada clínica, para que o fallback exista. Sua ausência ou inatividade
+torna o fallback indisponível — o Core falha fechado nesse caso (não inventa
+procedimento nem profissional, não consulta disponibilidade), conforme
+`dentistas-vinculos-v1.md` §12. A resposta conversacional final para esse cenário
+permanece pendente para `atendimento-v1.md`.
 
 ## 9. Relação com duração e agendamento
 
@@ -181,11 +185,15 @@ todas dependentes de specs próprias, ainda não escritas.
 
 Não resolvidas por esta especificação, não decididas por inferência:
 
-1. Comportamento quando nenhum dentista é apto **e** a clínica não tem
-   `eh_consulta_avaliacao` ativo — lacuna real, não coberta por `novo-agendamento.md`
-   nem por esta spec.
-2. Auditoria de reuso do catálogo do painel (`docs/05-componentes-reutilizaveis.md`) —
-   não iniciada, independente desta especificação.
+1. Comportamento arquitetural quando nenhum dentista é apto **e** a clínica não tem
+   `eh_consulta_avaliacao` ativo agora está definido em `dentistas-vinculos-v1.md`
+   §12 (Core falha fechado, sem ciclo, sem alternativa inventada). Só a resposta
+   conversacional final para esse cenário permanece pendente para `atendimento-v1.md`.
+2. A auditoria read-only do catálogo legado foi concluída: os dados de referência foram
+   classificados para adaptação e as resoluções/RPCs legadas para descarte como
+   implementação direta. Essa classificação não autoriza reuso automático; qualquer
+   aproveitamento futuro ainda exige autorização explícita, conforme
+   `docs/05-componentes-reutilizaveis.md`.
 
 ## 12. Invariantes
 

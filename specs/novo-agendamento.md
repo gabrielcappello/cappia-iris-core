@@ -166,13 +166,22 @@ Se aceitar qualquer profissional, consultar internamente todos os dentistas apto
 
 ### Nenhum dentista apto
 
-Responder:
+O fallback para Consulta/Avaliação só pode ser oferecido quando, simultaneamente:
+
+- o procedimento solicitado não for, ele mesmo, Consulta/Avaliação;
+- existir exatamente um procedimento ativo da clínica marcado como Consulta/Avaliação (`procedimentos-v1.md` §8, `eh_consulta_avaliacao = true`);
+- existir ao menos um dentista oficialmente apto para esse procedimento (`dentistas-vinculos-v1.md`);
+- a substituição depender de aceitação explícita validada pelo Core (evento `aceitar_opcao`, `eventos-conversacionais-v1.md`).
+
+Quando essas condições forem satisfeitas, responder:
 
 > Para esse procedimento, o melhor é começar por uma Consulta/Avaliação. Posso verificar um horário para você?
 
 A substituição do procedimento solicitado por Consulta/Avaliação só ocorre depois da aceitação explícita do paciente.
 
 Nunca trocar silenciosamente o procedimento.
+
+**Se o procedimento solicitado já for Consulta/Avaliação e não houver dentista apto**: não oferecer Consulta/Avaliação novamente, não criar ciclo, não inventar procedimento ou profissional, não consultar disponibilidade. O comportamento conversacional final para esse caso permanece pendente para `atendimento-v1.md` (`dentistas-vinculos-v1.md` §12).
 
 ---
 
