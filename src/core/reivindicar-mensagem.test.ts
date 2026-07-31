@@ -224,7 +224,7 @@ test('teste12: error.message do cliente contendo telefone/CPF/claim_token/SQL nu
     (erro: unknown) => {
       assert.ok(erro instanceof ErroRpcTecnico);
       const serializado = JSON.stringify(erro);
-      const propriedadesPublicas = Object.keys(erro).map((chave) => String((erro as Record<string, unknown>)[chave]));
+      const propriedadesPublicas = (Object.keys(erro) as (keyof ErroRpcTecnico)[]).map((chave) => String(erro[chave]));
       for (const trecho of [ENTRADA.telefone_normalizado, '11122233344', claimTokenSensivel, 'update mensagens_recebidas']) {
         assert.ok(!erro.message.includes(trecho), `erro.message nao deve conter: ${trecho}`);
         assert.ok(!erro.stack?.includes(trecho), `stack nao deve conter: ${trecho}`);

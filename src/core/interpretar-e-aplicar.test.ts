@@ -9,6 +9,16 @@ import { ClienteModeloFalso, ClienteModeloNuncaDeveSerChamado } from './teste-cl
 const CLINICA_ID = crypto.randomUUID();
 const TELEFONE = '5511999999999';
 
+// Narrow minimo para os dados de uma linha do fake (TabelasFalsas tipa cada
+// linha como Record<string, unknown> -- nunca confia que um campo seja um
+// objeto sem confirmar em runtime).
+function comoRegistro(valor: unknown): Record<string, unknown> {
+  if (valor === null || typeof valor !== 'object' || Array.isArray(valor)) {
+    throw new Error('dados de teste em formato inesperado (esperado objeto)');
+  }
+  return valor as Record<string, unknown>;
+}
+
 function semearEstado(tabelas: TabelasFalsas, dados: Record<string, unknown>) {
   const conversa = {
     id: crypto.randomUUID(),
@@ -50,7 +60,7 @@ test('teste5: correcoes sucessivas resultam em uma unica alteracao final aplicad
 
   assert.deepEqual(resultado.conflitos, []);
   assert.equal(resultado.aplicacao?.dados.procedimento_texto, 'clareamento');
-  assert.equal(tabelas.estado_conversa[0].dados.procedimento_texto, 'clareamento');
+  assert.equal(comoRegistro(tabelas.estado_conversa[0].dados).procedimento_texto, 'clareamento');
 });
 
 test('teste6: ultima correcao cronologica prevalece (corrigir substitui o valor acumulado)', async () => {
@@ -102,7 +112,7 @@ test('teste11: campo conflitante nao segue para aplicarDados', async () => {
   assert.equal(resultado.conflitos[0].valor_informado, 'clareamento');
   assert.equal(resultado.aplicacao, null, 'nenhuma alteracao aplicavel: aplicarDados nunca deve ser chamado');
   assert.equal(clienteBanco.estatisticas.chamadasUpdate['estado_conversa'] ?? 0, 0);
-  assert.equal(tabelas.estado_conversa[0].dados.procedimento_texto, 'limpeza', 'valor acumulado preservado');
+  assert.equal(comoRegistro(tabelas.estado_conversa[0].dados).procedimento_texto, 'limpeza', 'valor acumulado preservado');
 });
 
 test('teste24-25: payload integralmente invalido nao chama aplicarDados e nao modifica o estado', async () => {
@@ -265,7 +275,7 @@ test('correcao4c: divergencia durante a execucao gera conflito, remove o campo d
   assert.ok(resultado.aplicacao?.campos_adicionados.includes('nome'));
 
   // 8) nenhum valor escolhido/perdido silenciosamente: o banco continua com sabado
-  assert.equal(tabelas.estado_conversa[0].dados.data_texto, 'sabado');
+  assert.equal(comoRegistro(tabelas.estado_conversa[0].dados).data_texto, 'sabado');
 });
 
 // --- Correcao (revisao sobre 7123493): validarDadosAtuais nao pode vazar

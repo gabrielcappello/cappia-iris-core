@@ -9,6 +9,37 @@ interface LinhaEstadoConversa {
   paciente_id: string | null;
 }
 
+// Mesmo vocabulario canonico de EstadoConversa (tipos.ts) -- os seis estados
+// aprovados em specs/novo-agendamento.md (secao 19).
+const ESTADOS_VALIDOS: readonly EstadoConversa[] = [
+  'atendimento',
+  'aguardando_escolha',
+  'coletando_cadastro',
+  'aguardando_confirmacao',
+  'executando',
+  'concluido',
+];
+
+// Valida a linha crua retornada por estado_conversa antes de qualquer uso —
+// nunca confia cegamente no formato devolvido pelo cliente de banco (real ou
+// dublê de teste). Verifica somente os quatro campos realmente lidos por
+// este modulo. Mensagens fixas: nunca inclui o payload recebido nem PII.
+function validarLinhaEstadoConversa(valor: Record<string, unknown>): LinhaEstadoConversa {
+  if (typeof valor.id !== 'string' || valor.id.trim() === '') {
+    throw new Error('estado_conversa retornou id em formato invalido');
+  }
+  if (typeof valor.estado !== 'string' || !ESTADOS_VALIDOS.includes(valor.estado as EstadoConversa)) {
+    throw new Error('estado_conversa retornou estado fora do vocabulario aprovado');
+  }
+  if (valor.dados === null || typeof valor.dados !== 'object' || Array.isArray(valor.dados)) {
+    throw new Error('estado_conversa retornou dados em formato invalido');
+  }
+  if (valor.paciente_id !== null && typeof valor.paciente_id !== 'string') {
+    throw new Error('estado_conversa retornou paciente_id em formato invalido');
+  }
+  return { id: valor.id, estado: valor.estado, dados: valor.dados, paciente_id: valor.paciente_id as string | null };
+}
+
 /**
  * Etapa 1 do roadmap (docs/06-roadmap.md): identifica clinica e paciente a
  * partir do transporte ja normalizado, e garante a existencia de um unico
@@ -112,7 +143,7 @@ async function obterOuCriarEstadoConversa(
   if (erroSelect) throw new Error(`falha ao buscar estado da conversa: ${erroSelect.message}`);
 
   if (existente) {
-    const linha = existente as LinhaEstadoConversa;
+    const linha = validarLinhaEstadoConversa(existente);
     // O estado ja existe: nunca alteramos seu campo `estado` aqui. So
     // vinculamos o paciente se ele foi encontrado agora e o estado ainda
     // nao tinha paciente_id -- nunca sobrescrevemos um vinculo existente.
@@ -145,7 +176,7 @@ async function obterOuCriarEstadoConversa(
     .maybeSingle();
 
   if (erroInsert) throw new Error(`falha ao criar estado da conversa: ${erroInsert.message}`);
-  if (inserida) return inserida as LinhaEstadoConversa;
+  if (inserida) return validarLinhaEstadoConversa(inserida);
 
   const { data: concorrente, error: erroReconsulta } = await cliente
     .from('estado_conversa')
@@ -156,7 +187,7 @@ async function obterOuCriarEstadoConversa(
 
   if (erroReconsulta) throw new Error(`falha ao reconsultar estado da conversa: ${erroReconsulta.message}`);
   if (!concorrente) throw new Error('estado_conversa nao encontrado apos insercao concorrente');
-  return concorrente as LinhaEstadoConversa;
+  return validarLinhaEstadoConversa(concorrente);
 }
 
 async function vincularPacienteAoEstado(
@@ -181,7 +212,7 @@ async function vincularPacienteAoEstado(
     .maybeSingle();
 
   if (erroUpdate) throw new Error(`falha ao vincular paciente ao estado da conversa: ${erroUpdate.message}`);
-  if (atualizada) return atualizada as LinhaEstadoConversa;
+  if (atualizada) return validarLinhaEstadoConversa(atualizada);
 
   const { data: reconsultada, error: erroReconsulta } = await cliente
     .from('estado_conversa')

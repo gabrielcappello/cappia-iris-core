@@ -497,6 +497,14 @@ function sanitizar(texto: string): string {
   return texto.replace(/sk-[A-Za-z0-9_-]{8,}/g, '[REDACTED]').replace(/Bearer\s+\S+/gi, 'Bearer [REDACTED]');
 }
 
+// Nunca confia no envelope de resposta da API externa sem validar em
+// runtime -- response.json() e tratado como unknown; cada nivel do envelope
+// (raiz, output, item de output, usage) e confirmado antes de qualquer
+// acesso a campo.
+function ehRegistro(valor: unknown): valor is Record<string, unknown> {
+  return valor !== null && typeof valor === 'object' && !Array.isArray(valor);
+}
+
 async function chamarComTimeout(url: string, opcoes: RequestInit, timeoutMs: number): Promise<Response> {
   const controlador = new AbortController();
   const timer = setTimeout(() => controlador.abort(), timeoutMs);
@@ -561,10 +569,12 @@ async function rodarExecucaoReal(ids: string[]): Promise<void> {
     }
 
     const duracaoMs = Date.now() - inicio;
-    const corpoResposta = await resposta.json().catch(() => null);
+    const corpoResposta: unknown = await resposta.json().catch(() => null);
+    const corpoRegistro = ehRegistro(corpoResposta) ? corpoResposta : null;
 
     if (!resposta.ok) {
-      const mensagemErro = sanitizar(JSON.stringify(corpoResposta?.error ?? corpoResposta ?? {}));
+      const erroBruto = corpoRegistro?.error ?? corpoResposta ?? {};
+      const mensagemErro = sanitizar(JSON.stringify(erroBruto));
       console.log(`[${numero}/${MAX_CASOS_POR_EXECUCAO}] ${cenario.id}: REPROVADO -- erro tecnico ${resposta.status}: ${mensagemErro}`);
       if (resposta.status === 401) {
         console.error('Autenticacao invalida. Encerrando imediatamente, sem repetir, sem chamadas restantes.');
@@ -573,11 +583,17 @@ async function rodarExecucaoReal(ids: string[]): Promise<void> {
       continue;
     }
 
-    const uso = corpoResposta?.usage ?? {};
-    const itemMensagem = Array.isArray(corpoResposta?.output)
-      ? corpoResposta.output.find((item: { type?: string }) => item?.type === 'message')
-      : null;
-    const conteudo = Array.isArray(itemMensagem?.content) ? itemMensagem.content[0] : null;
+    const usoBruto = corpoRegistro?.usage;
+    const uso = ehRegistro(usoBruto) ? usoBruto : {};
+
+    const outputBruto = corpoRegistro?.output;
+    const itemMensagem = Array.isArray(outputBruto)
+      ? outputBruto.find((item: unknown): item is Record<string, unknown> => ehRegistro(item) && item.type === 'message')
+      : undefined;
+
+    const conteudoLista = itemMensagem && Array.isArray(itemMensagem.content) ? itemMensagem.content : undefined;
+    const conteudoBruto = conteudoLista ? conteudoLista[0] : undefined;
+    const conteudo = ehRegistro(conteudoBruto) ? conteudoBruto : null;
 
     if (conteudo?.type === 'refusal') {
       console.log(`[${numero}/${MAX_CASOS_POR_EXECUCAO}] ${cenario.id}: REPROVADO -- modelo recusou (refusal)`);

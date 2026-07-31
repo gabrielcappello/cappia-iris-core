@@ -10,6 +10,16 @@ import { ClienteFalso, criarTabelasFalsasVazias, type TabelasFalsas } from './te
 const CLINICA_ID = crypto.randomUUID();
 const TELEFONE = '5511999999999';
 
+// Narrow minimo para os dados de uma linha do fake (TabelasFalsas tipa cada
+// linha como Record<string, unknown> -- nunca confia que um campo seja um
+// objeto sem confirmar em runtime).
+function comoRegistro(valor: unknown): Record<string, unknown> {
+  if (valor === null || typeof valor !== 'object' || Array.isArray(valor)) {
+    throw new Error('dados de teste em formato inesperado (esperado objeto)');
+  }
+  return valor as Record<string, unknown>;
+}
+
 function semearEstado(tabelas: TabelasFalsas, dados: Record<string, unknown>, extras: Record<string, unknown> = {}) {
   const conversa = {
     id: crypto.randomUUID(),
@@ -478,7 +488,7 @@ test('revisao12: concorrencia no mesmo campo nao causa substituicao silenciosa',
     aplicarDados(cliente, { ...contexto(conversa.id), alteracoes: { nome: { acao: 'informar', valor: 'Maria' } } }),
   ]);
 
-  const nomeFinal = tabelas.estado_conversa[0].dados.nome;
+  const nomeFinal = comoRegistro(tabelas.estado_conversa[0].dados).nome;
   assert.ok(nomeFinal === 'Joao' || nomeFinal === 'Maria', 'deve ficar com um dos dois, nunca corrompido/mesclado');
 });
 

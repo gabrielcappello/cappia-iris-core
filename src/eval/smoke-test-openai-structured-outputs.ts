@@ -185,6 +185,18 @@ interface ResultadoChamada {
   motivoParada: 'auth_invalida' | 'schema_rejeitado' | null;
 }
 
+// Nunca confia no envelope de resposta da API externa sem validar em
+// runtime -- response.json() e tratado como unknown; cada nivel do envelope
+// (raiz, output, item de output, usage) e confirmado antes de qualquer
+// acesso a campo.
+function ehRegistro(valor: unknown): valor is Record<string, unknown> {
+  return valor !== null && typeof valor === 'object' && !Array.isArray(valor);
+}
+
+function comoNumeroOuNulo(valor: unknown): number | null {
+  return typeof valor === 'number' ? valor : null;
+}
+
 async function chamarComTimeout(url: string, opcoes: RequestInit, timeoutMs: number): Promise<Response> {
   const controlador = new AbortController();
   const timer = setTimeout(() => controlador.abort(), timeoutMs);
@@ -277,10 +289,12 @@ async function executarCaso(caso: CasoSintetico): Promise<ResultadoChamada> {
   }
 
   const duracaoMs = Date.now() - inicio;
-  const corpoResposta = await resposta.json().catch(() => null);
+  const corpoResposta: unknown = await resposta.json().catch(() => null);
+  const corpoRegistro = ehRegistro(corpoResposta) ? corpoResposta : null;
 
   if (!resposta.ok) {
-    const mensagemErro = sanitizar(JSON.stringify(corpoResposta?.error ?? corpoResposta ?? {}));
+    const erroBruto = corpoRegistro?.error ?? corpoResposta ?? {};
+    const mensagemErro = sanitizar(JSON.stringify(erroBruto));
     let motivoParada: ResultadoChamada['motivoParada'] = null;
     if (resposta.status === 401) motivoParada = 'auth_invalida';
     else if (resposta.status === 400 && /schema|strict|json_schema/i.test(mensagemErro)) motivoParada = 'schema_rejeitado';
@@ -299,11 +313,17 @@ async function executarCaso(caso: CasoSintetico): Promise<ResultadoChamada> {
     };
   }
 
-  const uso = corpoResposta?.usage ?? {};
-  const itemMensagem = Array.isArray(corpoResposta?.output)
-    ? corpoResposta.output.find((item: { type?: string }) => item?.type === 'message')
-    : null;
-  const conteudo = Array.isArray(itemMensagem?.content) ? itemMensagem.content[0] : null;
+  const usoBruto = corpoRegistro?.usage;
+  const uso = ehRegistro(usoBruto) ? usoBruto : {};
+
+  const outputBruto = corpoRegistro?.output;
+  const itemMensagem = Array.isArray(outputBruto)
+    ? outputBruto.find((item: unknown): item is Record<string, unknown> => ehRegistro(item) && item.type === 'message')
+    : undefined;
+
+  const conteudoLista = itemMensagem && Array.isArray(itemMensagem.content) ? itemMensagem.content : undefined;
+  const conteudoBruto = conteudoLista ? conteudoLista[0] : undefined;
+  const conteudo = ehRegistro(conteudoBruto) ? conteudoBruto : null;
 
   if (conteudo?.type === 'refusal') {
     return {
@@ -314,8 +334,8 @@ async function executarCaso(caso: CasoSintetico): Promise<ResultadoChamada> {
       erroSanitizado: `modelo recusou (refusal): ${sanitizar(String(conteudo.refusal ?? '').slice(0, 200))}`,
       objetoRecebido: null,
       duracaoMs,
-      tokensEntrada: uso.input_tokens ?? null,
-      tokensSaida: uso.output_tokens ?? null,
+      tokensEntrada: comoNumeroOuNulo(uso.input_tokens),
+      tokensSaida: comoNumeroOuNulo(uso.output_tokens),
       motivoParada: null,
     };
   }
@@ -330,8 +350,8 @@ async function executarCaso(caso: CasoSintetico): Promise<ResultadoChamada> {
       erroSanitizado: 'canal estruturado oficial nao encontrado na resposta (sem output_text)',
       objetoRecebido: null,
       duracaoMs,
-      tokensEntrada: uso.input_tokens ?? null,
-      tokensSaida: uso.output_tokens ?? null,
+      tokensEntrada: comoNumeroOuNulo(uso.input_tokens),
+      tokensSaida: comoNumeroOuNulo(uso.output_tokens),
       motivoParada: null,
     };
   }
@@ -350,8 +370,8 @@ async function executarCaso(caso: CasoSintetico): Promise<ResultadoChamada> {
       erroSanitizado: 'texto retornado nao e JSON valido (nao sera consertado)',
       objetoRecebido: null,
       duracaoMs,
-      tokensEntrada: uso.input_tokens ?? null,
-      tokensSaida: uso.output_tokens ?? null,
+      tokensEntrada: comoNumeroOuNulo(uso.input_tokens),
+      tokensSaida: comoNumeroOuNulo(uso.output_tokens),
       motivoParada: null,
     };
   }
@@ -366,8 +386,8 @@ async function executarCaso(caso: CasoSintetico): Promise<ResultadoChamada> {
     erroSanitizado: valido ? null : `estrutura invalida: ${problemas.join('; ')}`,
     objetoRecebido: objeto,
     duracaoMs,
-    tokensEntrada: uso.input_tokens ?? null,
-    tokensSaida: uso.output_tokens ?? null,
+    tokensEntrada: comoNumeroOuNulo(uso.input_tokens),
+    tokensSaida: comoNumeroOuNulo(uso.output_tokens),
     motivoParada: null,
   };
 }

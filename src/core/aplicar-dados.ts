@@ -144,7 +144,24 @@ export async function buscarEstadoConversa(
 
   if (error) throw new Error(`falha ao buscar estado da conversa: ${error.message}`);
   if (!data) throw new ConversaNaoEncontradaError();
-  return data as LinhaEstadoConversa;
+  return validarLinhaEstadoConversa(data);
+}
+
+// Valida a linha crua retornada por estado_conversa antes de qualquer uso —
+// nunca confia cegamente no formato devolvido pelo cliente de banco (real ou
+// dublê de teste). Verifica somente os tres campos realmente lidos por este
+// modulo. Mensagens fixas: nunca inclui o payload recebido nem PII.
+function validarLinhaEstadoConversa(valor: Record<string, unknown>): LinhaEstadoConversa {
+  if (typeof valor.id !== 'string' || !UUID_REGEX.test(valor.id)) {
+    throw new Error('estado_conversa retornou id em formato invalido');
+  }
+  if (valor.dados === null || typeof valor.dados !== 'object' || Array.isArray(valor.dados)) {
+    throw new Error('estado_conversa retornou dados em formato invalido');
+  }
+  if (typeof valor.atualizado_em !== 'string' || Number.isNaN(Date.parse(valor.atualizado_em))) {
+    throw new Error('estado_conversa retornou atualizado_em em formato invalido');
+  }
+  return { id: valor.id, dados: valor.dados, atualizado_em: valor.atualizado_em };
 }
 
 function calcularNovosDados(dadosAtuais: Record<string, string>, alteracoes: AlteracoesDados): CalculoAlteracoes {

@@ -287,12 +287,22 @@ test('wrapper: os mesmos 20 cenarios de input invalido bloqueiam ANTES da rede (
   }
 });
 
+// Injeta deliberadamente um valor de `body` fora do formato esperado por
+// RequestInit (BodyInit), para provar que o wrapper rejeita antes da rede --
+// sem depender do alias global BodyInit (ausente neste projeto server-only,
+// sem "dom" em lib) e sem nenhum cast do valor invalido.
+function criarOpcoesComBodyInvalido(valorInvalido: unknown): RequestInit {
+  const opcoes: RequestInit = { method: 'POST' };
+  Reflect.set(opcoes, 'body', valorInvalido);
+  return opcoes;
+}
+
 test('wrapper: body ausente, undefined, nao-string ou principal invalido bloqueiam antes da rede (cenarios 22-25)', async () => {
   const casosBody: Array<{ nome: string; opcoes: RequestInit }> = [
     { nome: '22: body ausente', opcoes: { method: 'POST' } },
     { nome: '23: body undefined', opcoes: { method: 'POST', body: undefined } },
-    { nome: '24a: body e um objeto (nao string)', opcoes: { method: 'POST', body: { foo: 'bar' } as unknown as BodyInit } },
-    { nome: '24b: body e um Buffer (nao string)', opcoes: { method: 'POST', body: Buffer.from('x') as unknown as BodyInit } },
+    { nome: '24a: body e um objeto (nao string)', opcoes: criarOpcoesComBodyInvalido({ foo: 'bar' }) },
+    { nome: '24b: body e um Buffer (nao string)', opcoes: criarOpcoesComBodyInvalido(Buffer.from('x')) },
     { nome: '25: corpo principal nao e JSON valido', opcoes: { method: 'POST', body: 'isto nao e json {' } },
   ];
 

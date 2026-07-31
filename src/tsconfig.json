@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "strict": true,
+    "types": ["node"],
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    // Justificativa (tarefa 0038): sem skipLibCheck, o typecheck falha com
+    // 43 erros externos no ambiente diagnosticado, todos exclusivamente
+    // dentro de node_modules/@supabase/**/*.d.ts (auth-js webauthn.dom.d.ts,
+    // phoenix/realtime-js websocket, postgrest-js HeadersInit) -- todos
+    // referenciam globais de DOM (Window, BroadcastChannel,
+    // PublicKeyCredential*, BinaryType, etc.) que nao existem propositalmente
+    // aqui (projeto server-only, sem "dom" em lib). Nenhum desses erros toca
+    // core/ ou eval/; confirmado (com e sem esta flag, via
+    // `tsc --skipLibCheck false`) que a lista de erros em arquivos proprios
+    // nao muda.
+    "skipLibCheck": true
+  },
+  "include": ["core/**/*.ts", "eval/**/*.ts"],
+  "exclude": ["node_modules"]
+}
