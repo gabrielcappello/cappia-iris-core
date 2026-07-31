@@ -431,14 +431,14 @@ begin
   --    confirmar atomicamente que a conversa ainda corresponde ao snapshot
   --    antes de preencher o marcador no passo 6, mesmo sem mudanca de
   --    conteudo.
-  update public.estado_conversa
+  update public.estado_conversa as e
      set dados = v_dados_novos,
          atualizado_em = v_novo_atualizado_em
-   where id = p_conversa_id
-     and clinica_id = p_clinica_id
-     and telefone_normalizado = p_telefone_normalizado
-     and atualizado_em = p_snapshot_atualizado_em
-  returning id, dados, atualizado_em into v_conv_id, v_dados_novos, v_novo_atualizado_em;
+   where e.id = p_conversa_id
+     and e.clinica_id = p_clinica_id
+     and e.telefone_normalizado = p_telefone_normalizado
+     and e.atualizado_em = p_snapshot_atualizado_em
+  returning e.id, e.dados, e.atualizado_em into v_conv_id, v_dados_novos, v_novo_atualizado_em;
 
   if not found then
     return query select 'conflito_concorrente'::text, null::uuid, null::jsonb, null::timestamptz;
