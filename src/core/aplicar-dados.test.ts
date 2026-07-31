@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { aplicarDados } from './aplicar-dados.ts';
 import { ConflitoConcorrenteError, EntradaInvalidaError } from './erros.ts';
-import type { ClienteBancoDados } from './tipos.ts';
+import type { ClienteBancoDados, ConsultaEncadeavel } from './tipos.ts';
 import { ClienteFalso, criarTabelasFalsasVazias, type TabelasFalsas } from './teste-cliente-falso.ts';
 
 const CLINICA_ID = crypto.randomUUID();
@@ -641,4 +641,47 @@ test('revisao19: identificadores validos continuam funcionando normalmente', asy
   assert.equal(resultado.conversa_id, conversa.id);
   assert.deepEqual(resultado.dados, { nome: 'Joao' });
   assert.deepEqual(resultado.campos_adicionados, ['nome']);
+});
+
+// Dublê minimo (nao ClienteFalso) para forcar deterministicamente um UPDATE
+// que devolve uma linha estruturalmente invalida -- exercita
+// validarLinhaEstadoConversa no caminho de retorno do UPDATE (unico ponto de
+// estado_conversa que ainda usava cast direto).
+function clienteComUpdateInvalido(estadoInicial: Record<string, unknown>, dadosInvalidosNoUpdate: unknown): ClienteBancoDados {
+  function consultaFixa(data: Record<string, unknown> | null): ConsultaEncadeavel {
+    const consulta: ConsultaEncadeavel = {
+      eq: () => consulta,
+      is: () => consulta,
+      not: () => consulta,
+      select: () => consulta,
+      maybeSingle: async () => ({ data, error: null }),
+    };
+    return consulta;
+  }
+
+  return {
+    from: () => ({
+      select: () => consultaFixa(estadoInicial),
+      upsert: () => consultaFixa(null),
+      update: () => consultaFixa({ id: estadoInicial.id, dados: dadosInvalidosNoUpdate }),
+    }),
+  };
+}
+
+test('revisao20: UPDATE retorna linha estruturalmente invalida e o erro nao reproduz o payload recebido', async () => {
+  const conversaId = crypto.randomUUID();
+  const dadosInvalidos = 'nao-e-um-objeto-valido';
+  const cliente = clienteComUpdateInvalido(
+    { id: conversaId, dados: {}, atualizado_em: new Date('2026-07-01T00:00:00.000Z').toISOString() },
+    dadosInvalidos
+  );
+
+  await assert.rejects(
+    () => aplicarDados(cliente, { ...contexto(conversaId), alteracoes: { nome: { acao: 'informar', valor: 'Joao' } } }),
+    (erro: unknown) => {
+      assert.ok(erro instanceof Error);
+      assert.ok(!erro.message.includes(dadosInvalidos), 'erro nao deve reproduzir o payload invalido recebido');
+      return true;
+    }
+  );
 });

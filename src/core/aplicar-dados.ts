@@ -97,7 +97,11 @@ export async function aplicarDados(
     if (erroUpdate) throw new Error(`falha ao atualizar dados da conversa: ${erroUpdate.message}`);
 
     if (atualizado) {
-      const linha = atualizado as { id: string; dados: unknown };
+      // atualizado_em nao esta no select (ja e conhecido: e o proprio
+      // novoTimestamp que acabou de ser gravado por este UPDATE) -- somando
+      // aqui para reutilizar o mesmo validador estrutural, sem alterar o
+      // select nem criar uma segunda consulta.
+      const linha = validarLinhaEstadoConversa({ ...atualizado, atualizado_em: novoTimestamp });
       return montarResultado(linha.id, (linha.dados as Record<string, unknown>) ?? {}, calculo);
     }
 

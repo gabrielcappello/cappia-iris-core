@@ -222,5 +222,5 @@ async function vincularPacienteAoEstado(
     .maybeSingle();
 
   if (erroReconsulta) throw new Error(`falha ao reconsultar estado da conversa apos vinculo: ${erroReconsulta.message}`);
-  return (reconsultada as LinhaEstadoConversa | null) ?? estadoAtual;
+  return reconsultada ? validarLinhaEstadoConversa(reconsultada) : estadoAtual;
 }

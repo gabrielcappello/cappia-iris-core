@@ -13,6 +13,7 @@ import { test } from 'node:test';
 import { ClinicaNaoEncontradaError, EntradaInvalidaError } from './erros.ts';
 import { identificarConversa } from './identificacao.ts';
 import { ClienteFalso, criarTabelasFalsasVazias, type TabelasFalsas } from './teste-cliente-falso.ts';
+import type { ClienteBancoDados, ConsultaEncadeavel } from './tipos.ts';
 
 const PROVIDER = 'evolution';
 const INSTANCIA_A = 'unit-clinica-a';
@@ -304,4 +305,78 @@ test('teste-vinculo3: duas chamadas concorrentes com paciente encontrado nao cau
   assert.equal(tabelas.estado_conversa.length, 1, 'nao pode surgir um segundo estado');
   assert.equal(tabelas.estado_conversa[0].paciente_id, paciente.id, 'o vinculo final deve ser consistente para as duas chamadas');
   assert.equal(tabelas.estado_conversa[0].estado, 'coletando_cadastro', 'o estado nao deve ser alterado pelo vinculo');
+});
+
+// Dublê minimo (nao ClienteFalso) para forcar deterministicamente a
+// reconsulta apos update concorrente em vincularPacienteAoEstado: o UPDATE
+// com filtro paciente_id IS NULL retorna 0 linhas (simulando outro worker ja
+// tendo vinculado o paciente), e a reconsulta subsequente devolve uma linha
+// estruturalmente invalida -- exercita validarLinhaEstadoConversa no unico
+// caminho de estado_conversa que ainda usava cast direto.
+function clienteParaReconsultaInvalida(
+  clinicaId: string,
+  pacienteId: string,
+  conversaId: string,
+  linhaReconsultaInvalida: Record<string, unknown>
+): ClienteBancoDados {
+  let chamadasSelectEstado = 0;
+
+  function consultaFixa(data: Record<string, unknown> | null): ConsultaEncadeavel {
+    const consulta: ConsultaEncadeavel = {
+      eq: () => consulta,
+      is: () => consulta,
+      not: () => consulta,
+      select: () => consulta,
+      maybeSingle: async () => ({ data, error: null }),
+    };
+    return consulta;
+  }
+
+  return {
+    from(nome: string) {
+      if (nome === 'clinicas') {
+        return { select: () => consultaFixa({ id: clinicaId }), upsert: () => consultaFixa(null), update: () => consultaFixa(null) };
+      }
+      if (nome === 'pacientes') {
+        return { select: () => consultaFixa({ id: pacienteId }), upsert: () => consultaFixa(null), update: () => consultaFixa(null) };
+      }
+      // estado_conversa: 1a select = linha existente sem paciente vinculado
+      // (entra em vincularPacienteAoEstado); update com paciente_id IS NULL
+      // nao encontra linha (0 linhas, simulando corrida perdida); 2a select
+      // (reconsulta) devolve a linha estruturalmente invalida.
+      return {
+        select: () => {
+          chamadasSelectEstado += 1;
+          if (chamadasSelectEstado === 1) {
+            return consultaFixa({ id: conversaId, estado: 'atendimento', dados: {}, paciente_id: null });
+          }
+          return consultaFixa(linhaReconsultaInvalida);
+        },
+        upsert: () => consultaFixa(null),
+        update: () => consultaFixa(null),
+      };
+    },
+  };
+}
+
+test('teste-vinculo4: reconsulta apos update concorrente com linha estruturalmente invalida e rejeitada sem reproduzir o payload', async () => {
+  const clinicaId = crypto.randomUUID();
+  const pacienteId = crypto.randomUUID();
+  const conversaId = crypto.randomUUID();
+  const estadoInvalido = 'estado_fora_do_vocabulario_canonico';
+  const cliente = clienteParaReconsultaInvalida(clinicaId, pacienteId, conversaId, {
+    id: conversaId,
+    estado: estadoInvalido,
+    dados: {},
+    paciente_id: pacienteId,
+  });
+
+  await assert.rejects(
+    () => identificarConversa(cliente, { provider: PROVIDER, instancia_whatsapp: INSTANCIA_A, telefone_normalizado: TELEFONE_VALIDO }),
+    (erro: unknown) => {
+      assert.ok(erro instanceof Error);
+      assert.ok(!erro.message.includes(estadoInvalido), 'erro nao deve reproduzir o payload invalido recebido');
+      return true;
+    }
+  );
 });
