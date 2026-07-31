@@ -154,9 +154,12 @@ permanece pendente para `atendimento-v1.md`.
 
 ## 9. Relação com duração e agendamento
 
-Não existe `procedimento.duracao`, `procedimento.tempo` ou `procedimento.agendavel` —
-duração não pertence ao procedimento (`docs/04-decisoes-canonicas.md`: duração é
-configurada por dentista).
+Não existe duração global do procedimento compartilhada entre clínicas, e o procedimento
+não armazena agendabilidade (`procedimento.agendavel` não existe).
+
+Na v1, a duração pertence à **configuração da clínica para o seu procedimento**
+(`clinica_id` + `procedimento_id`, ver `duracao-v1.md`) — nunca ao dentista, nunca ao
+vínculo dentista–procedimento, nunca a um catálogo global entre clínicas.
 
 Agendabilidade é propriedade derivada, nunca armazenada no procedimento:
 
@@ -164,8 +167,9 @@ Agendabilidade é propriedade derivada, nunca armazenada no procedimento:
 procedimento resolvido + dentista apto + duração resolvível = procedimento agendável
 ```
 
-A validação completa acontece nas etapas de dentistas, duração e disponibilidade —
-todas dependentes de specs próprias, ainda não escritas.
+A validação completa acontece nas etapas de dentistas, duração e disponibilidade,
+conforme suas specs próprias. As especificações de dentistas e duração já são
+canônicas; a especificação de disponibilidade ainda será definida.
 
 ## 10. Testes obrigatórios da especificação
 
@@ -205,5 +209,7 @@ Não resolvidas por esta especificação, não decididas por inferência:
   conversacional apresentada ao paciente.
 - Unicidade de alias e de `eh_consulta_avaliacao` são por clínica.
 - Consulta/Avaliação nunca substitui procedimento solicitado sem aceitação explícita.
-- Duração não pertence ao procedimento; agendabilidade é propriedade derivada.
+- Não existe duração global do procedimento compartilhada entre clínicas; na v1 a
+  duração é configuração da clínica para o procedimento, nunca do dentista ou do
+  vínculo. Agendabilidade é propriedade derivada, nunca armazenada.
 - Esta especificação não cria código, tabela, coluna, RPC ou migration.

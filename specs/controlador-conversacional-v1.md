@@ -283,7 +283,10 @@ Não definem representação física nem persistência individual obrigatória.
 - procedimento oficial resolvido;
 - dentista oficial resolvido ou critério de qualquer profissional;
 - data resolvida no fuso da clínica;
-- duração correspondente ao dentista;
+- duração oficial da clínica para o procedimento — inteira, de 10 a 240 minutos,
+  múltipla de 10, a mesma para todos os dentistas aptos (`duracao-v1.md`);
+  configuração ausente ou inconsistente falha fechado, sem fallback;
+- snapshot da duração aplicada, distinto da configuração vigente;
 - demais critérios temporais calculados pelo Core.
 
 Esses valores nunca vêm prontos da IA.
@@ -360,8 +363,14 @@ confirmação. Retorna à resolução de procedimento e disponibilidade.
 
 ### Alteração de dentista
 
-Invalida dentista resolvido, duração, opções, escolha, resumo e confirmação. Preserva o
-procedimento que continuar válido.
+Invalida dentista resolvido, opções, escolha, resumo e confirmação — porque a agenda
+consultada passa a ser a de outro profissional. Preserva o procedimento que continuar
+válido.
+
+O **valor da duração permanece o mesmo** enquanto o procedimento não mudar: na v1 a
+duração é a configuração da clínica para o procedimento, igual para todos os dentistas
+aptos (`duracao-v1.md`). Mudança apenas superficial do texto de preferência, com a
+identidade oficial do dentista permanecendo igual, não invalida nada.
 
 ### Alteração de data, período ou horário
 
@@ -462,9 +471,10 @@ registrado como apresentado sem prova de entrega permanece o definido em
 - contrato dos vínculos dentista-procedimento;
 - validade de profissional e preferência;
 - representação oficial de qualquer profissional;
-- duração fixa por dentista;
-- duração por vínculo dentista-procedimento;
-- configuração ausente ou inválida.
+- duração oficial da clínica para o procedimento, com validação de 10 a 240 minutos e
+  múltiplo de 10 (`duracao-v1.md`);
+- snapshot da duração aplicada, invalidação e revalidação antes da criação;
+- configuração ausente ou inválida, que falha fechado.
 
 ### Disponibilidade
 

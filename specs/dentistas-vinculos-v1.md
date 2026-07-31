@@ -117,12 +117,19 @@ dentista realiza todos os procedimentos daquela área. Aptidão depende exclusiv
 do vínculo explícito e ativo entre `dentista_id` e `procedimento_id`, com todos os
 elementos da mesma clínica.
 
-## 8. Relação com duração — fora do escopo
+## 8. Relação com duração
 
-Duração é resolvida depois de dentista apto e procedimento oficial confirmados; pode
-depender do dentista/vínculo; vínculo sem duração resolvível não torna o procedimento
-agendável (`procedimentos-v1.md` §9); nunca duração global do procedimento como
-fallback.
+Dentista e vínculo comprovam **aptidão e isolamento**; não determinam o valor da
+duração.
+
+A duração é resolvida na configuração da clínica para o procedimento (`clinica_id` +
+`procedimento_id`, ver `duracao-v1.md`), depois de dentista apto e procedimento oficial
+confirmados. A mesma duração é vinculada a cada dentista apto encaminhado à
+disponibilidade.
+
+Trocar de dentista altera a agenda consultada, mas **não altera o valor da duração** do
+procedimento. Procedimento sem duração oficial válida na clínica não é agendável;
+nunca duração global do procedimento entre clínicas, nunca fallback.
 
 ## 9. Relação com disponibilidade
 
@@ -135,10 +142,11 @@ antes de aptidão confirmada.
 Esta spec define somente que:
 - `aceitar_qualquer_profissional` representa autorização validada pelo Core (evento já
   canônico);
-- todos os dentistas oficialmente aptos seguem para resolução individual de duração;
+- todos os dentistas oficialmente aptos seguem para a disponibilidade com a mesma
+  duração oficial da clínica para o procedimento;
 - ausência de preferência não equivale automaticamente a essa aceitação (seção 4).
 
-Explicitamente fora desta spec — pertencem às futuras specs de duração e
+Explicitamente fora desta spec — pertencem a `duracao-v1.md` e à futura spec de
 disponibilidade: ordenação de horários; ordenação entre dentistas; apresentação de um
 dentista por vez; critério de horário mais próximo; combinação dos resultados de
 disponibilidade.
@@ -195,7 +203,7 @@ autoriza reuso automático:
 | `cappia__resolver_dentista` | Reutilizar conceitualmente — padrão nome completo + nome curto, único resolvedor legado que trata ambiguidade explicitamente em vez de escolher silenciosamente |
 | `cappia__resolver_procedimento` (validação de aptidão) | Adaptar — `LIMIT 1` silencioso incompatível com a regra de nunca escolher |
 | `cappia__resolver_duracao` (v1) | Descartar como padrão a seguir — cai para duração global do procedimento e depois para 60 min hardcoded |
-| `cappia__resolver_duracao_v2` | Reutilizar conceitualmente, com destaque — exige dentista ativo e vínculo ativo, resolve só por id, sem fallback para duração global |
+| `cappia__resolver_duracao_v2` | Apenas referência legada auditada — exige dentista ativo e vínculo ativo e não usa fallback, mas resolve duração **por vínculo**, modelo que a Duração v1 não adota. Não representa o contrato vigente (ver `duracao-v1.md`) |
 
 ## 15. Pendências
 

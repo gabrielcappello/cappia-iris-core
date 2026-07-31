@@ -187,32 +187,23 @@ Nunca trocar silenciosamente o procedimento.
 
 ## 7. Duração do atendimento
 
-A duração é configurada individualmente para cada dentista.
+A duração é a configuração oficial da clínica para o procedimento (`clinica_id` + `procedimento_id`), conforme `duracao-v1.md`.
 
-Existem somente dois modos:
-
-### Duração fixa automática
-
-Todos os procedimentos daquele dentista utilizam a mesma duração configurada.
+A mesma duração é aplicada a todos os dentistas aptos daquela clínica para aquele procedimento.
 
 Exemplo:
 
-- todos os atendimentos: 60 minutos.
+- Limpeza na Clínica A: 50 minutos, tanto com a Dra. Ana quanto com o Dr. Bruno.
 
-### Duração por procedimento
+A duração não pertence ao dentista nem ao vínculo dentista–procedimento. Dentista e vínculo comprovam aptidão e isolamento, mas não alteram o valor da duração.
 
-Cada vínculo entre dentista e procedimento possui sua própria duração.
+Não existe modo manual com lista de slots. Não existem modos de duração por dentista nesta versão.
 
-Exemplo:
+Valor válido: inteiro, em minutos, de 10 a 240, múltiplo de 10.
 
-- limpeza com Dra. Ana: 50 minutos;
-- consulta com Dra. Ana: 30 minutos.
+As consultas de agenda continuam sendo individuais por dentista, porque cada profissional possui agenda própria — não porque a duração varie entre eles.
 
-Não existe modo manual com lista de slots.
-
-A duração deve ser resolvida individualmente para cada dentista antes de consultar a agenda dele.
-
-Não aplicar uma duração única a todos os dentistas envolvidos na busca.
+Configuração de duração ausente ou inválida falha fechado: nenhuma disponibilidade é consultada antes de existir duração válida, e nenhum fallback é inventado (ver `duracao-v1.md` §6).
 
 ---
 
@@ -271,7 +262,7 @@ A primeira versão utiliza somente o calendário interno da Cappia.
 A disponibilidade deve considerar, para cada dentista:
 
 - procedimento;
-- duração configurada para aquele dentista;
+- duração oficial da clínica para o procedimento (a mesma para todos os dentistas aptos);
 - horários de trabalho;
 - intervalos;
 - bloqueios;
@@ -282,14 +273,14 @@ A Iris apresenta apenas opções realmente disponíveis.
 
 ### Dentista único ou preferência resolvida
 
-Consultar somente a agenda daquele dentista, usando a duração correspondente.
+Consultar somente a agenda daquele dentista, usando a duração oficial da clínica para o procedimento.
 
 ### Qualquer profissional
 
 Quando o paciente aceitar qualquer profissional, o Core deve:
 
 1. consultar internamente cada dentista apto;
-2. usar a duração configurada individualmente para cada um;
+2. usar a mesma duração oficial da clínica para o procedimento em todos eles;
 3. respeitar os critérios já informados pelo paciente: data, período e horário;
 4. selecionar primeiro o dentista que possuir o horário mais próximo dentro desses critérios;
 5. em empate do primeiro horário entre dois ou mais dentistas, desempate pelo identificador do dentista, em ordem estável.
@@ -338,7 +329,7 @@ Quando houver apenas um dentista apto ou uma preferência já resolvida, apresen
 Quando o paciente autorizar qualquer profissional:
 
 - consultar internamente todos os dentistas aptos;
-- usar a duração individual configurada para cada dentista;
+- usar a mesma duração oficial da clínica para o procedimento em todos eles;
 - selecionar primeiro o dentista que possuir o horário mais próximo dentro dos critérios pedidos;
 - em empate do primeiro horário, usar o identificador do dentista em ordem estável;
 - apresentar o nome desse dentista e todos os horários disponíveis dele dentro do período;
@@ -703,7 +694,7 @@ O Core deve:
 - validar os dados interpretados pela IA;
 - resolver registros oficiais;
 - localizar dentistas aptos;
-- resolver a duração por dentista;
+- resolver a duração oficial da clínica para o procedimento;
 - consultar disponibilidade;
 - decidir o próximo passo;
 - registrar a escolha;
@@ -737,9 +728,9 @@ A implementação deve cobrir, no mínimo:
 14. nenhum dentista realiza o procedimento;
 15. Consulta/Avaliação é oferecida;
 16. Consulta/Avaliação só substitui o procedimento após aceitação;
-17. duração fixa automática;
-18. duração por procedimento;
-19. dentistas diferentes usam durações diferentes;
+17. duração oficial da clínica para o procedimento é resolvida corretamente;
+18. configuração de duração ausente ou inválida falha fechado, sem consultar disponibilidade;
+19. dentistas aptos diferentes usam a mesma duração para o mesmo procedimento;
 20. busca respeita data e período solicitados;
 21. ausência de opção dentro dos critérios é informada antes de oferecer alternativa;
 22. paciente novo só fornece cadastro depois de escolher um horário;

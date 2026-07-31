@@ -15,9 +15,10 @@
 - Toda disponibilidade **depende primeiro do procedimento**.
 - A partir do procedimento, **identificar quais dentistas ativos realizam** esse
   procedimento.
-- A **duração** vem do modo configurado:
-  - **modo geral/automático:** duração geral configurada;
-  - **modo por procedimento:** duração configurada para o procedimento.
+- A **duração** é configurada pela clínica para o procedimento (`clinica_id` +
+  `procedimento_id`), e é **a mesma para todos os dentistas aptos** daquela clínica.
+  Valor válido: inteiro, de 10 a 240 minutos, múltiplo de 10. Duração individual por
+  dentista ou por vínculo está **fora da v1** (ver `../specs/duracao-v1.md`).
 - Consultar **horários de trabalho, bloqueios e compromissos reais**.
 - **Apresentar somente horários realmente disponíveis.**
 
