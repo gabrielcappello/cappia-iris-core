@@ -647,6 +647,8 @@ interface EntradaInterpretacaoModelo {
   campos_cadastrais_preenchidos: Array<
     'nome' | 'cpf' | 'data_nascimento' | 'email'
   >;
+
+  pendente: 'nenhum' | 'opcao' | 'confirmacao_resumo';
 }
 ```
 
@@ -661,8 +663,18 @@ Regras:
   si;
 - o paciente pode informar novo nome, CPF, nascimento ou e-mail na mensagem atual; o Core
   compara a nova interpretação contra o valor oficial mantido no servidor;
+- `pendente` é derivado exclusivamente pelo Core a partir do estado oficial e serve
+  somente para orientar a interpretação de sinais de aceitação ou confirmação; não
+  representa o estado completo, não autoriza transição e não vem do paciente;
 - ficam fora do payload do modelo, sempre: `clinica_id`, telefone, IDs, agenda,
-  disponibilidade, credenciais e registros clínicos.
+  disponibilidade, credenciais e registros clínicos; também ficam fora o estado
+  completo, versões internas, IDs de opção/resumo e catálogo de procedimentos.
+
+O contrato canônico dos sinais conversacionais, incluindo a separação estrutural entre
+`EventoCandidatoIA` e `DecisaoControlador`, está em
+`eventos-conversacionais-v1.md`. Quando essa integração for implementada, a saída
+estruturada passa a conter exatamente `alteracoes` e `eventos_candidatos`; até lá, este
+registro documental não autoriza alteração de código.
 
 ### Limites (pendentes)
 
