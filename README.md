@@ -24,8 +24,18 @@ Detalhe completo: `docs/02-arquitetura.md`.
 
 ## Estado atual
 
-Fase de preparação: estrutura e decisões já aprovadas documentadas. **Nenhum código
-implementado ainda.** `src/` está vazia.
+Fase documental avançada, implementação parcial.
+
+- As especificações canônicas do novo agendamento estão avançadas — incluindo
+  Persistência v1 e Disponibilidade v1, ambas publicadas.
+- Já existe base TypeScript parcial em `src/` (identificação e interpretação), com testes
+  e migrations aplicadas em etapas anteriores.
+- **A implementação end-to-end da Iris Nova ainda não está autorizada.**
+- O código existente **não deve ser presumido correto**: precisa ser auditado contra as
+  specs vigentes antes de ser reutilizado. Há uma divergência conhecida de PII no contrato
+  de interpretação, registrada em `specs/interpretacao-ia.md`, que precisa ser corrigida
+  antes de qualquer tráfego real.
+- A próxima fase depende do fechamento documental e de nova revisão.
 
 ## Por onde começar
 

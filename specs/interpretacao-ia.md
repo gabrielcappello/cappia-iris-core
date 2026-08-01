@@ -1,14 +1,16 @@
 # Spec — Interpretação pela IA
 
 **Status:** especificação de integração aprovada e registrada nesta versão (ver seções
-abaixo). Pendências explícitas, não resolvidas nesta rodada: base legal, retenção e
-contrato/condições do provedor para uso com pacientes reais; números de debounce e de
-limite máximo de janela (a definir na especificação da Edge Function); a porta de
-redação natural futura (hoje, resposta por template determinístico); invalidação de
-dependências entre procedimento/dentista/data/período/horário (a definir na
-especificação do controlador de agendamento); classificação de saudação/conversa
-básica na saída do modelo (a definir na especificação correspondente). Nenhuma dessas
-pendências deve ser tratada como decidida.
+abaixo). Pendências explícitas, ainda não resolvidas: base legal, retenção e
+contrato/condições do provedor para uso com pacientes reais; limite máximo de janela e
+quantidade máxima de mensagens por turno (a definir na especificação de transporte);
+classificação de saudação/conversa básica na saída do modelo. Nenhuma dessas pendências
+deve ser tratada como decidida.
+
+**Já não são pendências**: o debounce, decidido em 3 segundos (ver "Limites"); a
+invalidação de dependências entre procedimento/dentista/data/período/horário, definida
+em `controlador-conversacional-v1.md` §10; e a porta de redação, definida em
+`atendimento-v1.md`.
 
 Esta especificação detalha o contrato entre a mensagem do paciente e a saída estruturada
 da IA, e a integração do adaptador OpenAI (`src/core/cliente-modelo-openai.ts`) com o
@@ -676,12 +678,44 @@ O contrato canônico dos sinais conversacionais, incluindo a separação estrutu
 estruturada passa a conter exatamente `alteracoes` e `eventos_candidatos`; até lá, este
 registro documental não autoriza alteração de código.
 
-### Limites (pendentes)
+### Divergência conhecida no código — bloqueadora antes de tráfego real
 
-- A duração numérica do debounce será definida na especificação da Edge Function — **não
-  definida aqui**.
-- Limites máximos (tamanho de janela, número de mensagens) serão obrigatórios, mas os
-  números ainda **não estão definidos**.
+Registrada em revisão documental, **não corrigida**: o código atual monta `dados_atuais`
+a partir do snapshot oficial inteiro, o que inclui os valores de `nome`, `cpf`,
+`data_nascimento` e `email` quando já preenchidos. O contrato acima permite somente a
+indicação de **quais** campos cadastrais estão preenchidos
+(`campos_cadastrais_preenchidos`), nunca os valores.
+
+A correção deverá abranger `src/core/interpretacao-tipos.ts`,
+`src/core/interpretacao-extrator.ts` e `src/core/interpretar-e-aplicar.ts`.
+
+**Nenhuma mensagem real pode usar esse caminho antes da correção e da revisão
+correspondente.** Esta é uma pendência bloqueadora, não um detalhe de implementação.
+
+### Limites
+
+**Debounce — decidido.** O valor canônico da v1 é **exatamente 3 segundos**, conforme
+`novo-agendamento.md` §17. Não é estimativa, não está pendente, e não depende da futura
+especificação de transporte: essa especificação deverá **implementar** o debounce
+canônico de 3 segundos, não redefini-lo.
+
+A espera é reiniciada a cada nova mensagem da mesma conversa; o turno é processado
+quando nenhuma mensagem nova chegar durante 3 segundos; mensagens dentro da janela
+pertencem ao mesmo turno; mensagens posteriores iniciam um novo turno. Deduplicação e
+claim permanecem mecanismos separados do debounce.
+
+**Ainda pendentes** — e nenhum deles pode alterar o debounce de 3 segundos sem uma nova
+decisão canônica:
+
+- tamanho máximo da janela;
+- quantidade máxima de mensagens por turno;
+- limites de payload;
+- contrato da entrada autenticada e da integração com o transporte;
+- envio idempotente ou padrão outbox;
+- política de resposta.
+
+Esses itens pertencem à futura especificação de transporte/Edge Function, ainda não
+escrita.
 
 ### Pendências para uso com pacientes reais
 

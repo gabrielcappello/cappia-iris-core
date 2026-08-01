@@ -14,7 +14,12 @@
 - **Deduplicação de mensagem.**
 - **Confirmação explícita e idempotência no novo agendamento** — passos 7 e 8 de
   `06-roadmap.md` ("Confirmação explícita" e "Criação idempotente").
-- **Logs sem chaves e com dados pessoais mascarados.**
+- **Logs técnicos sem PII e sem credenciais.** Log técnico não contém mensagem bruta,
+  CPF, telefone, nome, data de nascimento ou e-mail — **nem mesmo parcialmente
+  mascarados**. Usar identificadores técnicos opacos; para correlação por telefone, usar
+  o correlator HMAC definido em `../specs/persistencia-v1.md` §20. Máscara parcial só
+  pode existir em interface autorizada ao usuário, nunca em log técnico. Credenciais e
+  secrets nunca entram em log, em nenhuma forma.
 
 Qualquer item de segurança além desta lista fica para decisão específica futura, quando
 for necessário — não presumir.

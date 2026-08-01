@@ -103,21 +103,23 @@ Um dado já informado não deve ser solicitado novamente, salvo dúvida real ou 
 
 Antes de consultar disponibilidade, o sistema deve identificar o procedimento solicitado.
 
-A IA recebe somente os procedimentos ativos e autorizados daquela clínica e indica o procedimento correspondente à mensagem do paciente.
+A IA extrai somente `procedimento_texto` — o texto mencionado pelo paciente, preservado como texto. **O catálogo de procedimentos nunca é enviado à IA** (`interpretacao-ia.md`, "Entrada e PII"; `eventos-conversacionais-v1.md` §4). A IA não recebe a lista de procedimentos da clínica, não retorna `procedimento_id`, não seleciona o procedimento oficial, não cria procedimento e não inventa registro inexistente.
 
-O Core valida se o procedimento retornado:
+O Core resolve o procedimento oficial, deterministicamente, conforme `procedimentos-v1.md`:
 
-- existe;
-- pertence à clínica;
-- está ativo.
+- normaliza `procedimento_texto` pelas quatro transformações fechadas (§4);
+- faz match exato contra os aliases oficiais da clínica corrente (§5);
+- produz `procedimento_id` como identidade — nunca o nome exibido (§1);
+- não usa fuzzy matching, similaridade ou inferência semântica;
+- não escolhe silenciosamente entre resultados ambíguos (§6).
 
-A IA não cria procedimentos e não possui autoridade para escolher um registro inexistente.
+Resultados possíveis da resolução, todos devolvidos ao controlador:
 
-Quando houver ambiguidade real entre procedimentos, a Iris deve perguntar ao paciente antes de continuar.
+- **resolvido** — exatamente um match;
+- **não resolvido** — nenhum match, procedimento inativo, ou procedimento inexistente naquela clínica (`procedimentos-v1.md` §7);
+- **erro de catálogo** — alias apontando para mais de um procedimento na mesma clínica; é falha de configuração, nunca ambiguidade apresentada ao paciente, e o runtime nunca escolhe nem pergunta (`procedimentos-v1.md` §6).
 
-Exemplo:
-
-> Você precisa de uma consulta geral ou de uma consulta ortodôntica?
+A ambiguidade real entre procedimentos (ex.: "consulta geral" ou "consulta ortodôntica") é evitada a montante: em dúvida real, a IA omite `procedimento_texto` em vez de adivinhar, e o texto omitido chega como ausência de entrada. Quando o controlador precisar esclarecer, a pergunta é decidida por ele e redigida conforme `atendimento-v1.md` — nunca pela IA por iniciativa própria.
 
 Nenhuma disponibilidade deve ser consultada antes de o procedimento estar resolvido.
 
@@ -181,7 +183,7 @@ A substituição do procedimento solicitado por Consulta/Avaliação só ocorre 
 
 Nunca trocar silenciosamente o procedimento.
 
-**Se o procedimento solicitado já for Consulta/Avaliação e não houver dentista apto**: não oferecer Consulta/Avaliação novamente, não criar ciclo, não inventar procedimento ou profissional, não consultar disponibilidade. O comportamento conversacional final para esse caso permanece pendente para `atendimento-v1.md` (`dentistas-vinculos-v1.md` §12).
+**Se o procedimento solicitado já for Consulta/Avaliação e não houver dentista apto**: não oferecer Consulta/Avaliação novamente, não criar ciclo, não inventar procedimento ou profissional, não consultar disponibilidade. O comportamento conversacional final para esse caso está definido em `atendimento-v1.md` §5 (`dentistas-vinculos-v1.md` §12).
 
 ---
 
@@ -297,18 +299,42 @@ Não oferecer quinta-feira de manhã apenas por ser o primeiro horário geral di
 
 ### Ausência de horário no período solicitado
 
-A busca deve seguir esta ordem:
+A busca dentro da data solicitada segue esta ordem:
 
 1. procurar na data e no período solicitados;
 2. se não houver disponibilidade, procurar nos demais períodos da mesma data;
-3. se encontrar, informar que o período original está indisponível e apresentar os horários do período alternativo, mantendo um dentista por vez;
-4. se não houver disponibilidade em nenhum período daquela data, informar isso e pedir outra data.
+3. se encontrar, informar que o período original está indisponível e apresentar os horários do período alternativo, mantendo um dentista por vez.
 
 Exemplo:
 
 > Não encontrei horários na sexta-feira à tarde, mas tenho pela manhã às 8h, 9h40 e 11h com a Dra. Ana. Algum serve ou prefere verificar outro dia?
 
-Nesta primeira versão, não procurar automaticamente outras datas sem que o paciente indique ou aceite uma nova data.
+O que acontece quando a data inteira não tem disponibilidade depende de **como o paciente pediu a data**. São duas intenções distintas e não podem ser confundidas.
+
+### Data específica
+
+O paciente pediu uma data determinada e apenas ela — "quero amanhã", "só posso na sexta".
+
+- pesquisar exatamente a data solicitada;
+- informar a ausência de opções nessa data;
+- perguntar se deseja procurar outra data;
+- **não avançar automaticamente** para datas seguintes sem autorização do paciente.
+
+### Próxima disponibilidade
+
+O paciente pediu o próximo horário disponível, sem data rígida — "qual o próximo horário?", "quando tem vaga?", "pode ser o primeiro disponível", "qualquer data".
+
+- avançar automaticamente em ordem cronológica a partir da data de referência;
+- continuar até encontrar a primeira data futura com opção real;
+- apresentar os horários dessa data;
+- **não exigir que o paciente informe uma nova data a cada dia sem disponibilidade**;
+- **não existe horizonte semântico artificial** — nenhum limite de 30 ou 60 dias funciona como regra de produto (`disponibilidade.md` §11);
+- blocos técnicos internos de consulta podem existir, desde que o fim de um bloco nunca signifique indisponibilidade;
+- respeitar integralmente os filtros vigentes: dentista, procedimento, duração e período.
+
+**Não responder que não existe disponibilidade enquanto houver disponibilidade futura pesquisável.** Semanas sem disponibilidade não constituem resultado final de indisponibilidade.
+
+Após uma rejeição, a busca continua a partir do dia seguinte, mantendo a mesma distinção de intenção.
 
 ---
 
@@ -572,7 +598,15 @@ Exemplo:
 > amanhã
 > à tarde
 
-O sistema aguarda exatamente 3 segundos após a mensagem mais recente daquela conversa antes de interpretar o conjunto.
+**Debounce canônico da v1: exatamente 3 segundos.** Este é o valor decidido; não é estimativa nem pendência.
+
+Semântica:
+
+- após **cada** nova mensagem daquela conversa, a espera é reiniciada;
+- o turno é processado quando nenhuma mensagem nova chegar durante 3 segundos;
+- todas as mensagens recebidas dentro da janela pertencem ao **mesmo turno**;
+- mensagens que chegarem depois do processamento iniciam um **novo turno**;
+- deduplicação e claim são mecanismos **separados** do debounce e continuam valendo independentemente dele (`interpretacao-ia.md`).
 
 A espera ocorre por conversa, identificada por clínica + telefone.
 

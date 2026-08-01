@@ -300,6 +300,22 @@ candidato `confirmar_resumo`.
 Em `concluido`, nova confirmação não cria outro agendamento. O Core localiza o resultado
 já concluído e responde com o agendamento existente, conforme `novo-agendamento.md`.
 
+### Nota harmonizadora: `solicitar_nova_opcao` + `aceitar_qualquer_profissional`
+
+Cada candidato isolado mantém o significado desta tabela — em particular,
+`aceitar_qualquer_profissional` isolado em `aguardando_escolha` continua ignorado, por
+não haver ali pergunta de preferência vigente.
+
+A combinação **simultânea** dos dois na mesma mensagem é interpretada pelo controlador
+como um **sinal composto**, não como dois eventos avaliados isoladamente. Essa
+compatibilidade — e a regra completa que ela produz — pertence ao contrato do
+controlador, definida em `controlador-conversacional-v1.md` §7: opções e escolha vigentes
+são invalidadas; a preferência específica por dentista é removida; procedimento e
+duração permanecem quando ainda válidos; a nova disponibilidade considera todos os
+dentistas ativos aptos, processados um por vez, sem misturar horários de profissionais
+diferentes e sem escolher nenhum definitivamente. Nenhum evento ou estado novo é criado
+por essa combinação.
+
 ## 7. Ambiguidade e incompatibilidade
 
 - Em dúvida real, a IA omite o candidato; nunca adivinha.

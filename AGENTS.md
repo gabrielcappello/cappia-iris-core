@@ -50,4 +50,7 @@ para a etapa seguinte sem essa aprovação final na etapa atual.
 - `tests/` — cenários obrigatórios de validação.
 - `reviews/` — revisões (Codex ou outras) sobre este projeto.
 - `handoffs/` — registros de encerramento de etapa desta frente.
-- `src/` — código. Vazio até a primeira implementação aprovada.
+- `src/` — código. Contém base parcial já escrita (identificação e interpretação), com
+  testes e migrations de etapas anteriores. **Não presumir que esse código está correto ou
+  alinhado às specs atuais** — auditar contra a spec vigente antes de reutilizar ou
+  estender. A implementação end-to-end ainda não está autorizada.

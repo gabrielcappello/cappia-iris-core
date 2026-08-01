@@ -149,8 +149,8 @@ Consulta/Avaliação ativa (`eh_consulta_avaliacao = true`) é um requisito espe
 configuração de cada clínica, para que o fallback exista. Sua ausência ou inatividade
 torna o fallback indisponível — o Core falha fechado nesse caso (não inventa
 procedimento nem profissional, não consulta disponibilidade), conforme
-`dentistas-vinculos-v1.md` §12. A resposta conversacional final para esse cenário
-permanece pendente para `atendimento-v1.md`.
+`dentistas-vinculos-v1.md` §12. A resposta conversacional final para esse cenário está
+definida em `atendimento-v1.md` §5.
 
 ## 9. Relação com duração e agendamento
 
@@ -168,8 +168,8 @@ procedimento resolvido + dentista apto + duração resolvível = procedimento ag
 ```
 
 A validação completa acontece nas etapas de dentistas, duração e disponibilidade,
-conforme suas specs próprias. As especificações de dentistas e duração já são
-canônicas; a especificação de disponibilidade ainda será definida.
+conforme suas specs próprias — `dentistas-vinculos-v1.md`, `duracao-v1.md` e
+`disponibilidade.md`, todas canônicas vigentes.
 
 ## 10. Testes obrigatórios da especificação
 
@@ -191,8 +191,9 @@ Não resolvidas por esta especificação, não decididas por inferência:
 
 1. Comportamento arquitetural quando nenhum dentista é apto **e** a clínica não tem
    `eh_consulta_avaliacao` ativo agora está definido em `dentistas-vinculos-v1.md`
-   §12 (Core falha fechado, sem ciclo, sem alternativa inventada). Só a resposta
-   conversacional final para esse cenário permanece pendente para `atendimento-v1.md`.
+   §12 (Core falha fechado, sem ciclo, sem alternativa inventada). A resposta
+   conversacional final para esse cenário **deixou de ser pendência**: está em
+   `atendimento-v1.md` §5.
 2. A auditoria read-only do catálogo legado foi concluída: os dados de referência foram
    classificados para adaptação e as resoluções/RPCs legadas para descarte como
    implementação direta. Essa classificação não autoriza reuso automático; qualquer

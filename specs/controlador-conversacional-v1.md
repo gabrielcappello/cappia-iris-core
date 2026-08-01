@@ -221,12 +221,47 @@ que possa alterar os fatos apresentados bloqueia `confirmar_resumo`.
 | `confirmar_resumo` com qualquer outro candidato | Incompatível; nunca autorizar execução |
 | `aceitar_opcao` com `solicitar_nova_opcao` | Incompatível |
 | `aceitar_opcao` com `aceitar_qualquer_profissional` | Incompatível |
-| `solicitar_nova_opcao` com `aceitar_qualquer_profissional` | Depende da futura spec de disponibilidade; não aceitar por suposição |
+| `solicitar_nova_opcao` com `aceitar_qualquer_profissional` | Compatíveis; tratados como sinal composto (ver abaixo) |
 | candidatos repetidos | Saída estrutural inválida |
 | um candidato com alterações não conflitantes | Avaliar normalmente |
 | nenhum candidato | Seguir pelo próximo dado faltante |
 
 O controlador nunca escolhe silenciosamente entre candidatos incompatíveis.
+
+### `solicitar_nova_opcao` com `aceitar_qualquer_profissional`
+
+Deixou de ser pendência. A combinação é **compatível** e tratada como um único sinal
+composto, não como dois eventos avaliados isoladamente: `aceitar_qualquer_profissional`
+qualifica o recálculo pedido por `solicitar_nova_opcao`.
+
+Consequência determinística:
+
+- `solicitar_nova_opcao` invalida a lista de opções vigente e a escolha vinculada;
+- `aceitar_qualquer_profissional` remove a preferência específica por dentista;
+- procedimento, duração e demais dados independentes **permanecem válidos** — nada além
+  do que depende de dentista e de opções é invalidado;
+- o controlador busca nova disponibilidade entre **todos os dentistas ativos e aptos** ao
+  procedimento (`dentistas-vinculos-v1.md` §5, §10);
+- continua processando **um dentista por vez**, pela ordem canônica de
+  `disponibilidade.md` §12 — horário mais próximo primeiro, desempate estável por
+  `dentista_id`;
+- **nunca mistura horários de dentistas diferentes na mesma lista**;
+- **não seleciona silenciosamente um dentista definitivo** — a autorização é para buscar
+  entre todos, não para escolher por conta própria;
+- apresenta as opções reais conforme a regra canônica da disponibilidade;
+- a nova escolha volta a vincular dentista, data, horário e versão da opção.
+
+Nenhum evento novo e nenhum estado novo são criados por esta regra.
+
+O caso **isolado** permanece inalterado: `aceitar_qualquer_profissional` sozinho, em
+`aguardando_escolha`, continua sendo ignorado (seção 8), porque nesse estado não existe
+pergunta de preferência vigente à qual ele responda. A exceção vale exclusivamente para o
+sinal composto descrito aqui.
+
+**Harmonização pendente**: `eventos-conversacionais-v1.md` §6 lista `aguardando_escolha`
+entre os estados em que `aceitar_qualquer_profissional` é ignorado, o que descreve
+corretamente o caso isolado, mas ainda não menciona o sinal composto. A nota
+correspondente naquele documento não foi escrita nesta rodada.
 
 ## 8. Matriz estado x evento candidato x transição
 
@@ -241,7 +276,8 @@ O controlador nunca escolhe silenciosamente entre candidatos incompatíveis.
 | `aguardando_escolha` | `aceitar_opcao` | Resolve exatamente uma opção vigente | Ir para `coletando_cadastro` ou `aguardando_confirmacao` |
 | `aguardando_escolha` | `aceitar_opcao` | Mais de uma opção possível | Esclarecer; permanecer no estado |
 | `aguardando_escolha` | `solicitar_nova_opcao` | Opções vigentes | Recalcular/apresentar alternativa; permanecer no estado |
-| `aguardando_escolha` | `aceitar_qualquer_profissional` | Regra não aprovada nesse estado | Ignorar |
+| `aguardando_escolha` | `aceitar_qualquer_profissional` | Isolado, sem pergunta de preferência vigente | Ignorar |
+| `aguardando_escolha` | `aceitar_qualquer_profissional` + `solicitar_nova_opcao` | Sinal composto (seção 7) | Remover preferência de dentista; recalcular entre todos os aptos; permanecer no estado |
 | `aguardando_escolha` | `confirmar_resumo` | Qualquer contexto | Ignorar |
 | `aguardando_escolha` | `desistir` | Explícito e inequívoco | Ir para `atendimento` |
 | `coletando_cadastro` | `desistir` | Explícito e inequívoco | Ir para `atendimento` |
@@ -456,39 +492,38 @@ reduzem, mas não eliminam, a corrida após a consulta. O risco residual de resu
 registrado como apresentado sem prova de entrega permanece o definido em
 `eventos-conversacionais-v1.md`.
 
-## 12. Dependências ainda abertas
+## 12. Dependências — estado atual
 
-### Procedimentos
+### Já fechadas por especificações canônicas
 
-- contrato do catálogo oficial;
-- resolução de `procedimento_texto` sem expor catálogo à IA;
-- ambiguidade e procedimentos inativos;
-- identificação oficial de Consulta/Avaliação;
-- auditoria de eventual componente reutilizável.
+| Dependência | Fechada em |
+|---|---|
+| Catálogo oficial, resolução de `procedimento_texto` sem expor catálogo à IA, ambiguidade, procedimentos inativos, identificação de Consulta/Avaliação | `procedimentos-v1.md` |
+| Vínculos dentista-procedimento, validade de profissional e preferência, representação de qualquer profissional | `dentistas-vinculos-v1.md` |
+| Duração oficial da clínica para o procedimento, snapshot aplicado, invalidação, revalidação, falha fechada | `duracao-v1.md` |
+| Geração e granularidade dos slots, ausência de horizonte artificial, jornada/bloqueios/agendamentos, passagem ao próximo dentista, períodos alternativos | `disponibilidade.md` |
+| Validade e versão lógica das opções, revalidação e coordenação com a criação, forma persistente mínima do estado, proteção concorrente das transições | `persistencia-v1.md` |
+| Redação das respostas ao paciente | `atendimento-v1.md` |
 
-### Dentistas e duração
+`disponibilidade.md` **não é mais placeholder** — é especificação canônica vigente. A
+condição que antes bloqueava o controlador está satisfeita.
 
-- contrato dos vínculos dentista-procedimento;
-- validade de profissional e preferência;
-- representação oficial de qualquer profissional;
-- duração oficial da clínica para o procedimento, com validação de 10 a 240 minutos e
-  múltiplo de 10 (`duracao-v1.md`);
-- snapshot da duração aplicada, invalidação e revalidação antes da criação;
-- configuração ausente ou inválida, que falha fechado.
+### Ainda abertas
 
-### Disponibilidade
+- especificação de transporte/Edge Function: entrada autenticada, janela máxima,
+  quantidade máxima de mensagens por turno, limites de payload, envio idempotente ou
+  outbox, política de resposta (o debounce de 3 segundos **já está decidido** —
+  `novo-agendamento.md` §17);
+- configuração oficial da clínica: fuso IANA e exigência de e-mail
+  (`persistencia-v1.md` §25);
+- identidades de usuário do painel e dos apps para autoria de status
+  (`persistencia-v1.md` §25);
+- schema físico de todas as entidades;
+- auditoria do legado, incluindo a fórmula antiga de horários
+  (`disponibilidade.md` §19) — nenhum componente presumido reutilizável.
 
-- geração e granularidade dos slots;
-- limites de busca;
-- horários de trabalho, intervalos, bloqueios e agendamentos;
-- validade e versão lógica de opções;
-- passagem ao próximo dentista;
-- períodos alternativos;
-- revalidação e coordenação com criação;
-- auditoria da fórmula antiga antes de reutilização.
-
-Enquanto `disponibilidade.md` permanecer placeholder, o controlador completo não está
-aprovado para implementação.
+Nenhuma dessas pendências bloqueia a implementação dos serviços de domínio
+determinísticos; elas condicionam a integração final e a operação com tráfego real.
 
 ## 13. Ordem recomendada de implementação futura
 

@@ -146,10 +146,10 @@ Esta spec define somente que:
   duração oficial da clínica para o procedimento;
 - ausência de preferência não equivale automaticamente a essa aceitação (seção 4).
 
-Explicitamente fora desta spec — pertencem a `duracao-v1.md` e à futura spec de
-disponibilidade: ordenação de horários; ordenação entre dentistas; apresentação de um
-dentista por vez; critério de horário mais próximo; combinação dos resultados de
-disponibilidade.
+Explicitamente fora desta spec — pertencem a `duracao-v1.md` e a `disponibilidade.md`
+(§12), ambas canônicas vigentes: ordenação de horários; ordenação entre dentistas;
+apresentação de um dentista por vez; critério de horário mais próximo; combinação dos
+resultados de disponibilidade.
 
 ## 11. Isolamento multiclínica
 
@@ -216,7 +216,8 @@ Não resolvidas por esta especificação, não decididas por inferência:
 3. Onde e quando a validação de duplicidade de entradas de resolução (seção 6) é
    aplicada — spec de schema/seed ainda não escrita.
 4. Resposta conversacional para catálogo inválido, dentista não encontrado, e
-   Consulta/Avaliação sem saída — deferida a `atendimento-v1.md`, ainda placeholder.
+   Consulta/Avaliação sem saída — **deixou de ser pendência**: definida em
+   `atendimento-v1.md` §5, canônica vigente.
 
 ## 16. Invariantes
 

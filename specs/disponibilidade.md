@@ -238,6 +238,19 @@ A busca começa pela data solicitada, avança em ordem cronológica, continua at
 a primeira data com disponibilidade e oferece os horários dessa data. Após rejeição,
 continua a partir do dia seguinte.
 
+**O avanço automático depende da intenção do pedido** (`novo-agendamento.md` §9):
+
+- **próxima disponibilidade** — "qual o próximo horário?", "quando tem vaga?", "o
+  primeiro disponível", "qualquer data": avançar automaticamente, sem exigir nova data do
+  paciente, até a primeira data futura com opção real;
+- **data específica** — o paciente pediu uma data determinada e apenas ela: pesquisar
+  exatamente essa data e, não havendo opção, **parar**; o avanço para outras datas exige
+  autorização do paciente.
+
+Em ambos os casos valem os demais filtros vigentes (dentista, procedimento, duração,
+período) e a ausência de horizonte artificial. A distinção é sobre **quando** avançar,
+nunca sobre **até onde** — não existe limite semântico de busca em nenhum dos dois.
+
 Semanas sem disponibilidade não constituem resultado final de indisponibilidade.
 
 A implementação futura pode consultar em blocos técnicos finitos, desde que: o tamanho
@@ -332,13 +345,24 @@ Nada disso é implementado nesta rodada.
 Registradas como pendências futuras — **não reabrem decisões de produto aprovadas**:
 
 - representação das jornadas recorrentes e exceções;
-- status ativos que ocupam agenda;
 - internalização dos eventos Google;
 - mecanismo físico anti-sobreposição;
-- fronteira transacional entre revalidação e criação;
-- referência técnica de revisão ou obsolescência;
 - tratamento de horários ambíguos em fusos com mudança de horário;
-- resposta conversacional para falhas estruturais (`atendimento-v1.md`).
+- fuso oficial da clínica como configuração (`persistencia-v1.md` §25).
+
+### Pendências já fechadas
+
+Registradas aqui para que não sejam reabertas por engano:
+
+- **status que ocupam a agenda** — `persistencia-v1.md` §11 define **somente
+  `confirmado`**; `cancelado` e `remarcado` liberam o intervalo; `concluido` e `faltou`
+  são históricos e não bloqueiam agenda futura;
+- **fronteira transacional entre revalidação e criação** — `persistencia-v1.md` §23,
+  operação em duas fases, com efeito e conclusão na mesma transação;
+- **referência técnica de revisão ou obsolescência da opção** — `persistencia-v1.md`
+  §17, coberta pelo estado da conversa e pelas versões de escolha e resumo;
+- **resposta conversacional para falhas estruturais** — `atendimento-v1.md`, canônica
+  vigente.
 
 ## 19. Auditoria do legado — pendente
 

@@ -131,8 +131,12 @@ Nesses casos:
 - falhar fechado.
 
 Os motivos internos permanecem distintos para auditoria, no mesmo padrão de
-`dentistas-vinculos-v1.md` §4. A resposta ao paciente fica pendente para
-`atendimento-v1.md`.
+`dentistas-vinculos-v1.md` §4. A resposta ao paciente está definida em
+`atendimento-v1.md` §5 ("Falha definitiva"): informar que não foi possível continuar
+agora, sem detalhar o motivo interno. A camada de atendimento não corrige, não inventa e
+não substitui duração — ela apenas comunica, dentro dos fatos autorizados pelo
+controlador, o que o Core já decidiu. A decisão operacional (falhar fechado, sem
+Consulta/Avaliação, sem reclassificar aptidão) continua sendo exclusivamente do Core.
 
 ## 7. Qualquer profissional
 
@@ -246,8 +250,8 @@ Não resolvidas por esta especificação, não decididas por inferência:
 3. Implementação da validação no painel (`iris-portal-v2`) — repositório e sistema
    distintos; escopo, responsável e prazo fora desta especificação.
 4. Onde a configuração de duração vive fisicamente — schema fora de escopo.
-5. Resposta conversacional para falha de duração — deferida a `atendimento-v1.md`,
-   ainda placeholder.
+5. Resposta conversacional para falha de duração — **deixou de ser pendência**: definida
+   em `atendimento-v1.md` §5, canônica vigente.
 
 ## 14. Invariantes
 
