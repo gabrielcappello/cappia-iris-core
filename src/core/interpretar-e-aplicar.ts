@@ -1,9 +1,19 @@
 import { aplicarDados, buscarEstadoConversa, validarContexto } from './aplicar-dados.ts';
 import { EntradaInvalidaError } from './erros.ts';
-import { extrairAlteracoes, validarDadosAtuais, validarMensagensAtuais } from './interpretacao-extrator.ts';
+import {
+  construirEntradaMinimizada,
+  extrairAlteracoes,
+  validarMensagensAtuais,
+  validarSnapshotOficial,
+} from './interpretacao-extrator.ts';
 import { preAplicar } from './pre-aplicacao.ts';
 import type { ClienteBancoDados, ContextoConversa, ResultadoAplicarDados } from './tipos.ts';
-import type { ClienteModeloEstruturado, Conflito, ResultadoInterpretacao } from './interpretacao-tipos.ts';
+import type {
+  ClienteModeloEstruturado,
+  Conflito,
+  ResultadoInterpretacao,
+  SnapshotOficialConversa,
+} from './interpretacao-tipos.ts';
 
 export interface InterpretarEAplicarInput extends ContextoConversa {
   mensagens_atuais: string[];
@@ -39,16 +49,22 @@ export async function interpretarEAplicar(
   // 2-3. buscar estado_conversa oficial e obter dados diretamente da linha
   // (mesma consulta que aplicarDados usa — nunca o dados_atuais do chamador).
   const linhaOficial = await buscarEstadoConversa(clienteBanco, entrada);
-  const snapshotOficial = (linhaOficial.dados as Record<string, string>) ?? {};
+  const snapshotOficial = (linhaOficial.dados as SnapshotOficialConversa) ?? {};
 
   // 4. validar que os dados oficiais respeitam os dez campos do contrato.
-  validarDadosAtuais(snapshotOficial);
+  validarSnapshotOficial(snapshotOficial);
 
-  // 5. enviar o snapshot oficial (nunca o do chamador) ao modelo.
-  const saida = await extrairAlteracoes(clienteModelo, {
-    mensagens_atuais: entrada.mensagens_atuais,
-    dados_atuais: snapshotOficial,
-  });
+  // 5. derivar do snapshot oficial APENAS o contexto autorizado e enviar
+  // ao modelo. Os campos operacionais seguem por valor; os cadastrais
+  // (nome, cpf, data_nascimento, email) seguem somente como indicacao de
+  // presenca -- nenhum valor cadastral atravessa esta fronteira
+  // (specs/interpretacao-ia.md, "Entrada e PII"; cenarios INT-11/INT-12).
+  // O snapshot completo permanece no servidor, para preAplicar e para a
+  // reconciliacao adiante.
+  const saida = await extrairAlteracoes(
+    clienteModelo,
+    construirEntradaMinimizada(entrada.mensagens_atuais, snapshotOficial)
+  );
 
   // 6. pre-aplicacao deterministica usando o mesmo snapshot.
   const preAplicacao = preAplicar(snapshotOficial, saida.alteracoes);

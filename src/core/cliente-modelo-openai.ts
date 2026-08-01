@@ -353,6 +353,7 @@ async function processarTentativa(
         content: JSON.stringify({
           mensagens_atuais: contexto.entrada.payload.mensagens_atuais,
           dados_atuais: contexto.entrada.payload.dados_atuais,
+          campos_cadastrais_preenchidos: contexto.entrada.payload.campos_cadastrais_preenchidos,
         }),
       },
     ],

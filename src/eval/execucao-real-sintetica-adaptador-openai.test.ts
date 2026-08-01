@@ -132,6 +132,7 @@ function corpoValidoSerializado(): string {
         content: JSON.stringify({
           mensagens_atuais: PAYLOAD_SINTETICO_AUTORIZADO.mensagens_atuais,
           dados_atuais: PAYLOAD_SINTETICO_AUTORIZADO.dados_atuais,
+          campos_cadastrais_preenchidos: PAYLOAD_SINTETICO_AUTORIZADO.campos_cadastrais_preenchidos,
         }),
       },
     ],
@@ -190,6 +191,7 @@ test('inspecionarCorpoRequisicao: payload com propriedade extra (ex.: clinica_id
   corpo.input[1].content = JSON.stringify({
     mensagens_atuais: PAYLOAD_SINTETICO_AUTORIZADO.mensagens_atuais,
     dados_atuais: PAYLOAD_SINTETICO_AUTORIZADO.dados_atuais,
+    campos_cadastrais_preenchidos: PAYLOAD_SINTETICO_AUTORIZADO.campos_cadastrais_preenchidos,
     clinica_id: 'x',
   });
   const inspecao = inspecionarCorpoRequisicao(JSON.stringify(corpo), INSTRUCAO_SYSTEM_ESPERADA_TESTE);
@@ -215,7 +217,18 @@ test('inspecionarCorpoRequisicao: corpo que nao e JSON valido reprova todos os c
 const CONTEUDO_USER_VALIDO = JSON.stringify({
   mensagens_atuais: [...PAYLOAD_SINTETICO_AUTORIZADO.mensagens_atuais],
   dados_atuais: {},
+  campos_cadastrais_preenchidos: [],
 });
+
+// Monta um conteudo user variando somente campos_cadastrais_preenchidos,
+// mantendo mensagens_atuais e dados_atuais exatamente autorizados.
+function conteudoUserComIndicadores(indicadores: unknown): string {
+  return JSON.stringify({
+    mensagens_atuais: [...PAYLOAD_SINTETICO_AUTORIZADO.mensagens_atuais],
+    dados_atuais: {},
+    campos_cadastrais_preenchidos: indicadores,
+  });
+}
 const ITEM_SYSTEM_VALIDO = { role: 'system', content: INSTRUCAO_SYSTEM_ESPERADA_TESTE };
 const ITEM_USER_VALIDO = { role: 'user', content: CONTEUDO_USER_VALIDO };
 
@@ -250,21 +263,81 @@ const CENARIOS_INPUT_INVALIDO: Array<{ nome: string; input: unknown }> = [
   { nome: '16: propriedade extra no objeto user', input: [ITEM_SYSTEM_VALIDO, { role: 'user', content: CONTEUDO_USER_VALIDO, extra: 'y' }] },
   {
     nome: '18: payload user com mensagens_atuais diferente',
-    input: [ITEM_SYSTEM_VALIDO, { role: 'user', content: JSON.stringify({ mensagens_atuais: ['outro texto qualquer'], dados_atuais: {} }) }],
+    input: [ITEM_SYSTEM_VALIDO, { role: 'user', content: JSON.stringify({ mensagens_atuais: ['outro texto qualquer'], dados_atuais: {}, campos_cadastrais_preenchidos: [] }) }],
   },
   {
     nome: '19: payload user com mais de uma mensagem',
     input: [
       ITEM_SYSTEM_VALIDO,
-      { role: 'user', content: JSON.stringify({ mensagens_atuais: [...PAYLOAD_SINTETICO_AUTORIZADO.mensagens_atuais, 'outra mensagem'], dados_atuais: {} }) },
+      { role: 'user', content: JSON.stringify({ mensagens_atuais: [...PAYLOAD_SINTETICO_AUTORIZADO.mensagens_atuais, 'outra mensagem'], dados_atuais: {}, campos_cadastrais_preenchidos: [] }) },
     ],
   },
   {
     nome: '20: payload user com dados_atuais nao vazio',
-    input: [ITEM_SYSTEM_VALIDO, { role: 'user', content: JSON.stringify({ mensagens_atuais: [...PAYLOAD_SINTETICO_AUTORIZADO.mensagens_atuais], dados_atuais: { nome: 'x' } }) }],
+    input: [ITEM_SYSTEM_VALIDO, { role: 'user', content: JSON.stringify({ mensagens_atuais: [...PAYLOAD_SINTETICO_AUTORIZADO.mensagens_atuais], dados_atuais: { nome: 'x' }, campos_cadastrais_preenchidos: [] }) }],
   },
   { nome: '21: payload user que nao e JSON valido', input: [ITEM_SYSTEM_VALIDO, { role: 'user', content: 'isto nao e json {' }] },
+  // A partir daqui: indicadores cadastrais (contrato de tres chaves).
+  {
+    nome: '22: payload user sem campos_cadastrais_preenchidos',
+    input: [ITEM_SYSTEM_VALIDO, { role: 'user', content: JSON.stringify({ mensagens_atuais: [...PAYLOAD_SINTETICO_AUTORIZADO.mensagens_atuais], dados_atuais: {} }) }],
+  },
+  {
+    nome: '23: campos_cadastrais_preenchidos com indicador desconhecido',
+    input: [ITEM_SYSTEM_VALIDO, { role: 'user', content: conteudoUserComIndicadores(['nome', 'telefone']) }],
+  },
+  {
+    nome: '24: campos_cadastrais_preenchidos com indicador repetido',
+    input: [ITEM_SYSTEM_VALIDO, { role: 'user', content: conteudoUserComIndicadores(['nome', 'nome']) }],
+  },
+  {
+    nome: '25: VALOR cadastral colocado dentro do array em vez do nome do campo',
+    input: [ITEM_SYSTEM_VALIDO, { role: 'user', content: conteudoUserComIndicadores(['52998224725']) }],
+  },
+  {
+    nome: '26: campos_cadastrais_preenchidos nao e array',
+    input: [ITEM_SYSTEM_VALIDO, { role: 'user', content: conteudoUserComIndicadores({ nome: true }) }],
+  },
+  {
+    nome: '27: campos_cadastrais_preenchidos com elemento nao string',
+    input: [ITEM_SYSTEM_VALIDO, { role: 'user', content: conteudoUserComIndicadores(['nome', 42]) }],
+  },
 ];
+
+// --- Cenarios VALIDOS de indicadores cadastrais: qualquer subconjunto dos
+// quatro nomes canonicos, sem repeticao, e estruturalmente autorizado. ---
+
+const CENARIOS_INDICADORES_VALIDOS: Array<{ nome: string; indicadores: string[] }> = [
+  { nome: 'array vazio (nenhum campo preenchido)', indicadores: [] },
+  { nome: 'preenchimento parcial', indicadores: ['nome', 'email'] },
+  { nome: 'todos os indicadores canonicos', indicadores: ['nome', 'cpf', 'data_nascimento', 'email'] },
+  { nome: 'um unico indicador', indicadores: ['cpf'] },
+];
+
+test('inspecionarCorpoRequisicao: payload valido com as tres chaves do contrato e aprovado', () => {
+  const inspecao = inspecionarCorpoRequisicao(corpoValidoSerializado(), INSTRUCAO_SYSTEM_ESPERADA_TESTE);
+  assert.equal(inspecao.payloadAutorizado, true);
+});
+
+test('inspecionarCorpoRequisicao: subconjuntos validos de indicadores cadastrais sao aprovados', () => {
+  for (const cenario of CENARIOS_INDICADORES_VALIDOS) {
+    const corpo = JSON.parse(corpoValidoSerializado());
+    corpo.input[1].content = conteudoUserComIndicadores(cenario.indicadores);
+    const inspecao = inspecionarCorpoRequisicao(JSON.stringify(corpo), INSTRUCAO_SYSTEM_ESPERADA_TESTE);
+    assert.equal(inspecao.payloadAutorizado, true, `deveria aprovar: ${cenario.nome}`);
+  }
+});
+
+test('inspecionarCorpoRequisicao: PII oficial em dados_atuais continua reprovando, com indicadores validos', () => {
+  const corpo = JSON.parse(corpoValidoSerializado());
+  corpo.input[1].content = JSON.stringify({
+    mensagens_atuais: [...PAYLOAD_SINTETICO_AUTORIZADO.mensagens_atuais],
+    dados_atuais: { cpf: '52998224725' },
+    campos_cadastrais_preenchidos: ['cpf'],
+  });
+  const inspecao = inspecionarCorpoRequisicao(JSON.stringify(corpo), INSTRUCAO_SYSTEM_ESPERADA_TESTE);
+  assert.equal(inspecao.payloadAutorizado, false);
+});
 
 test('inspecionarCorpoRequisicao: 20 cenarios de input invalido (sem .find(), validacao integral do array) reprovam payloadAutorizado', () => {
   for (const cenario of CENARIOS_INPUT_INVALIDO) {

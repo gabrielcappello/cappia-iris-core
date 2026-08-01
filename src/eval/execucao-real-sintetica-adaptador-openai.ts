@@ -63,7 +63,14 @@ import { INSTRUCOES_EXTRATOR, SCHEMA_SAIDA_INTERPRETACAO } from '../core/interpr
 export const PAYLOAD_SINTETICO_AUTORIZADO = Object.freeze({
   mensagens_atuais: Object.freeze(['Quero agendar uma limpeza amanhã à tarde.']) as readonly string[],
   dados_atuais: Object.freeze({}) as Readonly<Record<string, string>>,
+  campos_cadastrais_preenchidos: Object.freeze([]) as readonly string[],
 });
+
+// Nomes canonicos aceitos em campos_cadastrais_preenchidos. Somente o
+// NOME do campo -- nunca o valor (specs/interpretacao-ia.md, "Entrada e
+// PII"). Repetido aqui de proposito: o avaliador nao importa do core, para
+// nao validar o adaptador contra a mesma constante que o adaptador usa.
+const INDICADORES_CADASTRAIS_CANONICOS = ['nome', 'cpf', 'data_nascimento', 'email'];
 
 // --- Saida estrutural esperada para este payload especifico (secao 3/7 da especificacao) ---
 export const CAMPOS_ESPERADOS = ['intencao', 'procedimento_texto', 'data_texto', 'periodo'] as const;
@@ -205,10 +212,12 @@ function ehItemUserValido(item: unknown): item is { role: 'user'; content: strin
 }
 
 // O conteudo da mensagem user (JSON serializado dentro de `content`) so e
-// aceito com EXATAMENTE as duas propriedades mensagens_atuais/dados_atuais,
-// uma unica mensagem com o texto exatamente autorizado, e dados_atuais
-// exatamente vazio -- nenhuma propriedade adicional, nenhuma mensagem
-// adicional, nenhum valor divergente.
+// aceito com EXATAMENTE as tres propriedades do contrato canonico --
+// mensagens_atuais, dados_atuais e campos_cadastrais_preenchidos --, uma
+// unica mensagem com o texto exatamente autorizado, dados_atuais
+// exatamente vazio, e indicadores cadastrais restritos aos quatro nomes
+// canonicos. Nenhuma propriedade adicional, nenhuma mensagem adicional,
+// nenhum valor divergente, nenhum VALOR cadastral no lugar do nome.
 function ehPayloadDeUsuarioAutorizado(conteudoTexto: string): boolean {
   let conteudo: unknown;
   try {
@@ -219,9 +228,18 @@ function ehPayloadDeUsuarioAutorizado(conteudoTexto: string): boolean {
   if (conteudo === null || typeof conteudo !== 'object' || Array.isArray(conteudo)) return false;
 
   const chaves = Object.keys(conteudo as Record<string, unknown>).sort();
-  if (JSON.stringify(chaves) !== JSON.stringify(['dados_atuais', 'mensagens_atuais'])) return false;
+  if (
+    JSON.stringify(chaves) !==
+    JSON.stringify(['campos_cadastrais_preenchidos', 'dados_atuais', 'mensagens_atuais'])
+  ) {
+    return false;
+  }
 
-  const objeto = conteudo as { mensagens_atuais: unknown; dados_atuais: unknown };
+  const objeto = conteudo as {
+    mensagens_atuais: unknown;
+    dados_atuais: unknown;
+    campos_cadastrais_preenchidos: unknown;
+  };
   if (JSON.stringify(objeto.mensagens_atuais) !== JSON.stringify([...PAYLOAD_SINTETICO_AUTORIZADO.mensagens_atuais])) {
     return false;
   }
@@ -230,6 +248,22 @@ function ehPayloadDeUsuarioAutorizado(conteudoTexto: string): boolean {
   }
   if (Object.keys(objeto.dados_atuais as Record<string, unknown>).length !== 0) return false;
 
+  return ehIndicadorCadastralAutorizado(objeto.campos_cadastrais_preenchidos);
+}
+
+// Array de NOMES canonicos, sem repeticao e sem nenhum outro valor. Um CPF
+// ou um nome de paciente colocado aqui reprova, porque nao pertence ao
+// conjunto fechado. Array vazio e valido (nenhum campo preenchido).
+function ehIndicadorCadastralAutorizado(indicadores: unknown): boolean {
+  if (!Array.isArray(indicadores)) return false;
+
+  const vistos = new Set<string>();
+  for (const indicador of indicadores) {
+    if (typeof indicador !== 'string') return false;
+    if (!INDICADORES_CADASTRAIS_CANONICOS.includes(indicador)) return false;
+    if (vistos.has(indicador)) return false;
+    vistos.add(indicador);
+  }
   return true;
 }
 

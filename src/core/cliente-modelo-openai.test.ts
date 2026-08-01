@@ -232,7 +232,7 @@ function entradaValida(overrides: Record<string, unknown> = {}) {
   return {
     instrucoes: INSTRUCOES_EXTRATOR,
     schema: { istoDeveSerIgnoradoPeloAdaptador: true },
-    payload: { mensagens_atuais: ['quero uma limpeza'], dados_atuais: {} },
+    payload: { mensagens_atuais: ['quero uma limpeza'], dados_atuais: {}, campos_cadastrais_preenchidos: [] },
     ...overrides,
   } as never;
 }
@@ -875,6 +875,7 @@ test('requisicao: somente instrucoes e payload autorizado sao enviados', async (
     payload: {
       mensagens_atuais: ['quero uma limpeza'],
       dados_atuais: {},
+      campos_cadastrais_preenchidos: [],
       clinica_id: 'clinica-x',
       conversa_id: 'conversa-x',
       paciente_id: 'paciente-x',
@@ -887,7 +888,11 @@ test('requisicao: somente instrucoes e payload autorizado sao enviados', async (
   const corpo = JSON.parse(chamadas[0].opcoes.body as string);
   const mensagemUsuario = corpo.input.find((m: { role: string }) => m.role === 'user');
   const payloadEnviado = JSON.parse(mensagemUsuario.content);
-  assert.deepEqual(Object.keys(payloadEnviado).sort(), ['dados_atuais', 'mensagens_atuais']);
+  assert.deepEqual(Object.keys(payloadEnviado).sort(), [
+    'campos_cadastrais_preenchidos',
+    'dados_atuais',
+    'mensagens_atuais',
+  ]);
 
   const corpoBrutoCompleto = JSON.stringify(corpo);
   assert.ok(!corpoBrutoCompleto.includes('clinica-x'));
@@ -895,6 +900,126 @@ test('requisicao: somente instrucoes e payload autorizado sao enviados', async (
   assert.ok(!corpoBrutoCompleto.includes('paciente-x'));
   assert.ok(!corpoBrutoCompleto.includes('5511999999999'));
   assert.ok(!corpoBrutoCompleto.includes('chave-de-teste'));
+});
+
+// --- Propagacao dos indicadores cadastrais ate o corpo HTTP ---
+//
+// Todos os cenarios abaixo inspecionam o conteudo EFETIVAMENTE
+// SERIALIZADO no body do fetch, nunca o objeto intermediario.
+// Dados sinteticos (specs/interpretacao-ia.md, "Entrada e PII").
+
+const NOME_SINTETICO_HTTP = 'Zulmira Quaresma Bettencourt';
+const CPF_SINTETICO_HTTP = '52998224725';
+const NASCIMENTO_SINTETICO_HTTP = '1974-03-19';
+const EMAIL_SINTETICO_HTTP = 'zulmira.bettencourt@exemplo-sintetico.test';
+
+async function payloadHttpDe(payload: Record<string, unknown>) {
+  const { fetchFalso, chamadas } = criarFetchFalso([() => respostaSucesso([])]);
+  const cliente = criarCliente({ fetch: fetchFalso });
+
+  await cliente.executar(entradaValida({ payload }));
+
+  const corpoBruto = chamadas[0].opcoes.body as string;
+  const corpo = JSON.parse(corpoBruto);
+  const mensagemUsuario = corpo.input.find((m: { role: string }) => m.role === 'user');
+  return { payloadEnviado: JSON.parse(mensagemUsuario.content), corpoBruto };
+}
+
+test('http: campos_cadastrais_preenchidos chega ao corpo serializado, com a ordem preservada', async () => {
+  const { payloadEnviado } = await payloadHttpDe({
+    mensagens_atuais: ['oi'],
+    dados_atuais: {},
+    campos_cadastrais_preenchidos: ['nome', 'cpf', 'data_nascimento', 'email'],
+  });
+
+  assert.deepEqual(payloadEnviado.campos_cadastrais_preenchidos, ['nome', 'cpf', 'data_nascimento', 'email']);
+});
+
+test('http: array vazio e enviado quando nenhum campo cadastral esta preenchido', async () => {
+  const { payloadEnviado } = await payloadHttpDe({
+    mensagens_atuais: ['oi'],
+    dados_atuais: {},
+    campos_cadastrais_preenchidos: [],
+  });
+
+  assert.deepEqual(payloadEnviado.campos_cadastrais_preenchidos, []);
+  assert.ok(Array.isArray(payloadEnviado.campos_cadastrais_preenchidos));
+});
+
+test('http: preenchimento parcial e enviado exatamente como derivado', async () => {
+  const { payloadEnviado } = await payloadHttpDe({
+    mensagens_atuais: ['oi'],
+    dados_atuais: {},
+    campos_cadastrais_preenchidos: ['nome', 'email'],
+  });
+
+  assert.deepEqual(payloadEnviado.campos_cadastrais_preenchidos, ['nome', 'email']);
+});
+
+test('http: dados_atuais continua contendo apenas campos operacionais', async () => {
+  const { payloadEnviado } = await payloadHttpDe({
+    mensagens_atuais: ['oi'],
+    dados_atuais: { intencao: 'novo_agendamento', procedimento_texto: 'limpeza' },
+    campos_cadastrais_preenchidos: ['nome', 'cpf'],
+  });
+
+  assert.deepEqual(payloadEnviado.dados_atuais, {
+    intencao: 'novo_agendamento',
+    procedimento_texto: 'limpeza',
+  });
+  for (const proibido of ['nome', 'cpf', 'data_nascimento', 'email', 'telefone']) {
+    assert.ok(!(proibido in payloadEnviado.dados_atuais));
+  }
+});
+
+test('http: nenhum valor cadastral oficial aparece no JSON final, mesmo com todos os indicadores', async () => {
+  const { corpoBruto } = await payloadHttpDe({
+    mensagens_atuais: ['quero remarcar'],
+    dados_atuais: {},
+    campos_cadastrais_preenchidos: ['nome', 'cpf', 'data_nascimento', 'email'],
+  });
+
+  for (const valor of [
+    NOME_SINTETICO_HTTP,
+    CPF_SINTETICO_HTTP,
+    '529.982.247-25',
+    NASCIMENTO_SINTETICO_HTTP,
+    '19/03/1974',
+    EMAIL_SINTETICO_HTTP,
+    '5511999999999',
+  ]) {
+    assert.ok(!corpoBruto.includes(valor), 'valor cadastral nao pode aparecer no corpo HTTP');
+  }
+});
+
+test('http: nenhuma propriedade adicional do payload e serializada', async () => {
+  const { payloadEnviado } = await payloadHttpDe({
+    mensagens_atuais: ['oi'],
+    dados_atuais: {},
+    campos_cadastrais_preenchidos: ['nome'],
+    pendente: 'opcao',
+    eventos_candidatos: [{ tipo: 'aceitar_opcao' }],
+    paciente_id: 'paciente-y',
+  });
+
+  assert.deepEqual(Object.keys(payloadEnviado).sort(), [
+    'campos_cadastrais_preenchidos',
+    'dados_atuais',
+    'mensagens_atuais',
+  ]);
+  assert.ok(!('pendente' in payloadEnviado));
+  assert.ok(!('eventos_candidatos' in payloadEnviado));
+});
+
+test('http: mensagem atual permanece presente e intacta no corpo serializado', async () => {
+  const mensagens = ['meu nome e Zulmira Quaresma Bettencourt', 'quero uma limpeza'];
+  const { payloadEnviado } = await payloadHttpDe({
+    mensagens_atuais: mensagens,
+    dados_atuais: {},
+    campos_cadastrais_preenchidos: ['nome'],
+  });
+
+  assert.deepEqual(payloadEnviado.mensagens_atuais, mensagens);
 });
 
 // --- 28-29: garantias gerais ---
