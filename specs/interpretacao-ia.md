@@ -678,29 +678,36 @@ O contrato canônico dos sinais conversacionais, incluindo a separação estrutu
 estruturada passa a conter exatamente `alteracoes` e `eventos_candidatos`; até lá, este
 registro documental não autoriza alteração de código.
 
-### Fatos temporais estruturados — contrato futuro
+### Fatos temporais estruturados — contrato V2 futuro
 
-Registro documental, **sem alteração de código nesta rodada**: uma implementação
-futura poderá fazer a interpretação produzir fatos temporais estruturados (átomos —
-`resolvedor-temporal-v1.md` §5), em vez do texto livre hoje carregado por `data_texto`
-e `horario_texto`. Três camadas distintas, que não se confundem:
+Registro documental, **sem alteração de código nesta rodada**: o resolvedor temporal
+está **publicado e implementado** (`resolvedor-temporal-v1.md`,
+`src/core/resolver-temporal.ts`), mas a interpretação ainda produz somente o contrato
+atual — `SaidaInterpretacaoModeloV1`, com `data_texto`/`horario_texto` como texto livre
+(`CampoDadosConversa`, `src/core/tipos.ts`, já publicado). Este é o **contrato
+vigente hoje**; nada neste registro o altera.
 
-- **compatibilidade documental transitória** — o contrato vigente, descrito nesta
-  seção, continua sendo `dados_atuais` com `data_texto`/`horario_texto` como texto
-  puro (`CampoDadosConversa`, `src/core/tipos.ts`, já publicado). Nada neste registro
-  altera esse contrato hoje;
-- **contrato futuro estruturado** — `resolvedor-temporal-v1.md` define os átomos
-  temporais que uma interpretação futura poderá produzir, e o array de átomos
-  achatados compatível com `strict: true` recomendado para essa saída
-  (`resolvedor-temporal-v1.md` §6);
-- **migração posterior de `AlteracoesDados`** — a extensão de `CampoDadosConversa` e do
-  schema de saída do modelo para aceitar átomos temporais é decisão de implementação
-  futura, com sua própria aprovação e revisão; **não é decidida nem executada por
-  este registro**.
+Uma implementação futura poderá fazer a interpretação produzir uma versão de saída
+distinta — `SaidaInterpretacaoModeloV2` —, com `alteracoes_temporais` categorizadas
+(`data`, `horario_exato`, `periodo`, `restricao`, `intencao_temporal`) em vez de texto
+livre. O contrato completo de `alteracoes_temporais`, sua aplicação sobre o estado
+acumulado entre mensagens, e a chamada ao resolvedor temporal já publicado, estão
+especificados — **não implementados** — em `integracao-temporal-composicao-v1.md`;
+este registro não duplica aquele contrato, apenas aponta para ele.
+
+**Corte único, decisão fechada** (`integracao-temporal-composicao-v1.md`, decisão
+`P2`): a versão do contrato determina qual caminho está ativo. Enquanto V1 for o
+contrato vigente, `data_texto`/`horario_texto` permanecem a única fonte temporal, e o
+resolvedor temporal **não é chamado** pela interpretação nem pelo controlador. Quando
+V2 estiver implementada, `data_texto`/`horario_texto` deixam de participar da
+resolução temporal — nunca coexistindo com `alteracoes_temporais` como segunda
+autoridade, nunca convertidos silenciosamente em átomos, nunca em modo híbrido. A
+migração de V1 para V2 é decisão de implementação e implantação, nunca uma escolha
+feita mensagem a mensagem.
 
 `data_texto` e `horario_texto` **não são removidos nem descontinuados por este
-registro** — permanecem o contrato vigente até que a migração futura seja
-especificada e aprovada, com análise explícita de compatibilidade com
+registro** — permanecem o contrato vigente até que a migração para V2 seja
+implementada e aprovada, com análise explícita de compatibilidade com
 `interpretacao-tipos.ts`, `interpretacao-extrator.ts` e os cenários INT-01 a INT-19
 (`tests/cenarios-obrigatorios.md`) já automatizados sobre o formato atual.
 

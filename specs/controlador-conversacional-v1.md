@@ -5,7 +5,8 @@ Este documento define arquitetura e comportamento; não autoriza implementação
 alteração de banco, criação de tabelas ou definição de schema físico.
 
 Esta especificação complementa `interpretacao-ia.md`,
-`eventos-conversacionais-v1.md` e `novo-agendamento.md`. Permanecem fixas as decisões de
+`eventos-conversacionais-v1.md`, `novo-agendamento.md` e
+`integracao-temporal-composicao-v1.md`. Permanecem fixas as decisões de
 `../docs/02-arquitetura.md`: Supabase/Postgres é a fonte oficial do estado; o Core é o
 controlador determinístico; a IA interpreta somente a mensagem atual e nunca decide
 transições nem executa ações.
@@ -57,7 +58,13 @@ O controlador não deve:
 - expor banco, agenda, credenciais ou ferramentas à IA;
 - reaplicar interpretação sobre uma versão nova;
 - reutilizar opção, escolha, resumo ou confirmação invalidada;
-- executar efeito externo antes dos gates correspondentes.
+- executar efeito externo antes dos gates correspondentes;
+- **executar I/O diretamente dentro da lógica determinística de decisão** — a consulta
+  a serviços de domínio (item 8 acima) é emitida como requisição explícita de dado
+  condicional (`necessita_dados`), nunca como leitura ou escrita bloqueante dentro do
+  mesmo passo determinístico. Formalização completa desta fronteira pura, incluindo o
+  catálogo fechado de requisições e o protocolo de chamadas repetidas pelo
+  orquestrador: `integracao-temporal-composicao-v1.md` (decisão `P3`).
 
 ## 3. Separação entre persistência e objetos temporários
 
@@ -212,6 +219,14 @@ confirmação é recusado e o estado nunca avança para `executando`.
 Alterações independentes podem ser aplicadas mesmo quando outro campo tiver conflito de
 valor. Um evento dependente do campo conflitante não pode ser aceito. Qualquer conflito
 que possa alterar os fatos apresentados bloqueia `confirmar_resumo`.
+
+**Ordem futura, formalizada.** A ordem completa desta seção e da seção 5, unida à
+ordem já publicada em `composicao-novo-agendamento-v1.md` §9 (resolução de
+procedimento, dentistas, duração, resolvedor temporal já publicado e disponibilidade),
+está consolidada numa única tabela — com a fronteira explícita entre o que roda dentro
+da função pura de decisão e o que roda no orquestrador — em
+`integracao-temporal-composicao-v1.md` §13. Esta seção não é reescrita: a
+formalização é adicional, não uma mudança de ordem ou de resultado.
 
 ## 7. Compatibilidade entre candidatos
 

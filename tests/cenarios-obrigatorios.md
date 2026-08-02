@@ -452,4 +452,10 @@ primeira entrega**, por dependerem de contratos ainda não escritos:
   isolada como fluxos conversacionais completos;
 - painel e apps: identidades de usuário, autenticação e compatibilidade com as mesmas
   invariantes de persistência;
-- auditoria do legado (`disponibilidade.md` §19, `persistencia-v1.md` §28).
+- auditoria do legado (`disponibilidade.md` §19, `persistencia-v1.md` §28);
+- integração entre o resolvedor temporal (já publicado e implementado) e a composição
+  determinística (ainda apenas especificada) — cenários `ITC-01` a `ITC-25`, índice
+  completo em `../specs/integracao-temporal-composicao-v1.md` §21; nenhum implementado
+  nesta rodada, mesma disciplina de não duplicação já aplicada aos cenários `COMP-*`
+  (`composicao-novo-agendamento-v1.md` §22) e `TMP-*`
+  (`resolvedor-temporal-v1.md` §27).

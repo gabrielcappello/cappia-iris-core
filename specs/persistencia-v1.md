@@ -7,8 +7,10 @@ físico, alteração do painel ou de workflows.
 
 Esta especificação complementa `novo-agendamento.md`, `interpretacao-ia.md`,
 `eventos-conversacionais-v1.md`, `controlador-conversacional-v1.md`,
-`procedimentos-v1.md`, `dentistas-vinculos-v1.md`, `duracao-v1.md` e
-`disponibilidade.md`. Permanecem fixas as decisões de `../docs/02-arquitetura.md` e
+`procedimentos-v1.md`, `dentistas-vinculos-v1.md`, `duracao-v1.md`,
+`disponibilidade.md`, `resolvedor-temporal-v1.md` e
+`integracao-temporal-composicao-v1.md`. Permanecem fixas as decisões de
+`../docs/02-arquitetura.md` e
 `../docs/04-decisoes-canonicas.md`: a IA interpreta somente a mensagem atual e nunca
 decide; o Core determinístico resolve; Supabase/Postgres é a fonte oficial.
 
@@ -603,6 +605,24 @@ Texto do paciente e resolução oficial são fatos **distintos**, cada um com ex
 campo. A expressão temporal informada e a data resolvida pelo Core coexistem
 legitimamente; a regra proíbe o mesmo fato em dois lugares, não a distinção entre entrada
 e resolução.
+
+**Requisito lógico adicional, ainda sem representação física** (contrato completo em
+`integracao-temporal-composicao-v1.md`, não implementado): quando o contrato
+estruturado de interpretação temporal estiver em vigor, o estado da conversa precisará
+de dois campos logicamente distintos, nunca fundidos — o mesmo princípio de "texto do
+paciente e resolução oficial são fatos distintos" aplicado à camada temporal:
+
+- **átomos temporais acumulados** (`fatos_temporais`) — a fonte **interpretada**,
+  resultado de aplicar, mensagem a mensagem, as alterações temporais autorizadas sobre
+  o que já estava acumulado; nunca reconstruída a partir do critério oficial;
+- **critério temporal oficial** (`criterio_temporal`) — o resultado **derivado**, da
+  última resolução bem-sucedida sobre os átomos acumulados; nunca escrito diretamente,
+  nunca fonte de outro fato.
+
+Nenhuma tabela, coluna ou tipo de coluna é escolhida por esta menção — a
+representação física de ambos os campos permanece pendência explícita (seção 28), e a
+forma lógica completa (categorias, regras de fusão, invalidação) pertence
+integralmente a `integracao-temporal-composicao-v1.md`, não duplicada aqui.
 
 A opção preserva os fatos exigidos por `disponibilidade.md` §16 e permanece vinculada à
 versão do estado, sendo invalidada quando os fatos dependentes mudam, conforme

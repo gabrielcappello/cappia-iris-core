@@ -8,13 +8,14 @@ alteração de banco, criação de tabelas, migration ou schema físico.
 Esta especificação complementa e **não substitui** `novo-agendamento.md`,
 `interpretacao-ia.md`, `eventos-conversacionais-v1.md`,
 `controlador-conversacional-v1.md`, `procedimentos-v1.md`, `dentistas-vinculos-v1.md`,
-`duracao-v1.md`, `disponibilidade.md`, `persistencia-v1.md` e
-`atendimento-v1.md`. Onde este documento e um daqueles divergir, o documento mais
-específico do assunto prevalece — este arquivo é a camada de **orquestração**, nunca a
-fonte da regra de domínio. Permanecem fixas as decisões de `../docs/02-arquitetura.md` e
+`duracao-v1.md`, `disponibilidade.md`, `resolvedor-temporal-v1.md`,
+`integracao-temporal-composicao-v1.md`, `persistencia-v1.md` e `atendimento-v1.md`.
+Onde este documento e um daqueles divergir, o documento mais específico do assunto
+prevalece — este arquivo é a camada de **orquestração**, nunca a fonte da regra de
+domínio. Permanecem fixas as decisões de `../docs/02-arquitetura.md` e
 `../docs/04-decisoes-canonicas.md`.
 
-**Nenhum algoritmo dos quatro componentes publicados é redefinido, resumido ou
+**Nenhum algoritmo dos cinco componentes publicados é redefinido, resumido ou
 reimplementado aqui.** Esta spec só descreve a ordem de chamada, o tratamento de cada
 resultado e a transição de turno — nunca o cálculo interno de cada componente.
 
@@ -35,11 +36,13 @@ confirmação explícita — e nunca além dele.
 
 Esta especificação cobre:
 
-- a ordem obrigatória de chamada dos quatro componentes publicados;
+- a ordem obrigatória de chamada dos cinco componentes publicados;
 - o tratamento determinístico de cada variante de resultado que cada um devolve;
 - os pontos em que o turno deve parar e aguardar nova mensagem do paciente;
 - a matriz de invalidação de dados derivados quando um fato muda;
-- o contrato conceitual (não implementado) do futuro resolvedor temporal;
+- o consumo do resolvedor temporal já publicado e implementado
+  (`resolvedor-temporal-v1.md`) — a integração dele com esta composição está
+  especificada, ainda não implementada, em `integracao-temporal-composicao-v1.md`;
 - o contrato conceitual (não implementado) do futuro seletor de Consulta/Avaliação;
 - o contrato mínimo (não implementado) de configuração oficial da clínica necessário
   para esta composição funcionar;
@@ -252,11 +255,14 @@ Fatos extraídos da mensagem atual pela IA, presentes em `AlteracoesDados`
 - `email`.
 
 **Restrição temporal** (`inicio_ate` / `termino_ate`, `disponibilidade.md` §13) é um
-fato estruturado adicional, mas **conceitual e futuro**: não existe hoje como campo de
-`CampoDadosConversa`. Ela nasce como saída do futuro resolvedor temporal (seção 13.5),
-a partir de uma expressão do tipo "antes das 11h" ou "preciso terminar até 11h" — a
+fato estruturado adicional, mas **ainda fora do contrato atual de `AlteracoesDados`**:
+não existe hoje como campo de `CampoDadosConversa`. Ela nasce como saída do resolvedor
+temporal já publicado e implementado (`resolvedor-temporal-v1.md`, seção 13.5), a
+partir de uma expressão do tipo "antes das 11h" ou "preciso terminar até 11h" — a
 extensão formal do contrato de interpretação para produzi-la como alteração
-estruturada própria é decisão de uma rodada futura, fora desta spec.
+estruturada própria (`alteracoes_temporais`) está especificada em
+`integracao-temporal-composicao-v1.md`, mas **não implementada**: decisão de uma
+rodada de implementação futura, fora desta spec.
 
 **Nenhum desses fatos é, por si só, um evento de transição.** Uma alteração estruturada
 muda o que o paciente informou; ela nunca decide, sozinha, para onde a conversa vai —
@@ -329,7 +335,7 @@ Nenhum comando desta lista executa efeito, decide texto ou acessa fato não auto
 a autorização dos fatos que acompanham cada comando segue inteiramente
 `atendimento-v1.md` §2.
 
-## 9. Ordem obrigatória dos quatro componentes
+## 9. Ordem obrigatória dos cinco componentes
 
 A ordem é fixa e determinística, executada uma vez por turno, a partir do ponto em que
 a conversa já está (um fato `resolvido` ou `calculado` que continua válido não é
@@ -341,7 +347,7 @@ recalculado — só o que mudou ou o que ainda falta é processado):
 4. resolver procedimento;
 5. resolver dentistas e vínculos;
 6. resolver duração;
-7. resolver critérios temporais pelo futuro resolvedor temporal (seção 13.5);
+7. resolver critérios temporais pelo resolvedor temporal já publicado (seção 13.5);
 8. obter snapshot diário autorizado;
 9. resolver disponibilidade;
 10. apresentar opções;
@@ -408,7 +414,7 @@ composicao_novo_agendamento(entrada):
         tratar_resultado_duracao(duracao)            // secao 13.4; pode parar aqui
 
     se criterios temporais nao resolvidos:
-        temporal = resolverTemporal(...)             // futuro, secao 13.5
+        temporal = resolverTemporal(...)             // ja publicado, secao 13.5
         tratar_resultado_temporal(temporal)          // pode parar aqui
 
     se opcoes ainda nao apresentadas para os criterios vigentes:
@@ -433,6 +439,17 @@ composicao_novo_agendamento(entrada):
 `tratar_resultado_*` nunca inventa um resultado que o resolvedor não devolveu, e nunca
 ignora uma variante da união discriminada — a seção 13 lista o tratamento fechado de
 cada uma.
+
+### Fronteira pura — formalização futura
+
+Este pseudocódigo descreve a **lógica** desta composição, mas não sua fronteira de
+execução. `integracao-temporal-composicao-v1.md` (decisão `P3`, seção 5 daquele
+documento) formaliza esta mesma ordem como uma **função pura**, sem I/O — cada `se ...
+nao resolvido` que dependa de um dado condicional (catálogo, vínculos, configuração de
+duração, snapshot diário) se torna, naquela formalização, uma requisição explícita
+devolvida ao orquestrador, nunca uma leitura direta feita por esta função. Esta seção
+não é reescrita: a fronteira pura é uma formalização adicional da mesma ordem, não uma
+mudança de ordem ou de resultado.
 
 ## 11. Transições
 
@@ -471,7 +488,7 @@ os passos seguintes da seção 9 no mesmo turno:
 | 6 | Preferência não encontrada ou não apta | `preferencia_nao_encontrada`/`preferencia_nao_apta` | `informar_dentista_nao_localizado`, seguido da reaplicação de zero/um/vários (pode encadear com a linha 3, 4 ou 5, nunca com escolha silenciosa) |
 | 7 | Erro de catálogo de dentista/vínculo | `erro_catalogo` | `falha_tecnica_fechada` |
 | 8 | Duração ausente, inválida ou conflitante | `nao_configurada`/`invalida`/`erro_configuracao` | `falha_duracao` |
-| 9 | Critérios temporais ausentes ou ambíguos | (futuro resolvedor temporal, seção 13.5) | `pedir_dado_temporal` ou esclarecimento |
+| 9 | Critérios temporais ausentes ou ambíguos | (resolvedor temporal já publicado, seção 13.5) | `pedir_dado_temporal` ou esclarecimento |
 | 10 | Configuração da clínica inválida | `configuracao_invalida` com `motivo: 'fuso_invalido'` (ou outro) | `falha_tecnica_fechada` |
 | 11 | Snapshot diário indisponível ou erro do adaptador | (seção 13.7) | `falha_tecnica_fechada` ou continuação silenciosa para a próxima data, conforme o caso |
 | 12 | Sem disponibilidade, data específica | `sem_disponibilidade` (intenção `data_especifica`) | `informar_data_sem_opcao_e_perguntar` |
@@ -599,10 +616,11 @@ verifica duplicidade de Consulta/Avaliação).
 | `resolvida` | Segue para critérios temporais (passo 7), carregando `duracao_min`. |
 | `nao_configurada` / `invalida` / `erro_configuracao` | Pausa 8. Falha fechada idêntica ao paciente entre os três — `duracao-v1.md` §6: nunca 60 minutos, nunca Consulta/Avaliação por este motivo, nunca reclassifica dentista apto como inapto, nunca consulta disponibilidade. |
 
-### 13.5 Resolução temporal (`resolvedor-temporal-v1.md`, não implementado)
+### 13.5 Resolução temporal (`resolvedor-temporal-v1.md`, publicado e implementado)
 
 Responsabilidade explicitamente **fora do controlador**: um resolvedor puro e
-separado, análogo em espírito aos quatro já publicados, converte fatos temporais já
+separado, quinto componente de domínio já publicado (junto de procedimento,
+dentistas/vínculos, duração e disponibilidade), converte fatos temporais já
 interpretados (produzidos pela IA) em fatos temporais oficiais (estruturados,
 produzidos deterministicamente pelo Core) — nunca o inverso.
 
@@ -613,7 +631,12 @@ snapshot diário (passo 8) — sem alteração desta rodada.
 `resolvedor-temporal-v1.md`.** Esta composição não duplica esse contrato — apenas
 consome seus resultados, conforme o tratamento já descrito na seção 13.
 
-**Não implementado nesta rodada.**
+**O resolvedor temporal está implementado (`src/core/resolver-temporal.ts`). A
+integração dele com esta composição — como a interpretação produzirá os fatos
+temporais que o alimentam, como o estado oficial os acumula entre mensagens, e como a
+composição se torna uma máquina de estados pura que o chama — está especificada em
+`integracao-temporal-composicao-v1.md`, também **não implementada nesta rodada**. Esta
+composição em si permanece apenas especificada.**
 
 ### 13.6 Disponibilidade — modo `grade` e `horario_exato` (`ResultadoDisponibilidade`, `src/core/disponibilidade-tipos.ts`)
 
@@ -849,8 +872,8 @@ Quando esta composição é chamada novamente para a mesma mensagem, exatamente 
 casos, nunca um único código genérico de "mensagem já processada":
 
 1. **resultado da composição já registrado** → recuperar o resultado original e
-   devolvê-lo, **sem recomputar** nenhuma das 14 etapas, sem chamar nenhum dos quatro
-   componentes nem o futuro resolvedor temporal. Único caso de replay verdadeiro.
+   devolvê-lo, **sem recomputar** nenhuma das 14 etapas, sem chamar nenhum dos cinco
+   componentes. Único caso de replay verdadeiro.
 2. **interpretação persistida, sem resultado da composição registrado** → **não retomar
    esta composição**. Comportamento idêntico ao Caminho B já aprovado em
    `interpretacao-ia.md`: não chamar a IA novamente; não executar `preAplicar`; não
@@ -921,11 +944,11 @@ Ver COMP-20 (seção 22).
 ## 20. Erros fechados
 
 Toda pausa por falha (seção 12) carrega um código fechado, nunca mensagem livre como
-classificação — mesma disciplina já aplicada pelos quatro componentes publicados.
+classificação — mesma disciplina já aplicada pelos cinco componentes publicados.
 
 | Categoria | Fonte canônica | Resultado do componente |
 |---|---|---|
-| Entrada inválida (violação de contrato de forma) | `EntradaInvalidaError` (`src/core/erros.ts`), já usado pelos quatro resolvedores | lançamento controlado, nunca resultado tipado |
+| Entrada inválida (violação de contrato de forma) | `EntradaInvalidaError` (`src/core/erros.ts`), já usado pelos cinco resolvedores | lançamento controlado, nunca resultado tipado |
 | Evento incompatível | `eventos-conversacionais-v1.md` §1, §3 | `DecisaoControlador` com `resultado: 'ignorar'` ou `'solicitar_esclarecimento'` |
 | Conflito de valor | `interpretacao-ia.md` ("Conflitos") | conflito calculado por `preAplicar`, em memória |
 | Conflito concorrente | `interpretacao-ia.md` ("Concorrência") | `conflito_concorrente`; invalida toda a interpretação |
@@ -933,7 +956,7 @@ classificação — mesma disciplina já aplicada pelos quatro componentes publi
 | Erro de catálogo (procedimento ou dentista) | `procedimentos-v1.md` §6, `dentistas-vinculos-v1.md` §6 | `tipo: 'erro_catalogo'` |
 | Preferência não apta | `dentistas-vinculos-v1.md` §4 | `tipo: 'preferencia_nao_encontrada'`/`'preferencia_nao_apta'` |
 | Duração ausente, inválida ou conflitante | `duracao-v1.md` §6 | `tipo: 'nao_configurada'`/`'invalida'`/`'erro_configuracao'` |
-| Data ou horário não resolvido | `resolvedor-temporal-v1.md` §17–§21 (futuro) | `tipo: 'incompleto'`/`'ambiguo'`/`'invalido'`/`'passado'`/`'conflito'`/`'erro_configuracao'` |
+| Data ou horário não resolvido | `resolvedor-temporal-v1.md` §17–§21 (publicado; integração — `integracao-temporal-composicao-v1.md`) | `tipo: 'incompleto'`/`'ambiguo'`/`'invalido'`/`'passado'`/`'conflito'`/`'erro_configuracao'` |
 | Configuração da clínica inválida | seção 4.1 | `ResultadoDisponibilidade.tipo: 'configuracao_invalida'` |
 | Snapshot inválido | seção 13.7 (futuro) | erro do adaptador |
 | Erro de intervalos | `disponibilidade.md` §3 | `tipo: 'erro_intervalos'` |
@@ -953,14 +976,13 @@ falha técnica real como se fosse agenda cheia.
 
 ## 21. Isolamento multiclínica
 
-Toda chamada a qualquer um dos quatro componentes, ao futuro resolvedor temporal e ao
-futuro seletor de Consulta/Avaliação carrega `clinica_id` — sempre o mesmo, sempre
-derivado da instância autenticada do WhatsApp (`novo-agendamento.md` §2), nunca do
-paciente ou da IA.
+Toda chamada a qualquer um dos cinco componentes e ao futuro seletor de
+Consulta/Avaliação carrega `clinica_id` — sempre o mesmo, sempre derivado da instância
+autenticada do WhatsApp (`novo-agendamento.md` §2), nunca do paciente ou da IA.
 
 - catálogo, aliases, dentistas, vínculos, configuração de duração e snapshot diário
   recebidos de outra clínica nunca influenciam o resultado desta composição — mesma
-  garantia já provada nos quatro resolvedores publicados (filtro por escopo antes de
+  garantia já provada nos cinco resolvedores publicados (filtro por escopo antes de
   qualquer avaliação);
 - identificador de outra clínica é tratado como inexistente, nunca como acesso negado
   (`persistencia-v1.md` §4);
@@ -1022,9 +1044,17 @@ Cobertura futura, não aplicável ao aceite desta rodada — mesma convenção d
 `resolvedor-temporal-v1.md` já especifica o resolvedor temporal por completo,
 inclusive a correspondência exata destes seis IDs com sua própria matriz (TMP-01↔TMP-13,
 TMP-02↔TMP-32, TMP-03↔TMP-33, TMP-06↔TMP-55; TMP-04/TMP-05 correspondem,
-respectivamente, às famílias `ambiguo`/`invalido` daquela matriz). Os seis seguem
-marcados † porque o resolvedor ainda não está implementado — não por falta de
-especificação.
+respectivamente, às famílias `ambiguo`/`invalido` daquela matriz).
+
+**O resolvedor temporal em si já está implementado, e os quatro IDs correspondentes
+(TMP-13, TMP-32, TMP-33, TMP-55) e as famílias `ambiguo`/`invalido` já têm cobertura
+executável direta em `src/core/resolver-temporal.test.ts`.** Os seis seguem marcados
+† nesta matriz por um motivo diferente do original: não é o resolvedor que falta, é
+**esta composição** — o cenário TMP-01 a TMP-06, tal como listado aqui, exercita o
+resolvedor **através da orquestração desta composição** (ordem canônica, seção 9), e
+essa orquestração ainda não existe. A integração entre os dois, incluindo como a
+composição chamará o resolvedor, está especificada (não implementada) em
+`integracao-temporal-composicao-v1.md`.
 
 | ID | Cenário | Nível |
 |---|---|---|
@@ -1037,7 +1067,7 @@ especificação.
 
 ## 23. Invariantes
 
-- Esta composição nunca reimplementa o algoritmo de nenhum dos quatro componentes
+- Esta composição nunca reimplementa o algoritmo de nenhum dos cinco componentes
   publicados — apenas orquestra a ordem de chamada e o tratamento do resultado.
 - A ordem dos 14 passos da seção 9 é fixa; um fato já `resolvido`/`calculado` que
   continua válido nunca é recalculado.

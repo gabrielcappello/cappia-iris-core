@@ -159,6 +159,40 @@ Decisões que fecham a especificação canônica do resolvedor temporal puro anu
 - **`24:00` é horário inválido**, nunca convertido automaticamente para `00:00` do dia
   seguinte.
 
+## Integração temporal — composição (02/08/2026)
+
+Decisões que fecham a especificação canônica da integração entre o resolvedor
+temporal v1 (já publicado e implementado) e a composição determinística do novo
+agendamento (ainda apenas especificada). Detalhe completo:
+`../specs/integracao-temporal-composicao-v1.md`.
+
+- **Alterações temporais chegam categorizadas**, numa versão futura de contrato da
+  interpretação (`alteracoes_temporais`, cinco categorias fechadas: `data`,
+  `horario_exato`, `periodo`, `restricao`, `intencao_temporal`), cada uma podendo
+  **substituir** ou **remover** integralmente uma categoria — nunca texto livre solto
+  por mensagem, nunca duas alterações da mesma categoria na mesma mensagem.
+- **O estado oficial acumula os átomos temporais interpretados** (`fatos_temporais`),
+  mensagem a mensagem. O critério temporal oficial (saída do resolvedor temporal) é
+  **sempre resultado derivado**; os átomos nunca são reconstruídos a partir dele, de
+  texto anterior, de resposta anterior ou de memória do modelo.
+- **Corte único entre o contrato legado e o contrato estruturado, nunca modo
+  híbrido.** `data_texto`/`horario_texto` continuam sendo o contrato vigente até que a
+  migração seja implementada e aprovada; quando o contrato estruturado estiver em
+  vigor, os dois nunca coexistem como autoridades temporais simultâneas, e nenhuma
+  conversão silenciosa de texto para átomo é criada.
+- **A composição será uma máquina de estados pura**, avançada por uma função
+  determinística sem I/O — nunca acessa banco, agenda, rede, WhatsApp ou IA
+  diretamente. Toda consulta a dado condicional (catálogo, vínculos, configuração de
+  duração, snapshot diário, revalidação de opção, estado de operação idempotente) é
+  uma requisição explícita devolvida ao orquestrador, que a executa e devolve o
+  resultado como nova entrada da mesma função.
+- **Persistência física adiada**: tabelas, colunas, RPCs, transações e CAS concretos
+  para o estado interpretado acumulado e para o resultado da composição permanecem
+  pendência explícita, sem schema físico criado ou presumido por esta rodada.
+- **Tecnologia de redação adiada**: entre template determinístico, IA redatora
+  controlada restrita aos fatos autorizados, ou combinação dos dois, nenhuma é
+  escolhida nesta rodada; nenhum fallback novo cobre essa indecisão.
+
 ## Escopo completo do atendimento
 
 Ver `06-roadmap.md` para a lista completa de escopo e a ordem em que cada parte será
