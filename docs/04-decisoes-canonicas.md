@@ -138,16 +138,24 @@ Decisões que fecham a especificação canônica do resolvedor temporal puro anu
   filtro, nunca jornada criada pelo resolvedor.
 - **Minutos aceitam qualquer valor civil válido** (`0..1439`), sem exigir múltiplo de
   10, sem arredondar, sem truncar — a disponibilidade decide se o horário exato cabe.
-- **Próxima disponibilidade sem data inicia hoje**; data específica rígida junto com
-  essa intenção é `conflito`; horário exato junto com essa intenção exige
-  esclarecimento. "A partir de determinada data" permanece fora desta v1.
+- **Próxima disponibilidade sem nenhum átomo de data inicia hoje.** Com **qualquer**
+  átomo de data (absoluta, relativa ou dia da semana) presente — não somente uma
+  "data específica rígida" — o resultado é sempre `conflito`; a data nunca é usada
+  como início de busca, nunca como filtro, nunca ignorada. Coexistência com a
+  intenção `data_especifica` produz o mesmo conflito. Horário exato junto com
+  próxima disponibilidade exige esclarecimento (`incompleto`). "A partir de
+  determinada data" permanece fora desta v1.
 - **Instante local usa a forma já publicada** `InstanteAtual { data, minuto_min }`,
   com `fuso` como campo irmão, nunca aninhado. O resolvedor não usa `Date.now`,
   timezone da máquina, conversão UTC ou validação de tzdb — isso pertence ao adaptador
   futuro.
-- **"Depois das 15h" não é suportado nesta v1.** Não é convertido para `inicio_ate`,
-  horário exato ou período — produz resultado fechado de invalidade. Não existe
-  limite inferior de horário nesta v1.
+- **Não existe limite inferior de horário nesta v1 — nem "depois das 15h" nem
+  qualquer variante.** O contrato de restrição aceita exatamente duas variantes,
+  `inicio_ate` e `termino_ate`, ambas de limite superior; não existe `inicio_apos`.
+  "Depois das 15h" não é representável em nenhum nível: a saída estrita da IA não
+  consegue produzi-la, e uma entrada runtime com `tipo_restricao` fora do par fechado
+  viola o contrato de forma e produz `EntradaInvalidaError` — nunca um resultado de
+  domínio, nunca convertida para `inicio_ate`, horário exato ou período.
 - **`24:00` é horário inválido**, nunca convertido automaticamente para `00:00` do dia
   seguinte.
 

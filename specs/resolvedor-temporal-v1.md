@@ -440,6 +440,16 @@ aritmética de calendário sobre `instante_atual.data` — nunca por `Date`:
 Nenhum outro valor relativo (`ontem`, `semana que vem`, `mês que vem`) é aceito nesta
 v1 (seção 30).
 
+### Fronteira do teto civil
+
+Quando `instante_atual.data` está próxima do teto civil `9999-12-31` (seção 9), o
+avanço aritmético de `amanha` ou `depois_de_amanha` pode exigir uma data que
+ultrapassaria esse teto. Nesse caso: `invalido`, campo `data`, motivo
+`ano_fora_do_dominio` (seção 19, definição ampliada) — nunca overflow para o ano
+`10000`, nunca wrap para o início do domínio civil, nunca truncamento para uma data
+parcial. Exemplo: `instante_atual.data` = `9999-12-31` e `amanha` → não existe dia
+civil seguinte dentro do domínio → `invalido` (`ano_fora_do_dominio`).
+
 ## 11. Ano omitido
 
 Quando `data_absoluta.ano` é `null`: resolver como a **primeira ocorrência civil
@@ -523,6 +533,16 @@ primeiro. Esta regra:
 - a decisão de mapear uma expressão como "segunda que vem" para `qualificador:
   'proxima'` pertence à interpretação (IA), nunca a este resolvedor — ele só recebe o
   qualificador já estruturado e nunca infere a partir de texto (seção 5).
+
+### Fronteira do teto civil
+
+O avanço de `qualificador: 'proxima'` (busca da primeira ocorrência estritamente
+posterior a `instante_atual.data`, no máximo sete dias civis à frente) pode, quando
+`instante_atual.data` está a menos de sete dias do teto `9999-12-31`, exigir uma data
+além do domínio civil. Nesse caso: `invalido`, campo `data`, motivo
+`ano_fora_do_dominio` (seção 19, definição ampliada) — mesma regra de fronteira já
+aplicada a `amanha`/`depois_de_amanha` (seção 10) e ao ano omitido (seção 11): nunca
+overflow, nunca wrap, nunca truncamento.
 
 ## 13. Horários
 
@@ -616,9 +636,18 @@ fixados (seção 14).
 ### Horário sem data
 
 Quando um átomo `horario_exato` está presente, mas nenhuma data (absoluta, relativa ou
-dia da semana) acompanha o mesmo conjunto de fatos, e nenhum átomo de intenção
-`proxima_disponibilidade` está presente (que tem regra própria, seção 16): resultado
-`incompleto` (`horario_sem_data`, seção 18).
+dia da semana) acompanha o mesmo conjunto de fatos, a classificação depende
+exclusivamente da intenção presente (seção 18) — não existe motivo próprio para
+"horário sem data": nenhum caso residual sobra depois de aplicadas as regras de
+intenção, então nenhum motivo separado é necessário:
+
+- nenhum átomo de intenção presente → `incompleto` (`intencao_ausente`);
+- `data_especifica` presente → `incompleto` (`data_ausente`) — a intenção exige data
+  explícita, com ou sem horário exato simultâneo;
+- `proxima_disponibilidade` presente → `incompleto`
+  (`horario_recorrente_nao_suportado`, seção 16) — mesma regra já fechada para
+  "próxima disponibilidade com horário exato", independentemente de haver ou não
+  data.
 
 ## 14. Períodos
 
@@ -682,29 +711,46 @@ duração`), e este resolvedor nunca recebe duração (seção 2). Portanto:
   simultâneos, ou duas ocorrências de `inicio_ate` com limites diferentes) →
   `conflito` (`restricoes_conflitantes`, seção 20); este resolvedor nunca combina duas
   restrições em uma só;
-- restrição sem data → mesma regra de "horário sem data" (seção 13): `incompleto`
-  (`restricao_sem_data`, seção 18), salvo intenção `proxima_disponibilidade` sem data
-  (seção 16, "hoje" como início);
+- restrição sem data → classificação por intenção (seção 18), mesma regra de
+  "horário sem data" (seção 13): nenhum átomo de intenção presente → `incompleto`
+  (`intencao_ausente`); `data_especifica` presente → `incompleto` (`data_ausente`);
+  `proxima_disponibilidade` presente → a busca começa hoje (seção 16, "Próxima
+  disponibilidade sem data") e a restrição segue as regras normais a partir daí,
+  inclusive a checagem de passado abaixo;
 - restrição cujo limite já está no passado (hoje, com o minuto-limite igual ou
   anterior a `instante_atual.minuto_min`) → `passado`
   (`inicio_ate_passado`/`termino_ate_passado`, seção 16);
-- **"depois das 15h" não é suportado** — ver detalhe abaixo (decisão registrada em
-  `docs/04-decisoes-canonicas.md`, seção "Resolvedor temporal", bullet "Depois das
-  15h"; referenciado pelo conteúdo, não por número de item).
+- **"depois das 15h" não é representável** — ver detalhe abaixo (decisão registrada
+  em `docs/04-decisoes-canonicas.md`, seção "Resolvedor temporal", bullet "Limite
+  inferior"; referenciado pelo conteúdo, não por número de item).
 
-### "Depois das 15h" — limite inferior não suportado
+### Limite inferior — não existe na v1, nunca representável
 
-Esta v1 não define restrição de limite inferior (um hipotético `inicio_apos`). A
-expressão é **clara** para o paciente, mas o domínio atual não a modela — por isso o
-resultado não é `ambiguo` (não há múltiplas leituras possíveis) nem `incompleto` (não
-falta dado): é **`invalido`**, com motivo fechado `restricao_nao_suportada` (seção
-19). Este resolvedor nunca converte silenciosamente "depois das 15h" em `inicio_ate`,
-em horário exato, ou em período — as três conversões são explicitamente proibidas. A
-resposta ao paciente diante desse motivo pertence a `atendimento-v1.md`, fora desta
-especificação.
+O contrato de `restricao` (seção 5) aceita **somente** duas variantes de
+`tipo_restricao`: `inicio_ate` e `termino_ate` — ambas de limite **superior**. Não
+existe `inicio_apos`, nem qualquer outra variante de limite inferior, no conjunto
+fechado desta v1. "Depois das 15h" é uma expressão clara para o paciente, mas o
+domínio atual **não a modela em nenhum nível**:
 
-**Não existe limite inferior nesta v1.** Criar um exigiria nova decisão de produto e
-nova especificação — não é antecipado aqui.
+- o schema estrito da IA (seção 6, `enum` fechado de `tipo_restricao`) não consegue
+  produzir um valor fora das duas variantes — a própria geração via Structured
+  Outputs `strict: true` torna a saída impossível;
+- uma entrada runtime que informe `inicio_apos`, ou qualquer valor de
+  `tipo_restricao` fora do conjunto fechado, viola o contrato de **forma** da entrada
+  (seção 21, nível 1) — lança `EntradaInvalidaError`, nunca produz um resultado
+  tipado. O motivo antes fechado como `restricao_nao_suportada` **deixa de existir**
+  nesta rodada (seção 19): não sobra nenhum caso de domínio para "restrição
+  reconhecida mas não suportada", porque a restrição inexistente já é barrada antes
+  de qualquer análise de domínio;
+- este resolvedor **nunca** converte "depois das 15h" (ou qualquer limite inferior)
+  em `inicio_ate`, em horário exato, ou em período — as três conversões continuam
+  explicitamente proibidas;
+- a resposta ao paciente diante de uma tentativa de limite inferior pertence à
+  interpretação (que nunca produz esse átomo, seção 6) e, em runtime hostil, à
+  fronteira estrutural deste resolvedor — nunca a um resultado de domínio.
+
+**Não existe limite inferior nesta v1.** Criar um exigiria nova decisão de produto,
+nova variante de `tipo_restricao` e nova especificação — não é antecipado aqui.
 
 ## 16. Passado
 
@@ -736,6 +782,15 @@ implementada em `resolver-disponibilidade.ts` (`inicioNoFuturo`). Cada caso prod
 Intenção `proxima_disponibilidade` sem nenhum átomo de data (absoluta, relativa ou dia
 da semana) presente → **começa hoje**: `instante_atual.data` é usada como a data
 resolvida.
+
+Com **qualquer** átomo de data presente (absoluta, relativa ou dia da semana), o
+resultado é sempre `conflito`
+(`data_especifica_com_proxima_disponibilidade`, seção 20) — nunca `resolvido`. A data
+informada **não** é usada como início de busca, **não** é usada como filtro, e
+**não** é ignorada: ela simplesmente nunca chega a ser aplicada, porque a combinação
+inteira já é conflitante antes de qualquer resolução de data. "A partir de
+determinada data" como intenção de busca por horizonte permanece fora desta v1 (seção
+30) — não é isso que este conflito representa.
 
 ### O que este resolvedor preserva do algoritmo real da disponibilidade
 
@@ -779,9 +834,9 @@ não há alternativa entre os dois para esse caso.
 ## 18. Incompletude
 
 Resultado `incompleto` — distinto de `ambiguo`: aqui falta um fato necessário, não
-sobra uma interpretação múltipla. `MotivoIncompletudeTemporal`, união fechada, avaliada
-nesta **ordem de precedência interna fixa** (nenhuma entrada pode produzir mais de um
-destes simultaneamente):
+sobra uma interpretação múltipla. `MotivoIncompletudeTemporal`, união fechada de
+**exatamente três motivos**, avaliada nesta **ordem de precedência interna fixa**
+(nenhuma entrada pode produzir mais de um destes simultaneamente):
 
 1. `intencao_ausente` — **nenhum** átomo de intenção presente na leva de fatos —
    inclui, mas não se limita a, a leva vazia (seção "Ausências simultâneas" abaixo).
@@ -798,18 +853,27 @@ destes simultaneamente):
    (absoluta, relativa ou dia da semana) presente na leva. Esta intenção **exige**
    data explícita; `proxima_disponibilidade` nunca produz este motivo, porque a data
    pode ser omitida e passa a valer "hoje" (seção 16, "Próxima disponibilidade sem
-   data") — **nunca** `data_ausente` nesse caso;
-4. `horario_sem_data` — um átomo `horario_exato` presente sem nenhuma data associada,
-   em qualquer combinação não já coberta pelos três motivos acima (seção 13);
-5. `restricao_sem_data` — uma restrição presente sem nenhuma data associada, pela
-   mesma regra (seção 15).
+   data") — **nunca** `data_ausente` nesse caso.
+
+Não existe um quarto ou quinto motivo residual. Um átomo `horario_exato` ou uma
+`restricao` sem nenhuma data associada **nunca** produz um motivo próprio de
+incompletude (seção 13, seção 15): a classificação depende exclusivamente de qual dos
+três motivos acima já se aplica pela intenção presente — sem intenção,
+`intencao_ausente`; com `data_especifica`, `data_ausente`; com
+`proxima_disponibilidade`, ou o horário exato aciona `horario_recorrente_nao_suportado`
+(motivo 2), ou nenhum dos três se aplica e a leva resolve normalmente a partir de hoje
+(seção 16, "Próxima disponibilidade sem data"). Não sobra nenhuma combinação sem
+classificação: os motivos anteriormente chamados `horario_sem_data` e
+`restricao_sem_data` foram **eliminados** nesta rodada por serem sempre subsumidos por
+um dos três motivos acima — nunca reservados, nunca mantidos como alternativa.
 
 ### Ausências simultâneas — regra fechada
 
 - **leva vazia** (`fatos_temporais.length === 0`) → sempre `intencao_ausente`, nunca
   `data_ausente` — sem nenhum átomo, não há sequer intenção para determinar o que é
   obrigatório;
-- **intenção `data_especifica` presente, mas sem data** → sempre `data_ausente`;
+- **intenção `data_especifica` presente, mas sem data** → sempre `data_ausente`, com
+  ou sem horário exato ou restrição simultâneos;
 - **intenção `proxima_disponibilidade`** → data pode ser omitida (começa hoje, seção
   16); esta combinação **nunca** produz `data_ausente`.
 
@@ -824,10 +888,17 @@ questão de interpretação. `MotivoInvalidoTemporal`, união fechada:
 - `data_impossivel` — `ano` **explícito** presente e `(dia, mes, ano)` fora do
   calendário gregoriano para esse ano específico, mesmo considerando bissexto (seção
   9) — checagem de um único ano, nunca uma busca;
-- `ano_fora_do_dominio` — `ano` explícito fora de `1..9999` (seção 9); **ou** `ano`
-  omitido cuja busca (seção 11) examinou toda a janela de nove candidatos (ou menos,
-  quando truncada pelo teto de `9999`) sem encontrar ocorrência civil válida e não
-  passada — em ambos os casos, o problema é o **ano**, nunca o par `(dia, mes)` em si;
+- `ano_fora_do_dominio` — **toda** operação civil deste resolvedor que exigiria
+  alcançar ou ultrapassar um ano fora de `1..9999` (seção 9). Cobre, sem exceção:
+  `ano` explícito fora de `1..9999`; `ano` omitido cuja busca (seção 11) examinou toda
+  a janela de nove candidatos (ou menos, quando truncada pelo teto de `9999`) sem
+  encontrar ocorrência civil válida e não passada; `amanha`/`depois_de_amanha` (seção
+  10) cujo avanço aritmético exigiria uma data além de `9999-12-31`; dia da semana
+  `qualificador: 'proxima'` (seção 12) cujo avanço de até sete dias exigiria uma data
+  além de `9999-12-31`. Em todos os casos o problema é o **ano** (ou o avanço que o
+  ultrapassaria), nunca o restante do fato temporal em si — e a resposta é sempre a
+  mesma: nenhuma data com ano `10000` é produzida, nenhum overflow, nenhum wrap para
+  o início do domínio civil, nenhum truncamento e nenhuma data parcial;
 - `ano_dois_digitos` — `ano` explícito em `1..99` (seção 9) — nunca expandido para
   nenhum século;
 - `hora_fora_do_dominio` — `hora`/`hora_limite` fora de `0..23` (`horario_24h`) ou
@@ -836,7 +907,6 @@ questão de interpretação. `MotivoInvalidoTemporal`, união fechada:
 - `minuto_fora_do_dominio` — `minuto`/`minuto_limite` fora de `0..59` (seção 13), com
   valor finito;
 - `horario_24_00` — `24:00` ou equivalente (seção 13);
-- `restricao_nao_suportada` — limite inferior tipo "depois das 15h" (seção 15);
 - `atomo_invalido` — cobre exatamente dois casos, sempre depois de descartados todos
   os motivos mais específicos acima: (a) um campo numérico reconhecido cujo valor é
   um número **não finito** (`NaN`, `Infinity`, `-Infinity` — seção 21); (b) um átomo
@@ -845,6 +915,13 @@ questão de interpretação. `MotivoInvalidoTemporal`, união fechada:
   `tipo_restricao`) — catch-all fechado, nunca mensagem livre, nunca o valor bruto
   reproduzido;
 - `quantidade_atomica_excedida` — mais de 8 átomos em `fatos_temporais` (seção 5).
+
+`restricao_nao_suportada` **não existe mais nesta união** (harmonização desta
+rodada): o contrato de `restricao` (seção 5) tem exatamente duas variantes de
+`tipo_restricao`, ambas de limite superior — não sobra nenhum caso de domínio para
+"restrição reconhecida mas não suportada". Um `tipo_restricao` fora desse par (ex.:
+um hipotético `inicio_apos`) viola o contrato de **forma** e produz
+`EntradaInvalidaError` (seção 15, seção 21, nível 1) — nunca `invalido`.
 
 Motivo mais específico **sempre** prevalece sobre `atomo_invalido`: um valor finito
 fora de domínio recebe o motivo nomeado (`hora_fora_do_dominio`,
@@ -868,17 +945,28 @@ união fechada:
 
 - `multiplas_datas` — duas datas diferentes na mesma leva de fatos (ex.: data absoluta
   e dia da semana apontando para dias distintos, ou dois átomos `data_absoluta`);
-- `data_especifica_com_proxima_disponibilidade` — **caso canônico**: a leva de fatos
-  contém **exatamente duas** intenções, sendo **uma de cada tipo** — um átomo
-  `intencao: 'data_especifica'` e um átomo `intencao: 'proxima_disponibilidade'` — são
-  mutuamente exclusivas (`novo-agendamento.md` §9);
-- `multiplas_intencoes` — **todo demais caso** de multiplicidade de intenção: duas
-  ocorrências idênticas repetidas do mesmo tipo (ex.: dois átomos
-  `data_especifica`), três ou mais átomos de intenção em qualquer combinação, ou
-  qualquer multiplicidade que não se reduza exatamente ao par canônico acima. Motivo
-  **efetivamente produzido**, não reservado — a distinção entre os dois motivos é
-  puramente sobre **quais e quantos** átomos de intenção estão presentes, nunca sobre
-  o restante da leva de fatos;
+- `data_especifica_com_proxima_disponibilidade` — produzido por **dois caminhos
+  distintos**, nunca um terceiro, com o segundo caminho tendo **precedência** sobre
+  `multiplas_intencoes` sempre que ambos se aplicariam à mesma leva:
+  1. **par de intenções**: a leva de fatos contém **exatamente duas** intenções,
+     sendo **uma de cada tipo** — um átomo `intencao: 'data_especifica'` e um átomo
+     `intencao: 'proxima_disponibilidade'` — mutuamente exclusivas
+     (`novo-agendamento.md` §9);
+  2. **próxima disponibilidade com data**: a intenção `proxima_disponibilidade` está
+     presente **e** pelo menos um átomo de data (absoluta, relativa ou dia da semana)
+     também está presente na mesma leva — qualquer que seja a quantidade ou a
+     combinação de átomos de intenção presentes (seção 16, "Próxima disponibilidade
+     sem data"). A data informada **nunca** é usada como início de busca, **nunca** é
+     usada como filtro, e **nunca** é ignorada — ela simplesmente não é aplicada,
+     porque a combinação já é conflitante antes de qualquer resolução de data;
+- `multiplas_intencoes` — **todo demais caso** de multiplicidade de intenção não
+  coberto pelos dois caminhos acima: duas ocorrências idênticas repetidas do mesmo
+  tipo (ex.: dois átomos `data_especifica`, sem nenhum átomo de data), três ou mais
+  átomos de intenção em qualquer combinação que não inclua `proxima_disponibilidade`
+  junto de um átomo de data, ou qualquer multiplicidade que não se reduza exatamente
+  ao caminho 1. Motivo **efetivamente produzido**, não reservado — a distinção entre
+  os dois motivos é puramente sobre **quais e quantos** átomos de intenção e de data
+  estão presentes, nunca sobre o restante da leva de fatos;
 - `multiplos_horarios_exatos` — dois ou mais átomos `horario_exato` com valores
   diferentes na mesma leva de fatos;
 - `restricoes_conflitantes` — duas restrições simultâneas, do mesmo tipo com limites
@@ -1133,7 +1221,7 @@ daquela clínica — nenhuma informação de uma clínica influencia o resultado
 `composicao-novo-agendamento-v1.md` §22 já reservou `TMP-01` a `TMP-06` como cobertura
 futura (marcador †) apontando para esta especificação; esta matriz **continua a
 numeração a partir de `TMP-07`**, sem reaproveitar nenhum identificador já usado —
-`TMP-07` a `TMP-83` somam-se aos seis já existentes, nenhum ID de rodada anterior é
+`TMP-07` a `TMP-86` somam-se aos seis já existentes, nenhum ID de rodada anterior é
 reciclado, renumerado ou removido. Correspondência com os seis já reservados é anotada
 na coluna "Equivalente".
 
@@ -1166,17 +1254,17 @@ na coluna "Equivalente".
 | TMP-31 | Fronteiras de período: início `12:00`, `12:10`, `18:00` | U | manhã / tarde / noite | — |
 | TMP-32 | `inicio_ate` produzido a partir de "antes das 11h" já interpretado | U | `resolvido`, `restricao.tipo = 'inicio_ate'` | TMP-02 |
 | TMP-33 | `termino_ate` produzido a partir de "preciso terminar até 11h" já interpretado | U | `resolvido`, `restricao.tipo = 'termino_ate'` | TMP-03 |
-| TMP-34 | "Depois das 15h" | U | `invalido` (`restricao_nao_suportada`), nunca convertido | — |
+| TMP-34 | Tentativa de representar limite inferior via `tipo_restricao` fora do contrato (ex.: `inicio_apos`) | U | `EntradaInvalidaError` — enum fora do contrato de forma, nunca convertido em `inicio_ate`, horário exato ou período | — |
 | TMP-35 | Duas restrições simultâneas (`inicio_ate` e `termino_ate` juntos) | U | `conflito` (`restricoes_conflitantes`) | — |
 | TMP-36 | Horário exato posterior ao limite de `inicio_ate` simultâneo (ex.: horário exato `12:00`, `inicio_ate` `11:00`) | U | `conflito` (`horario_viola_inicio_ate`) | — |
-| TMP-37 | Restrição sem data associada | U | `incompleto` (`restricao_sem_data`) | — |
+| TMP-37 | `data_especifica` com restrição e sem nenhum átomo de data | U | `incompleto` (`data_ausente`) | — |
 | TMP-38 | Restrição com limite já no passado, hoje | U | `passado` (`inicio_ate_passado`/`termino_ate_passado`) | — |
 | TMP-39 | Data anterior a hoje | U | `passado` (`data_passada`) | — |
 | TMP-40 | Hoje sem horário | U | `resolvido` | — |
 | TMP-41 | Hoje com horário igual ao instante atual | U | `passado` (`horario_passado`) | — |
 | TMP-42 | Hoje com horário estritamente posterior ao instante atual | U | `resolvido` | — |
 | TMP-43 | `proxima_disponibilidade` sem data | U | `resolvido`, data = hoje | — |
-| TMP-44 | `proxima_disponibilidade` com data específica rígida | U | `conflito` (`data_especifica_com_proxima_disponibilidade`) | — |
+| TMP-44 | `proxima_disponibilidade` com qualquer átomo de data (absoluta, relativa ou dia da semana) | U | `conflito` (`data_especifica_com_proxima_disponibilidade`) — data nunca usada como início de busca nem como filtro | — |
 | TMP-45 | `proxima_disponibilidade` com horário exato | U | `incompleto` (`horario_recorrente_nao_suportado`) — classificação única, nunca `ambiguo` | — |
 | TMP-46 | `data_especifica` e `proxima_disponibilidade` simultâneas | U | `conflito` (`data_especifica_com_proxima_disponibilidade`) | — |
 | TMP-47 | Duas datas diferentes na mesma leva de fatos | U | `conflito` (`multiplas_datas`) | — |
@@ -1216,6 +1304,9 @@ na coluna "Equivalente".
 | TMP-81 | Intenções repetidas (dois átomos `data_especifica` idênticos) ou três ou mais átomos de intenção em qualquer combinação | U | `conflito` (`multiplas_intencoes`) — motivo efetivamente produzido, não reservado | — |
 | TMP-82 | Horário `8` com período `tarde`, simultâneos | U | `conflito` (`periodo_incompativel_com_horario`) — cenário de aceite dedicado, distinto dos casos `resolvido` de TMP-29 | — |
 | TMP-83 | Hoje é domingo (último dia da semana civil corrente); "esta segunda" pedida | U | `passado` (`dia_semana_esta_passado`) — a segunda-feira da mesma semana civil é o primeiro dia dela, já ocorrido em relação a hoje | — |
+| TMP-84 | `amanha` a partir de `instante_atual.data` = `9999-12-31` | U | `invalido` (`ano_fora_do_dominio`) — nenhum overflow para o ano `10000` | — |
+| TMP-85 | `depois_de_amanha` a partir de `instante_atual.data` = `9999-12-30` ou `9999-12-31` | U | `invalido` (`ano_fora_do_dominio`) — nenhum overflow, nenhuma data parcial | — |
+| TMP-86 | Dia da semana `proxima` cujo avanço de até sete dias ultrapassaria `9999-12-31` | U | `invalido` (`ano_fora_do_dominio`) — sem wrap, sem truncamento | — |
 
 Os pedidos de cobertura para "duas datas", "duas intenções" e "duas restrições" desta
 rodada já correspondem, respectivamente, a TMP-47, TMP-46/TMP-68/TMP-81 e TMP-35 —
@@ -1311,7 +1402,12 @@ contrato completo. Resumo:
   além de `9999`; nunca expande ano de dois dígitos para nenhum século.
 - Nenhum ano fora de `1..9999` é examinado, produzido ou inferido; ano explícito fora
   de `100..9999` é sempre `invalido` (`ano_dois_digitos` ou `ano_fora_do_dominio`,
-  nunca ambos ao mesmo tempo).
+  nunca ambos ao mesmo tempo). Esta mesma regra vale para **toda** aritmética civil
+  deste resolvedor, não somente para ano explícito ou omitido: `amanha`,
+  `depois_de_amanha` e dia da semana `qualificador: 'proxima'` que exigiriam
+  ultrapassar `9999-12-31` também produzem `invalido` (`ano_fora_do_dominio`) — nunca
+  overflow para o ano `10000`, nunca wrap para o início do domínio civil, nunca
+  truncamento, nunca data parcial.
 - Dia da semana sem qualificador é sempre `ambiguo`; horário 12h sem `parte_dia` e sem
   período que resolva de forma inequívoca é sempre `ambiguo`; hora `12` acompanhada
   somente de período, sem classificação explícita, é sempre `ambiguo`.
@@ -1321,12 +1417,21 @@ contrato completo. Resumo:
   **`termino_ate` nunca é declarado `conflito` com base apenas no horário de
   início** — ambos são preservados como critérios oficiais simultâneos, e a
   compatibilidade final é responsabilidade exclusiva da disponibilidade.
+- `proxima_disponibilidade` sem nenhum átomo de data começa em
+  `instante_atual.data` (hoje); com **qualquer** átomo de data (absoluta, relativa ou
+  dia da semana) presente, produz sempre `conflito`
+  (`data_especifica_com_proxima_disponibilidade`) — a data nunca é usada como início
+  de busca, nunca como filtro, e nunca é ignorada. Coexistência com a intenção
+  `data_especifica` (par canônico) produz o mesmo motivo de conflito.
 - `proxima_disponibilidade` combinada com horário exato produz sempre `incompleto`
   (`horario_recorrente_nao_suportado`), nunca `ambiguo`.
 - Períodos e restrições reutilizam `Periodo`/`RestricaoHoraria` publicados, sem
   alteração de limite ou de semântica.
-- Não existe restrição de limite inferior nesta v1; "depois das 15h" é `invalido`,
-  nunca convertido para `inicio_ate`, horário exato ou período.
+- Não existe restrição de limite inferior nesta v1 — o contrato de `tipo_restricao`
+  tem exatamente duas variantes, ambas de limite superior; um valor fora desse par
+  (ex.: um hipotético `inicio_apos`) viola o contrato de forma e produz
+  `EntradaInvalidaError`, nunca `invalido`; "depois das 15h" nunca é convertido para
+  `inicio_ate`, horário exato ou período.
 - `24:00` é sempre inválido, nunca convertido para `00:00` do dia seguinte.
 - `passado` sempre carrega um motivo fechado (seção 16); nenhuma variante do
   resultado carrega motivo livre.
@@ -1348,10 +1453,12 @@ contrato completo. Resumo:
 - Leva de fatos vazia é sempre `incompleto` (`intencao_ausente`), nunca
   `data_ausente`; intenção `data_especifica` sem nenhum átomo de data é sempre
   `data_ausente`; intenção `proxima_disponibilidade` nunca produz `data_ausente`.
-- Exatamente duas intenções, uma de cada tipo, é sempre
-  `data_especifica_com_proxima_disponibilidade`; qualquer outra multiplicidade de
-  intenção é sempre `multiplas_intencoes` — motivo efetivamente produzido, não
-  reservado.
+- `data_especifica_com_proxima_disponibilidade` é produzido por dois caminhos: (a)
+  exatamente duas intenções, uma de cada tipo; (b) `proxima_disponibilidade`
+  presente junto de qualquer átomo de data — este segundo caminho tem precedência
+  sobre `multiplas_intencoes` sempre que ambos se aplicariam. Qualquer outra
+  multiplicidade de intenção é sempre `multiplas_intencoes` — motivo efetivamente
+  produzido, não reservado.
 - Quando uma nova alteração produz conflito ou ambiguidade, o critério temporal oficial
   anterior nunca é reutilizado para nova consulta, e o novo fato nunca é promovido a
   critério oficial sem esclarecimento.
