@@ -86,6 +86,71 @@ vínculos, duração, disponibilidade). Detalhe completo:
   Persistência recuperável da interpretação completa (eventos candidatos e conflitos)
   poderá ser avaliada em spec própria futura; **não faz parte desta v1**.
 
+## Resolvedor temporal (01/08/2026)
+
+Decisões que fecham a especificação canônica do resolvedor temporal puro anunciado em
+`## Composição do novo agendamento` acima. Detalhe completo:
+`../specs/resolvedor-temporal-v1.md`.
+
+- **A IA produzirá átomos temporais estruturados**, nunca data civil oficial, minuto
+  local oficial, classificação de passado, modo final de disponibilidade ou decisão do
+  controlador. O resolvedor temporal transforma os átomos em fatos oficiais.
+- **Data sem ano resolve como a primeira ocorrência civil válida e não passada**: a
+  busca avança ano a ano, a partir do ano corrente (hoje é permitido), examinando **o
+  ano atual mais os oito anos seguintes** (nove candidatos ao todo) — suficiente para
+  cobrir o ciclo de 29 de fevereiro. A busca nunca ultrapassa `9999`; se nenhuma
+  ocorrência válida e futura existir até lá, o resultado é inválido por ano fora do
+  domínio. Nunca ano anterior ao corrente; nunca expansão silenciosa de ano de um ou
+  dois dígitos (domínio civil `1..9999`; ano explícito aceito `100..9999`; `1..99`
+  explícito é sempre inválido).
+- **Precedência global fixa entre os resultados possíveis**, independente da ordem
+  dos átomos: erro estrutural de entrada (exceção, nunca um resultado) > erro de
+  configuração > quantidade excedida ou átomo inválido > conflito > passado > ambíguo
+  > incompleto > resolvido. Um tipo incompatível em campo numérico (string, objeto)
+  é sempre erro estrutural; um número reconhecido mas não finito (`NaN`/`Infinity`/
+  `-Infinity`) é sempre resultado inválido, nunca erro estrutural — os dois nunca são
+  alternativas para o mesmo caso.
+- **Leva de fatos vazia é sempre resultado incompleto por ausência de intenção**,
+  nunca por ausência de data — sem intenção, não há como saber o que é obrigatório.
+  Intenção de data específica sem nenhuma data é incompleta por ausência de data;
+  intenção de próxima disponibilidade nunca exige data explícita.
+- **Segunda-feira é o primeiro dia da semana civil; a semana vai de segunda a
+  domingo** — fixo, universal, independente de locale, sistema operacional ou
+  timezone da máquina, não configurável por clínica. `proxima` é a primeira ocorrência
+  estritamente posterior a hoje; `esta` é a ocorrência dentro dessa semana civil
+  (`passado` se já ocorreu); sem qualificador é sempre `ambiguo` — nunca escolhido
+  silenciosamente.
+- **Fatos temporais estruturados chegam como lista** (`fatos_temporais:
+  AtomoTemporal[]`, máximo 8 itens), nunca como objeto único achatado por mensagem —
+  só a lista representa corretamente fatos simultâneos (duas datas, duas restrições,
+  horário exato e restrição juntos). Horário exato e restrição são átomos distintos,
+  com campos próprios, nunca compartilhados entre si.
+- **`termino_ate` nunca é declarado incompatível com um horário exato simultâneo
+  usando somente o horário de início** — o resolvedor não recebe duração, logo não
+  pode calcular o fim; os dois critérios são preservados simultaneamente, e a
+  compatibilidade final é verificada pela disponibilidade. `inicio_ate` continua
+  podendo ser verificado diretamente contra o horário de início.
+- **Horário sem AM/PM** resolve somente quando um período explícito o torna
+  inequívoco; caso contrário é `ambiguo` — nunca assume manhã, nunca escolhe entre
+  `08:00` e `20:00`.
+- **Períodos preservam os limites já canônicos** (manhã `<= 12:00`; tarde `> 12:00` e
+  `< 18:00`; noite `>= 18:00`), sem configuração por clínica nesta v1. Período é
+  filtro, nunca jornada criada pelo resolvedor.
+- **Minutos aceitam qualquer valor civil válido** (`0..1439`), sem exigir múltiplo de
+  10, sem arredondar, sem truncar — a disponibilidade decide se o horário exato cabe.
+- **Próxima disponibilidade sem data inicia hoje**; data específica rígida junto com
+  essa intenção é `conflito`; horário exato junto com essa intenção exige
+  esclarecimento. "A partir de determinada data" permanece fora desta v1.
+- **Instante local usa a forma já publicada** `InstanteAtual { data, minuto_min }`,
+  com `fuso` como campo irmão, nunca aninhado. O resolvedor não usa `Date.now`,
+  timezone da máquina, conversão UTC ou validação de tzdb — isso pertence ao adaptador
+  futuro.
+- **"Depois das 15h" não é suportado nesta v1.** Não é convertido para `inicio_ate`,
+  horário exato ou período — produz resultado fechado de invalidade. Não existe
+  limite inferior de horário nesta v1.
+- **`24:00` é horário inválido**, nunca convertido automaticamente para `00:00` do dia
+  seguinte.
+
 ## Escopo completo do atendimento
 
 Ver `06-roadmap.md` para a lista completa de escopo e a ordem em que cada parte será

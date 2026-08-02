@@ -599,65 +599,21 @@ verifica duplicidade de Consulta/Avaliação).
 | `resolvida` | Segue para critérios temporais (passo 7), carregando `duracao_min`. |
 | `nao_configurada` / `invalida` / `erro_configuracao` | Pausa 8. Falha fechada idêntica ao paciente entre os três — `duracao-v1.md` §6: nunca 60 minutos, nunca Consulta/Avaliação por este motivo, nunca reclassifica dentista apto como inapto, nunca consulta disponibilidade. |
 
-### 13.5 Resolução temporal — contrato futuro (decisão aprovada, não implementada)
+### 13.5 Resolução temporal (`resolvedor-temporal-v1.md`, não implementado)
 
-Responsabilidade explicitamente **fora do controlador** (decisão desta rodada): um
-resolvedor puro e separado, análogo em espírito aos quatro já publicados, converte
-fatos temporais **já interpretados** (texto, produzidos pela IA) em fatos temporais
-**oficiais** (estruturados, produzidos deterministicamente pelo Core) — nunca o
-inverso, e a IA nunca calcula, arredonda ou normaliza data (`novo-agendamento.md` §8).
+Responsabilidade explicitamente **fora do controlador**: um resolvedor puro e
+separado, análogo em espírito aos quatro já publicados, converte fatos temporais já
+interpretados (produzidos pela IA) em fatos temporais oficiais (estruturados,
+produzidos deterministicamente pelo Core) — nunca o inverso.
 
-Entrada conceitual, pseudotipo — não implementação:
+Posição na ordem canônica: passo 7 da seção 9, entre duração (passo 6) e obtenção do
+snapshot diário (passo 8) — sem alteração desta rodada.
 
-```text
-interface EntradaResolucaoTemporal {
-  clinica_id: string;
-  fuso: string; // ConfiguracaoClinicaMinima.fuso, seção 4.1
-  instante_atual: { data: string; minuto_min: number };
-  intencao_temporal: 'data_especifica' | 'proxima_disponibilidade' | null;
-  data_texto: string | null;
-  periodo: 'manha' | 'tarde' | 'noite' | null;
-  horario_texto: string | null;
-}
-```
+**Contrato completo, entrada, saída, taxonomia de motivos e matriz de cenários:
+`resolvedor-temporal-v1.md`.** Esta composição não duplica esse contrato — apenas
+consome seus resultados, conforme o tratamento já descrito na seção 13.
 
-Saída conceitual, união fechada, pseudotipo — não implementação:
-
-```text
-type ResultadoResolucaoTemporal =
-  | {
-      tipo: 'resolvido';
-      data: string; // civil, YYYY-MM-DD
-      periodo?: 'manha' | 'tarde' | 'noite';
-      horario_min?: number; // presente quando o paciente pediu horário exato
-      restricao?: { tipo: 'inicio_ate' | 'termino_ate'; minuto_min: number };
-      intencao: 'data_especifica' | 'proxima_disponibilidade';
-    }
-  | { tipo: 'ambiguo' }
-  | { tipo: 'expressao_invalida' };
-```
-
-Nomes de tipo e de função acima são **propostos**, para continuidade de nomenclatura
-com os quatro componentes já publicados (`EntradaResolucaoX` / `ResultadoResolucaoX`) —
-esta spec documental não fixa nomenclatura definitiva; renomear não é mudança de
-contrato.
-
-Regras herdadas sem alteração:
-
-- a distinção `data_especifica` vs. `proxima_disponibilidade` já é canônica em
-  `novo-agendamento.md` §9 e não é redecidida aqui — este resolvedor apenas produz o
-  fato estruturado que a diferencia;
-- "antes das 11h" (`inicio_ate`) e "preciso terminar até 11h" (`termino_ate`) são
-  intenções distintas, nunca confundidas (`disponibilidade.md` §13);
-- o resolvedor nunca usa `Date` da máquina nem qualquer relógio de execução — o
-  `instante_atual` chega pronto na entrada, mesma disciplina já aplicada em
-  `resolver-disponibilidade.ts`;
-- `ambiguo` e `expressao_invalida` disparam a pausa 9 — a composição pede
-  esclarecimento ou pede o dado novamente, nunca adivinha.
-
-**Não implementado nesta rodada.** Nenhum parsing de exemplo isolado de linguagem
-natural é definido por esta spec — isso pertence à implementação futura do resolvedor,
-com seus próprios testes e sua própria aprovação.
+**Não implementado nesta rodada.**
 
 ### 13.6 Disponibilidade — modo `grade` e `horario_exato` (`ResultadoDisponibilidade`, `src/core/disponibilidade-tipos.ts`)
 
@@ -977,7 +933,7 @@ classificação — mesma disciplina já aplicada pelos quatro componentes publi
 | Erro de catálogo (procedimento ou dentista) | `procedimentos-v1.md` §6, `dentistas-vinculos-v1.md` §6 | `tipo: 'erro_catalogo'` |
 | Preferência não apta | `dentistas-vinculos-v1.md` §4 | `tipo: 'preferencia_nao_encontrada'`/`'preferencia_nao_apta'` |
 | Duração ausente, inválida ou conflitante | `duracao-v1.md` §6 | `tipo: 'nao_configurada'`/`'invalida'`/`'erro_configuracao'` |
-| Data não resolvida | seção 13.5 (futuro) | `tipo: 'ambiguo'`/`'expressao_invalida'` |
+| Data ou horário não resolvido | `resolvedor-temporal-v1.md` §17–§21 (futuro) | `tipo: 'incompleto'`/`'ambiguo'`/`'invalido'`/`'passado'`/`'conflito'`/`'erro_configuracao'` |
 | Configuração da clínica inválida | seção 4.1 | `ResultadoDisponibilidade.tipo: 'configuracao_invalida'` |
 | Snapshot inválido | seção 13.7 (futuro) | erro do adaptador |
 | Erro de intervalos | `disponibilidade.md` §3 | `tipo: 'erro_intervalos'` |
@@ -1059,11 +1015,16 @@ cobertos por specs de domínio são **referenciados**, nunca duplicados.
 | COMP-19 | Sinal composto `solicitar_nova_opcao` + `aceitar_qualquer_profissional` | U | Ramo da seção 13.2: opções/escolha/resumo invalidados, preferência removida, procedimento e duração preservados, todos os aptos considerados um por vez, nenhuma escolha silenciosa (ver também CTR-11) |
 | COMP-20 | Queda entre interpretação persistida e composição ainda não concluída (nenhum resultado da composição registrado) | I | IA não é chamada novamente; `preAplicar` não é executado novamente; `eventos_candidatos`/`conflitos_de_valor` não são reconstruídos; esta composição **não é retomada**; nenhum comando anterior é inventado; resposta fixa emitida; aguarda nova mensagem — **não é replay** |
 
-### Futuros — dependem de specs ainda não escritas (prefixo `TMP-`, resolvedor temporal)
+### Futuros — dependem de implementação ainda não feita (prefixo `TMP-`, resolvedor temporal)
 
 Cobertura futura, não aplicável ao aceite desta rodada — mesma convenção do marcador
-**†** já usada em `tests/cenarios-obrigatorios.md` para cancelamento/remarcação. Serão
-ativados quando o resolvedor temporal (seção 13.5) for especificado e aprovado.
+**†** já usada em `tests/cenarios-obrigatorios.md` para cancelamento/remarcação.
+`resolvedor-temporal-v1.md` já especifica o resolvedor temporal por completo,
+inclusive a correspondência exata destes seis IDs com sua própria matriz (TMP-01↔TMP-13,
+TMP-02↔TMP-32, TMP-03↔TMP-33, TMP-06↔TMP-55; TMP-04/TMP-05 correspondem,
+respectivamente, às famílias `ambiguo`/`invalido` daquela matriz). Os seis seguem
+marcados † porque o resolvedor ainda não está implementado — não por falta de
+especificação.
 
 | ID | Cenário | Nível |
 |---|---|---|

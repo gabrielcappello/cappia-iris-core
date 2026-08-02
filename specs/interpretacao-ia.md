@@ -678,6 +678,45 @@ O contrato canônico dos sinais conversacionais, incluindo a separação estrutu
 estruturada passa a conter exatamente `alteracoes` e `eventos_candidatos`; até lá, este
 registro documental não autoriza alteração de código.
 
+### Fatos temporais estruturados — contrato futuro
+
+Registro documental, **sem alteração de código nesta rodada**: uma implementação
+futura poderá fazer a interpretação produzir fatos temporais estruturados (átomos —
+`resolvedor-temporal-v1.md` §5), em vez do texto livre hoje carregado por `data_texto`
+e `horario_texto`. Três camadas distintas, que não se confundem:
+
+- **compatibilidade documental transitória** — o contrato vigente, descrito nesta
+  seção, continua sendo `dados_atuais` com `data_texto`/`horario_texto` como texto
+  puro (`CampoDadosConversa`, `src/core/tipos.ts`, já publicado). Nada neste registro
+  altera esse contrato hoje;
+- **contrato futuro estruturado** — `resolvedor-temporal-v1.md` define os átomos
+  temporais que uma interpretação futura poderá produzir, e o array de átomos
+  achatados compatível com `strict: true` recomendado para essa saída
+  (`resolvedor-temporal-v1.md` §6);
+- **migração posterior de `AlteracoesDados`** — a extensão de `CampoDadosConversa` e do
+  schema de saída do modelo para aceitar átomos temporais é decisão de implementação
+  futura, com sua própria aprovação e revisão; **não é decidida nem executada por
+  este registro**.
+
+`data_texto` e `horario_texto` **não são removidos nem descontinuados por este
+registro** — permanecem o contrato vigente até que a migração futura seja
+especificada e aprovada, com análise explícita de compatibilidade com
+`interpretacao-tipos.ts`, `interpretacao-extrator.ts` e os cenários INT-01 a INT-19
+(`tests/cenarios-obrigatorios.md`) já automatizados sobre o formato atual.
+
+Preservado, sem exceção, para qualquer formato de saída temporal, atual ou futuro
+(`../docs/02-arquitetura.md`):
+
+- a IA relata fatos da mensagem atual, nunca de turnos anteriores;
+- a IA não calcula nem produz data civil oficial nem minuto local oficial;
+- a IA não lê relógio nem tem acesso a `instante_atual`;
+- a IA não conhece o fuso oficial da clínica;
+- a IA não classifica passado — essa decisão é exclusiva do resolvedor temporal
+  (`resolvedor-temporal-v1.md` §16) sobre o fato já estruturado;
+- a IA não escolhe o modo final de disponibilidade (`grade`/`proximo_disponivel`/
+  `horario_exato`) nem produz `ResultadoDisponibilidade`;
+- a IA não decide transição de estado nem produz `DecisaoControlador`.
+
 ### Divergência conhecida no código — bloqueadora antes de tráfego real
 
 Registrada em revisão documental, **não corrigida**: o código atual monta `dados_atuais`
