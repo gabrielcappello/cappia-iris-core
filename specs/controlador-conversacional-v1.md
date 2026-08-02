@@ -258,10 +258,11 @@ O caso **isolado** permanece inalterado: `aceitar_qualquer_profissional` sozinho
 pergunta de preferência vigente à qual ele responda. A exceção vale exclusivamente para o
 sinal composto descrito aqui.
 
-**Harmonização pendente**: `eventos-conversacionais-v1.md` §6 lista `aguardando_escolha`
+**Harmonização concluída**: `eventos-conversacionais-v1.md` §6 lista `aguardando_escolha`
 entre os estados em que `aceitar_qualquer_profissional` é ignorado, o que descreve
-corretamente o caso isolado, mas ainda não menciona o sinal composto. A nota
-correspondente naquele documento não foi escrita nesta rodada.
+corretamente o caso isolado, e a mesma seção já registra a nota harmonizadora do sinal
+composto, com referência à execução determinística em
+`composicao-novo-agendamento-v1.md` §13.2.
 
 ## 8. Matriz estado x evento candidato x transição
 

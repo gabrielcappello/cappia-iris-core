@@ -316,6 +316,13 @@ dentistas ativos aptos, processados um por vez, sem misturar horários de profis
 diferentes e sem escolher nenhum definitivamente. Nenhum evento ou estado novo é criado
 por essa combinação.
 
+A execução determinística dessa regra dentro da ordem completa do fluxo — incluindo
+onde ela se encaixa entre os quatro componentes de domínio e a matriz de invalidação —
+está descrita em `composicao-novo-agendamento-v1.md` §13.2 ("Sinal composto"), com
+cenário de aceite próprio COMP-19 (§22 daquele documento), além do cenário canônico
+já existente CTR-11 (`tests/cenarios-obrigatorios.md`). Nenhum contrato novo é criado
+ali; a composição apenas orquestra o que esta seção já define.
+
 ## 7. Ambiguidade e incompatibilidade
 
 - Em dúvida real, a IA omite o candidato; nunca adivinha.
