@@ -466,4 +466,34 @@ primeira entrega**, por dependerem de contratos ainda não escritos:
   transações, quedas e retomadas, replay sem máquina, concorrência válida divergente,
   isolamento multiclínica, continuação superada, logs sem PII e o ciclo de retenção de
   30 dias. Nenhum implementado nesta rodada; **nenhum soma à suíte oficial atual** —
-  são contagens em domínios diferentes, mesma disciplina dos demais prefixos acima.
+  são contagens em domínios diferentes, mesma disciplina dos demais prefixos acima;
+- implementação técnica da persistência da composição (`P4I`, especificação técnica
+  documental, não implementada) — cenários `P4IT-01` a `P4IT-30`, índice completo em
+  `../specs/implementacao-persistencia-composicao-v1.md` §24.2, que também converte os
+  `P4T-01` a `P4T-23` acima em matriz de implementação futura (camada, fixture, ação,
+  concorrência ou falha simulada, resultado esperado e invariante provada) **sem
+  renumerar nenhum deles**. `P4IT-01` a `P4IT-13` cobrem criação concorrente do estado
+  inicial, lease no limite, worker antigo com token rotacionado, FK cruzada entre
+  clínicas, tentativa de mutação de resultado, limpeza concorrente, versão de contrato
+  JSONB desconhecida, falha injetada em cada etapa da transação final, aplicação e
+  rollback **da parcela aditiva** da migration em ambiente descartável — nunca da
+  troca da constraint de deduplicação, coberta à parte por `P4IT-14`/`P4IT-15`/
+  `P4IT-29`/`P4IT-30` —, resultado antes e depois de 30 dias, deduplicação
+  sem replay completo e proibição de recomposição após a expiração do payload
+  (`P4I-R1`). `P4IT-14` a `P4IT-26` cobrem a substituição controlada da constraint de
+  deduplicação, o backfill comprovável das linhas existentes (canal, fingerprint
+  ausente, conversa não derivável), o bloqueio de promoção por linha incompatível, o
+  reclaim da mensagem com e sem interpretação persistida, o worker antigo perdendo
+  autoridade após a rotação do token, e a correlação `requisicao_id` → efeito
+  (preparatória compatível, classe incompatível, tentativa de troca na
+  reapresentação). `P4IT-27` a `P4IT-30`, acrescentados nesta rodada, cobrem o
+  enforcement físico da coorte contratual (`versao_contrato_registro` e o `CHECK`
+  condicional que a impõe): linha histórica com campos legitimamente nulos convivendo
+  com mensagem `P4I` nova sempre completa; promoção de linha histórica exigindo
+  backfill integral, nunca parcial; e a distinção entre rollback compatível da
+  constraint antiga (nenhuma linha depende de `canal` para se distinguir) e rollback
+  incompatível bloqueado (existe tráfego real que só a chave nova distingue, caso em
+  que o rollback estrutural é proibido e a reversão é só operacional, por flag).
+  Nenhum implementado nesta rodada; **nenhum soma à suíte oficial atual** — mesma
+  disciplina de não duplicação e de contagem separada aplicada
+  a todos os prefixos acima.

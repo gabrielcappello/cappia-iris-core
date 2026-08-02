@@ -239,6 +239,121 @@ Detalhe completo: `../specs/persistencia-fisica-composicao-v1.md`.
 - **`P5` (tecnologia de redação) continua adiada** — nenhuma escolha entre template
   determinístico, IA redatora controlada ou combinação dos dois foi feita.
 
+## Implementação técnica da persistência da composição — `P4I` (02/08/2026)
+
+Decisões que fecham a especificação **técnica documental** da implementação de `P4`.
+**`P4I` está especificada, não implementada**: nenhuma migration foi criada, nenhum SQL
+foi executado, nenhum banco foi alterado, e **nenhuma estrutura legada da Iris antiga
+está autorizada**. Detalhe completo: `../specs/implementacao-persistencia-composicao-v1.md`.
+
+- **Seis tabelas, sem autoridade duplicada** (`P4I.1`): `estado_conversa` e
+  `mensagens_recebidas` (**existentes**, auditadas e evoluídas de forma
+  **predominantemente aditiva**) mais `continuacoes_composicao`,
+  `requisicoes_composicao`, `efeitos_composicao` e `resultados_composicao`
+  (**novas**). Nenhuma outra tabela pode duplicar estado oficial ou deduplicação;
+  requisições e efeitos permanecem separados.
+- **As duas estruturas existentes não estão automaticamente aprovadas** (`P4I.2`): a
+  auditoria registrou **doze divergências** — entre elas, CAS por `timestamptz` em vez
+  de versão inteira, chave de deduplicação sem `clinica_id` nem canal, ausência de
+  fingerprint de payload e de retenção do bruto. Todas as bloqueantes devem ser
+  fechadas por evolução **predominantemente aditiva** — **com exceção explícita da
+  substituição controlada da constraint antiga de deduplicação** (`P4I.6`) — e a
+  auditoria do ambiente-alvo deve ser refeita **read-only**, sem presumir que o banco
+  vivo corresponde ao schema versionado.
+- **Estado da migration de interpretação — três afirmações distintas, nunca
+  fundidas**: `20260730_iris_nova_interpretacao_v1.sql` está **escrita e versionada**
+  no repositório; o próprio cabeçalho declara que, **na rodada em que foi criada**,
+  não havia sido aplicada em nenhum banco; o **estado atual de aplicação é
+  desconhecido** — só um preflight read-only futuro, imediatamente antes de qualquer
+  migration nova, pode determinar se foi aplicada, em quais ambientes, quais objetos
+  existem e se houve alteração posterior.
+- **Versão inteira substitui o CAS por timestamp** (`P4I.3`, `P4I.5`): coluna `versao`
+  (`bigint`) nova, começando em zero, incrementada **somente pelo banco**; o cliente
+  envia apenas a versão esperada; criação inicial da linha trata conflito de corrida
+  reconhecendo a linha existente, sem erro operacional. `atualizado_em` permanece
+  auditoria e nunca é predicado de CAS desta camada.
+- **Nova chave de deduplicação substitui a constraint antiga** (`P4I.6`): a
+  constraint vigente de `mensagens_recebidas` (`provider` + `instancia_whatsapp` +
+  `message_id`) **não inclui `clinica_id` nem canal, e não é responsável por
+  vincular globalmente uma instância a uma clínica**. Essa responsabilidade pertence
+  a `clinicas_provider_instancia_key` (unicidade global de `provider` +
+  `instancia_whatsapp` em `clinicas`), reforçada pela FK composta entre a mensagem e
+  a clínica proprietária. **A mitigação atual do risco multiclínica vem dessas duas
+  — não da constraint de deduplicação da mensagem** — e **substituir ou remover a
+  constraint antiga de `mensagens_recebidas` não remove, por si só, a unicidade
+  global em `clinicas`**: são constraints independentes, em tabelas diferentes.
+  Mesmo assim, `D6` permanece **parcialmente confirmada e bloqueante**: a constraint
+  antiga diverge da identidade exigida por `P4` §6 e será **substituída**, não
+  apenas complementada. A troca é uma **substituição controlada de constraint**
+  dentro de uma migration predominantemente aditiva: auditar dados, criar e
+  preencher `canal`, validar duplicidade sob a chave nova, ativá-la, só então
+  remover a antiga, provar ausência de janela sem deduplicação, com **rollback
+  condicionado à compatibilidade dos dados** — recriar a constraint antiga só é
+  possível se nenhuma linha depender de `canal` para se distinguir; havendo tráfego
+  que já dependa da chave nova, o rollback estrutural fica **proibido** e a reversão
+  é operacional, por flag, preservando a constraint nova e os dados.
+- **Compatibilidade, backfill e coorte contratual das linhas existentes**
+  (`P4I.10`): `canal`, `conversa_id`, `payload_fingerprint` e os vínculos de
+  continuação/resultado ganham nulabilidade **transitória e explícita** em
+  `mensagens_recebidas`; preflight mede cobertura real antes de qualquer backfill;
+  **nenhum dado é fabricado** — payload, fingerprint ou vínculo ausente permanecem
+  nulos. O enforcement é **físico, não apenas de política**: uma coluna nova,
+  `versao_contrato_registro smallint`, marca a coorte de cada linha — histórica
+  (nula ou legada) ou `P4I` (sempre `1`, atribuído pela própria operação de
+  inserção, nunca pelo chamador) — e um **`CHECK` condicional** a esse valor exige
+  `canal`, `conversa_id` e `payload_fingerprint` preenchidos **somente** para a
+  coorte `P4I`. **Nunca existe `NOT NULL` incondicional** nessas colunas; a coorte
+  histórica pode permanecer nula indefinidamente sem bloquear a constraint
+  condicional. Promover uma linha histórica à coorte `P4I` exige backfill
+  **integral**, nunca parcial; linha incompatível bloqueia a promoção até decisão
+  técnica documentada.
+- **Isolamento multiclínica estrutural** (`P4I.6`, `P4I.22`): toda referência é **FK
+  composta** incluindo `clinica_id`; RLS é defesa **adicional**, nunca suficiente — o
+  predicado de clínica é obrigatório também no código.
+- **Identidades UUID v4 opacas, com distribuição própria** (`P4I.7`, `P4I.23`):
+  `continuacao_id`, `requisicao_id`, `efeito_id` e `resultado_id` nascem no **Core**;
+  identidade interna da mensagem e `claim_token` nascem na **operação atômica de
+  persistência**. Ordenação nunca usa identidade — só versões e timestamps. O Core
+  **não importa** Supabase, Postgres, driver ou SDK.
+- **Claim e lease pelo relógio do Postgres** (`P4I.14`): **60 segundos** para a
+  mensagem, **5 minutos** para o efeito, ambos exclusivamente pelo relógio do banco —
+  nunca o do worker, do Core ou do adaptador; a rotação de token retira a autoridade
+  do worker antigo imediatamente; o lease **nunca** altera a validade semântica da
+  continuação.
+- **Reclaim da mensagem permitido com ou sem interpretação persistida** (`P4I.14`,
+  correção desta rodada): o marcador `interpretacao_persistida_em` **nunca bloqueia**
+  o reclaim de um lease expirado — ele só decide o comportamento **depois** do claim
+  readquirido: sem marcador, interpretar como se fosse a primeira tentativa; com
+  marcador, **nunca reinterpretar**, retornar a resposta fixa canônica já aprovada.
+  Preservado em ambos os casos: claim vigente impede paralelismo; resultado existente
+  produz replay antes de qualquer retomada; payload divergente falha fechado.
+- **Correlação opcional e condicionada `requisicao_id` → efeito** (`P4I.16`):
+  `efeitos_composicao.requisicao_id` é **obrigatório** quando o efeito tiver origem
+  numa requisição `preparacao_efeito`, e **nulo** apenas quando o Core emitir o
+  efeito diretamente. FK composta com `clinica_id`; a requisição vinculada precisa
+  pertencer à mesma clínica, conversa, mensagem e continuação, com classe compatível.
+  **Uma reapresentação nunca troca essa correlação.** `requisicoes_composicao` e
+  `efeitos_composicao` continuam tabelas separadas (`P4I.13`); o adaptador não pode
+  criar efeito substituto mesmo com correlação ausente ou incompatível.
+- **Três políticas de retenção independentes** (`P4I.20`, `P4I.21`): **7 dias** para o
+  conteúdo bruto (de `recebido_em`); **30 dias** para os artefatos técnicos encerrados
+  (de `encerrado_em`); **30 dias** para o payload do resultado (de `criado_em`). A
+  limpeza é idempotente, opera por lote, **nunca apaga linhas**, nunca limpa continuação
+  ativa e nunca expõe payload em log.
+- **`P4I-R1` — retenção do resultado lógico** (`P4I.24`, decisão final de Gabriel):
+  **payload completo do resultado por 30 dias; depois, somente metadados.** A
+  **deduplicação permanece permanente**; o **replay completo expira**; o domínio **não é
+  recomposto**. Após a limpeza, o sistema não reinterpreta, não chama a máquina, não
+  consulta disponibilidade, não reconstrói o resultado e não responde como se a mensagem
+  fosse inédita — retorna o estado técnico fechado
+  `resultado_processado_payload_expirado`, que **não** é falha de domínio e **não**
+  representa novo processamento.
+- **Limite preservado** (seção 1 da spec): `P4I` termina no resultado lógico
+  persistido e recuperável por replay. `P5`, redação, outbox, transporte, retry, ACK,
+  exactly-once de entrega e deploy operacional permanecem **fora**, e **nenhuma promessa
+  de exactly-once de entrega é feita**.
+- **Nenhuma implementação começa antes da aprovação desta especificação técnica.**
+
 ## Escopo completo do atendimento
 
 Ver `06-roadmap.md` para a lista completa de escopo e a ordem em que cada parte será
