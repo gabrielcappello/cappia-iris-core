@@ -454,8 +454,16 @@ primeira entrega**, por dependerem de contratos ainda não escritos:
   invariantes de persistência;
 - auditoria do legado (`disponibilidade.md` §19, `persistencia-v1.md` §28);
 - integração entre o resolvedor temporal (já publicado e implementado) e a composição
-  determinística (ainda apenas especificada) — cenários `ITC-01` a `ITC-25`, índice
+  determinística (ainda apenas especificada) — cenários `ITC-01` a `ITC-53`, índice
   completo em `../specs/integracao-temporal-composicao-v1.md` §21; nenhum implementado
   nesta rodada, mesma disciplina de não duplicação já aplicada aos cenários `COMP-*`
   (`composicao-novo-agendamento-v1.md` §22) e `TMP-*`
-  (`resolvedor-temporal-v1.md` §27).
+  (`resolvedor-temporal-v1.md` §27);
+- persistência física e idempotência concreta da composição (`P4`, especificação
+  documental, não implementada) — cenários `P4T-01` a `P4T-23`, índice completo em
+  `../specs/persistencia-fisica-composicao-v1.md` §17; cobrem deduplicação simultânea e
+  pós-conclusão, payload divergente, conflito de versão, atomicidade das duas
+  transações, quedas e retomadas, replay sem máquina, concorrência válida divergente,
+  isolamento multiclínica, continuação superada, logs sem PII e o ciclo de retenção de
+  30 dias. Nenhum implementado nesta rodada; **nenhum soma à suíte oficial atual** —
+  são contagens em domínios diferentes, mesma disciplina dos demais prefixos acima.

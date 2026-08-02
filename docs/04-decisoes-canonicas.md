@@ -186,12 +186,58 @@ agendamento (ainda apenas especificada). Detalhe completo:
   duração, snapshot diário, revalidação de opção, estado de operação idempotente) é
   uma requisição explícita devolvida ao orquestrador, que a executa e devolve o
   resultado como nova entrada da mesma função.
-- **Persistência física adiada**: tabelas, colunas, RPCs, transações e CAS concretos
-  para o estado interpretado acumulado e para o resultado da composição permanecem
-  pendência explícita, sem schema físico criado ou presumido por esta rodada.
+- **Persistência física adiada naquela rodada**: tabelas, colunas, RPCs, transações e
+  CAS concretos para o estado interpretado acumulado e para o resultado da composição
+  permaneceram pendência explícita, sem schema físico criado ou presumido. **Essa
+  pendência foi endereçada documentalmente em 02/08/2026** — ver
+  `## Persistência física da composição — P4` abaixo; continua **sem** schema físico,
+  migration ou RPC criados.
 - **Tecnologia de redação adiada**: entre template determinístico, IA redatora
   controlada restrita aos fatos autorizados, ou combinação dos dois, nenhuma é
   escolhida nesta rodada; nenhum fallback novo cobre essa indecisão.
+
+## Persistência física da composição — `P4` (02/08/2026)
+
+Decisões que fecham a especificação **documental** da persistência física e da
+idempotência concreta da composição determinística. **`P4` está especificada, não
+implementada**: nenhuma tabela, coluna, índice, constraint, RPC, migration ou schema
+físico foi criado, e **nenhuma estrutura existente foi aprovada para reutilização**.
+Detalhe completo: `../specs/persistencia-fisica-composicao-v1.md`.
+
+- **Estado oficial e continuação são registros fisicamente separados.** O estado oficial
+  é a autoridade durável; a continuação é artefato técnico com ciclo de vida e retenção
+  próprios. O estado nunca é reconstruído a partir de uma continuação, e dado presente
+  apenas na continuação nunca vira fato oficial.
+- **A versão do estado é um inteiro monotônico atribuído pelo banco; timestamp nunca é
+  versão.** Todo avanço oficial ocorre por CAS incluindo `clinica_id`, `conversa_id` e a
+  versão esperada; zero linhas atualizadas é sempre `conflito_versao`. A execução
+  perdedora carrega o avanço oficial, faz replay se houver resultado e, caso contrário,
+  falha fechado — **nunca reaplica decisão calculada sobre estado antigo**.
+- **Persistência intermediária e persistência final são, cada uma, uma única transação
+  lógica.** Estado final e resultado lógico nunca são confirmados separadamente, e não
+  existe atualização parcial observável.
+- **Existe no máximo um resultado por mensagem e clínica**, com conteúdo imutável por
+  `resultado_id`. Deduplicação de transporte, idempotência operacional e idempotência da
+  composição são três mecanismos distintos, e nenhum substitui outro.
+- **Deduplicação por identidade autenticada do transporte** (`clinica_id` + canal +
+  provider + instância + `message_id`), com o texto fora da identidade. Payload
+  divergente sob a mesma identidade falha fechado.
+- **A validade de uma continuação é semântica — por evento e versão —, nunca TTL por
+  relógio.** Uma pausa longa e legítima não invalida um checkpoint; um avanço concorrente
+  invalida imediatamente.
+- **Retenção dos artefatos técnicos: 30 dias** após encerramento
+  (`resultado_persistido`, `superada`, `falha_fechada`); depois disso restam somente
+  metadados mínimos (identificadores, vínculos, tipo, status, versões, timestamps,
+  códigos sem PII e fingerprint técnico), e a deduplicação continua funcionando. **Não
+  altera o prazo de 7 dias do conteúdo bruto da mensagem** (`persistencia-v1.md` §19):
+  são objetos e prazos diferentes, e nenhum artefato técnico de 30 dias preserva o texto
+  bruto além dos 7.
+- **`P4` termina no resultado lógico persistido e recuperável por replay.** Redação,
+  outbox, envio, retries, ACK e garantia de entrega exatamente uma vez ficam **fora de
+  `P4`**, em contrato posterior de redação e transporte; falhas nessas camadas **nunca
+  alteram o resultado lógico já persistido**.
+- **`P5` (tecnologia de redação) continua adiada** — nenhuma escolha entre template
+  determinístico, IA redatora controlada ou combinação dos dois foi feita.
 
 ## Escopo completo do atendimento
 
