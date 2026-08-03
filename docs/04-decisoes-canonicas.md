@@ -444,8 +444,145 @@ preservado.
 
   **Permanece para etapa posterior, fora desta decisão:** a criação física
   do manifesto; a criação de representações operacionais; a decisão de
-  adotar ou não a Supabase CLI; e a estratégia física de transição de
-  `DA-P4-01`/`DA-P4-02`, não iniciada por esta decisão.
+  adotar ou não a Supabase CLI. **A estratégia física de transição de
+  `DA-P4-01`/`DA-P4-02`, não iniciada por esta decisão, foi registrada
+  posteriormente em `DA-P4-04` (ver abaixo).**
+- **`DA-P4-04` — estratégia físico-operacional conjunta de transição de
+  `DA-P4-01`/`DA-P4-02` (aprovada, rodada operacional 325; não
+  implementada):** define **como** o corte de autoridade das duas decisões
+  anteriores ocorrerá fisicamente — sem fixar SQL concreto, sem iniciar a
+  especificação física, sem alterar `DA-P4-01`, `DA-P4-02` ou `DA-P4-03` em
+  substância. **Decisão canônica:** a transição será **aditiva e por
+  autoridade exclusiva de runtime** — novas operações nascerão sem acesso
+  para papéis de aplicação, serão validadas antes do corte, entradas serão
+  suspensas e toda execução legada drenada, grants e constraint serão
+  trocados atomicamente no PostgreSQL, o Core novo saudável será ativado
+  antes da retomada, e qualquer rollback posterior dependerá da
+  compatibilidade efetiva dos dados, com remoção física do legado somente em
+  etapa aprovada separadamente.
+
+  **1. Definição de autoridade de runtime.** Autoridade de runtime é **toda
+  capacidade de execução disponível** aos papéis ou consumidores usados pelo
+  fluxo da aplicação, **mesmo quando não houver uso observado naquele
+  momento** — não se limita ao que o tráfego efetivamente usa em cada
+  instante. **Não** contam como autoridade concorrente de runtime: owner
+  administrativo; superusuário; contexto administrativo controlado que não
+  participe do fluxo normal.
+
+  **2. Novas operações inicialmente sem autoridade.** As novas funções
+  mutáveis nascem com **revogações explícitas** para `PUBLIC`, `anon`,
+  `authenticated`, `service_role`, e qualquer papel herdado capaz de
+  alcançar `EXECUTE` — ausência de grant direto **não basta**; é preciso
+  verificar ACL efetiva, heranças de papéis, default privileges, e ausência
+  de acesso antecipado por runtime. Validação técnica ocorre **somente** em
+  ambiente descartável ou por contexto administrativo controlado, **nunca**
+  concedendo antecipadamente autoridade ao papel de runtime.
+
+  **3. Preparação estrutural.** Antes do corte devem existir e estar
+  validados: tabelas/colunas/constraints de `P4I`; `estado_conversa.versao`
+  inicializada e coerente; nova constraint de deduplicação criada e
+  validada; constraint antiga ainda ativa; novas operações materializadas;
+  grants de runtime revogados; testes obrigatórios aprovados; rollback
+  pré-tráfego comprovado.
+
+  **4. Core novo preparado.** Significa: artefato implantado; saudável;
+  compatível com as novas operações; pronto para receber tráfego; **ainda
+  inativo para entradas reais**. Um build local ou artefato apenas
+  disponível **não satisfaz** o gate.
+
+  **5. Cache PostgREST.** Antes do corte: presença, assinatura e metadados
+  validados no cache do PostgREST; nenhuma entrada pode ser liberada
+  enquanto a função necessária estiver ausente ou desatualizada no cache.
+  Essa validação confirma **apenas**: presença da função; assinatura;
+  metadados esperados no cache. Ela **não concede `EXECUTE`; não ativa
+  autoridade; não substitui a verificação de ACLs (ponto 2); e não libera
+  tráfego antecipadamente** — é uma condição necessária, nunca suficiente,
+  para o corte. O mecanismo físico de atualização do cache **não é
+  especificado nesta decisão**.
+
+  **6. Auditoria de consumidores externos.** Gate obrigatório: **nenhum
+  consumidor externo autorizado permanece dependente das vias legadas** — a
+  auditoria considera chamadas fora do repositório e fora do Core oficial.
+  Responsável, ferramenta e formato do relatório permanecem para a
+  especificação operacional.
+
+  **7. Suspensão e drenagem.** Critérios de drenagem confirmada, **já
+  fechados por esta decisão** (não abertos para a especificação física):
+  nenhuma entrada nova é aceita; zero claims legados ativos; zero leases
+  legados válidos; zero chamadas legadas em execução; zero transações
+  legadas em execução; zero escritas legadas em voo. Permanecem em aberto
+  somente: mecanismo de medição; timeout; ferramenta; procedimento físico
+  de execução e confirmação.
+
+  **8. Transação PostgreSQL de transferência.** Estruturas, constraints e
+  `versao` podem ser preparadas com antecedência, fora desta transação.
+  Durante o corte, o que é transferido **atomicamente no PostgreSQL** é a
+  **autoridade de runtime das operações legadas para as novas** — nunca a
+  identidade ou a coluna de deduplicação/CAS em si, que já existem desde a
+  preparação estrutural (ponto 3). Somente após todos os gates: retirar a
+  autoridade de runtime das funções legadas; conceder autoridade de runtime
+  exclusivamente às novas operações. A retirada da constraint antiga ocorre
+  **nessa mesma transação somente quando todos os gates próprios estiverem
+  satisfeitos**: a nova constraint estiver válida, a função antiga já
+  estiver sem capacidade de registrar, não houver chamadas em voo, e os
+  dados estiverem compatíveis. `REVOKE`, `GRANT` e `DROP CONSTRAINT` podem
+  integrar uma única transação PostgreSQL; falha da transação reverte
+  integralmente essas alterações; `DROP CONSTRAINT` pode exigir
+  `ACCESS EXCLUSIVE` e aguardar locks — timeout e tratamento concreto da
+  espera ficam para a especificação física.
+
+  **9. Banco e Core — ordem obrigatória, nunca uma transação conjunta:**
+  (1) Core novo implantado, saudável e inativo; (2) entradas suspensas; (3)
+  execução legada drenada; (4) transferência exclusiva de autoridade no
+  banco; (5) ativação do Core novo; (6) validação de saúde; (7) retomada
+  das entradas. Durante a suspensão pode existir um intervalo sem via
+  disponível para tráfego, mas **nenhuma entrada pode ser aceita** nesse
+  período. Esta sequência completa de coordenação entre banco, Core,
+  suspensão, drenagem e retomada é **decisão própria de `DA-P4-04`** — não
+  é atribuída a `P4I.6` nem à seção 3.2.1.
+
+  **10. Deduplicação e CAS.** `P4I.6`/3.2.1 sustenta **especificamente** a
+  troca da deduplicação sem janela desprotegida — não a sequência completa
+  do ponto 9. Nunca existe janela sem deduplicação; nova e antiga
+  constraints podem coexistir temporariamente; a antiga só é removida após
+  a nova estar validada; a função antiga perde autoridade **antes** da
+  remoção da constraint antiga; `atualizado_em` nunca permanece como CAS
+  ativo junto com `versao`; somente a nova operação por `versao` recebe
+  autoridade no corte.
+
+  **11. Rollback.** Antes de tráfego novo: grants e deploy podem ser
+  revertidos somente após confirmar ausência de escrita nova; estrutura e
+  dados preservados até o preflight de compatibilidade. Depois de tráfego
+  novo: a **possibilidade de rollback depende do preflight de
+  compatibilidade dos dados**, nunca de o tráfego real ter ou não ocorrido
+  — **se os dados continuarem compatíveis, a reversão coordenada ainda
+  poderá ser possível**; se houver dependência exclusiva do contrato novo,
+  não reativar automaticamente as funções legadas nem restaurar
+  automaticamente a constraint antiga; nesse caso, seguir com desativação
+  operacional segura da nova via e correção sempre por migration
+  **forward-only**. Após remoção física, retorno ao legado exige nova
+  decisão e nova migration.
+
+  **12. Observação e remoção física.** O período de observação é governado
+  por **gates verificáveis, não por prazo arbitrário**: nenhum uso residual
+  legado; nenhuma falha atribuída à nova via; nenhuma linha incompatível;
+  testes e métricas aprovados. Remoção física permanece etapa posterior,
+  separada, com aprovação própria.
+
+  **Fecha apenas a direção e as invariantes físico-operacionais** — não
+  autoriza migration, implementação, alteração de banco, instalação/
+  configuração de Supabase CLI, ou início da especificação física. Não
+  fixa SQL concreto, mecanismo físico do cache PostgREST, duração de
+  observação, nem responsável pela auditoria de consumidores. Os critérios
+  de drenagem (ponto 7) já estão fechados por esta decisão, não em aberto.
+
+  **Permanece para a especificação física, fora desta decisão:** mecanismo
+  de medição, timeout, ferramenta e procedimento físico de suspensão e
+  drenagem (critérios já fechados nesta decisão, não em aberto); ordem
+  exata dos comandos dentro da transação de corte; mecanismo de
+  atualização do cache PostgREST; duração do período de observação; nome
+  SQL definitivo da operação substituta de `DA-P4-02`; responsável e
+  ferramenta da auditoria de consumidores externos.
 - **Nova chave de deduplicação substitui a constraint antiga** (`P4I.6`): a
   constraint vigente de `mensagens_recebidas` (`provider` + `instancia_whatsapp` +
   `message_id`) **não inclui `clinica_id` nem canal, e não é responsável por
