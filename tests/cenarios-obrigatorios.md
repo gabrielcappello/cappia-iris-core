@@ -93,6 +93,22 @@ Fonte: `interpretacao-ia.md` · `novo-agendamento.md` §4, §8
 > `interpretacao-ia.md` ("Divergência conhecida no código"). **Bloqueadores antes de
 > qualquer tráfego real.**
 
+**Cenários obrigatórios `INT-P4I-01` a `INT-P4I-14`** — decisão arquitetural `D2`,
+CAS de `aplicar_interpretacao_condicional` sob `estado_conversa.versao`, especificação
+documental em `interpretacao-ia.md` ("Operação de aplicação da interpretação sob CAS
+por `estado_conversa.versao` (`P4I`)"), não implementada. Cobrem CAS com duas
+transações concorrentes, alteração efetiva com invalidação atômica de derivados
+(`ITC-29`), caminho sem alteração efetiva concorrente com checkpoint de composição,
+marcador já preenchido com precedência sobre versão divergente, conflito de versão
+com marcador ainda nulo, claim inválido, lease expirado, queda entre avanço de versão
+e marcação da interpretação, continuação de composição tornada obsoleta por
+interpretação concorrente fora da transição legítima (`ITC-40`/`ITC-41`),
+concorrência com resultado final da composição, isolamento multiclínica, alteração
+fora da allowlist canônica única, escrita legada por `atualizado_em` impedida após a
+ativação da `P4I`, e validação de `versao_contrato_dados`. **Documentais, futuros,
+não executáveis — nenhum somado à suíte oficial** (permanece 730 testes, 725
+aprovados, 5 pulados, 0 falhas).
+
 ## 4. Eventos candidatos
 
 Fonte: `eventos-conversacionais-v1.md`

@@ -297,6 +297,43 @@ está autorizada**. Detalhe completo: `../specs/implementacao-persistencia-compo
      etapa posterior, sujeita a aprovação própria;
   6. a ordem, quantidade e agrupamento das migrations que executarão esta decisão
      **permanecem em aberto**, a definir posteriormente.
+- **Decisão arquitetural D2 — CAS de `aplicar_interpretacao_condicional` sob
+  `estado_conversa.versao` (aprovada, rodada operacional 286; não implementada):**
+  toda alteração efetiva de `estado_conversa.dados`, **inclusive a resultante da
+  interpretação**, participa da única sequência monotônica `estado_conversa.versao` —
+  nunca de uma segunda numeração paralela. O avanço usa CAS por `clinica_id` +
+  `conversa_id` + `versao_esperada` (mesmo predicado da composição, seção 14).
+  `atualizado_em` **não é versão** e não pode permanecer como autoridade de
+  concorrência depois da ativação da `P4I` — permanece só como carimbo de auditoria
+  (mesma regra já fechada para `P4I.3`/`P4I.5`, agora estendida explicitamente à
+  interpretação). Interpretação e composição **permanecem operações separadas** —
+  esta decisão não as funde. `public.aplicar_interpretacao_condicional` e o adaptador
+  `aplicarInterpretacaoCondicional` **não poderão permanecer como via ativa de
+  escrita** usando apenas CAS por `atualizado_em`; a direção recomendada é criar uma
+  **operação específica** para aplicar a interpretação ao estado oficial sob CAS por
+  `versao`, especificada em `specs/interpretacao-ia.md`, seção "Contrato técnico de
+  banco — Etapa 6" → "Operação de aplicação da interpretação sob CAS por
+  `estado_conversa.versao` (`P4I`)". Esta decisão fecha **apenas a direção
+  arquitetural**; não autoriza migration, implementação, alteração de banco ou de
+  código. O **nome SQL definitivo e a estratégia de transição permanecem em aberto**
+  até a especificação documental ser aprovada. Invariantes aprovadas junto com a
+  decisão:
+  1. nenhuma alteração de `estado_conversa.dados` ocorre sem avanço correspondente
+     de `versao` — nem pela interpretação, nem pela composição;
+  2. `versao` é incrementada **somente pelo banco**; o cliente/adaptador envia
+     apenas a versão esperada;
+  3. nunca podem existir duas autoridades ativas de escrita sobre
+     `estado_conversa.dados` — a função legada por `atualizado_em` deixa de ser via
+     ativa antes da ativação da `P4I`, nunca depois;
+  4. a existência de consumidores externos de `aplicar_interpretacao_condicional`
+     (fora deste repositório) deve ser verificada antes do corte operacional — a
+     ausência de consumidor no repositório, confirmada nesta rodada por busca no
+     código-fonte, não substitui essa verificação para ambientes fora do
+     repositório;
+  5. a remoção física da função e do adaptador **não faz parte** desta decisão — é
+     etapa posterior, sujeita a aprovação própria;
+  6. a ordem, quantidade e agrupamento das migrations que executarão esta decisão
+     **permanecem em aberto**, a definir posteriormente.
 - **Nova chave de deduplicação substitui a constraint antiga** (`P4I.6`): a
   constraint vigente de `mensagens_recebidas` (`provider` + `instancia_whatsapp` +
   `message_id`) **não inclui `clinica_id` nem canal, e não é responsável por

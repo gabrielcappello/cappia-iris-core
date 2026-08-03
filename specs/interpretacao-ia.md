@@ -488,6 +488,417 @@ Para `reivindicar_mensagem` e `aplicar_interpretacao_condicional`:
 - nenhuma IA acessa as RPCs diretamente;
 - nenhuma credencial entra em prompt, payload ou log.
 
+### Operação de aplicação da interpretação sob CAS por `estado_conversa.versao` (`P4I`)
+
+**Status:** especificação documental da direção arquitetural aprovada em `D2`
+(`../docs/04-decisoes-canonicas.md`). **Não implementada.** Nenhuma migration criada,
+nenhum SQL executado, nenhum código TypeScript alterado. Esta seção substitui, **como
+destino de direção**, a operação descrita acima ("RPC de persistência atômica —
+`aplicar_interpretacao_condicional`") — o contrato acima permanece a descrição fiel
+do que está **atualmente ativo** no banco; esta seção descreve o que **deve
+substituí-lo**, sem fixar ainda nome SQL definitivo nem estratégia de transição
+(`D2`, ponto 7).
+
+**Por que esta operação é necessária:** a partir da ativação de `P4I`,
+`estado_conversa` passa a ter uma coluna `versao bigint` monotônica, atribuída pelo
+banco (`persistencia-fisica-composicao-v1.md` §7; `implementacao-persistencia-
+composicao-v1.md` §5.1, §14). A composição avança essa versão através de
+`persistir_checkpoint`/`persistir_resultado_final` (`implementacao-persistencia-
+composicao-v1.md` §13.5–§13.6). A interpretação (Etapa 6/7) também altera
+`estado_conversa.dados` — hoje via `aplicar_interpretacao_condicional`, usando CAS por
+`atualizado_em`. Duas vias de escrita sobre a mesma linha, usando dois predicados de
+concorrência diferentes, violaria a invariante central de `P4` (§19): "timestamp nunca
+é versão"; "todo avanço oficial por CAS incluindo `clinica_id` + `conversa_id` +
+versão esperada". Esta operação fecha essa lacuna: a interpretação passa a avançar a
+**mesma** `versao` que a composição usa e espera.
+
+#### 1. Responsabilidade
+
+A operação:
+
+- valida a mensagem (`clinica_id`, `conversa_id`, claim, lease), na mesma ordem de
+  locks já fixada acima ("Locks": mensagem antes de conversa);
+- valida que a interpretação ainda não foi persistida
+  (`interpretacao_persistida_em IS NULL`), preservando exatamente a mesma regra já
+  fechada para a operação atual;
+- aplica somente as alterações estruturadas autorizadas. **Autoridade única da
+  allowlist:** o contrato versionado de `AlteracoesDados`/allowlist já aprovado
+  (`src/core/tipos.ts`; mesmo conjunto de campos e ações validado hoje em
+  `aplicar_interpretacao_condicional` — "intencao, procedimento_texto,
+  dentista_texto, data_texto, periodo, horario_texto, nome, cpf, data_nascimento,
+  email"; ações "informar/corrigir/remover") é a **única autoridade semântica**
+  sobre o que é uma alteração autorizada. Pode existir validação no Core, no banco,
+  ou em ambos, como **enforcement** (camadas redundantes de verificação) — mas:
+  **não podem existir catálogos independentes** (uma allowlist no Core diferente da
+  allowlist no banco); **nenhuma camada pode ampliar ou divergir** da allowlist
+  canônica (nem aceitar campo a mais, nem ação a mais, nem domínio de valor
+  diferente do já aprovado para `periodo`/`intencao`); **qualquer validação
+  duplicada aplica exatamente o mesmo contrato versionado**, nunca uma cópia
+  divergente ou uma versão "equivalente" mantida separadamente. Esta especificação
+  não amplia nem restringe o contrato de domínio já aprovado;
+- usa CAS por `versao_esperada`, no lugar de `snapshot_atualizado_em`;
+- incrementa `estado_conversa.versao` **no banco** quando há alteração efetiva do
+  estado oficial — nunca calculado pelo cliente ou pelo adaptador;
+- grava `interpretacao_persistida_em` na **mesma transação lógica** que o CAS —
+  preservando a atomicidade já garantida hoje;
+- retorna `estado_oficial` (`dados`) e `versao_estado` (`versao`) resultantes;
+- **não executa composição** — não resolve procedimento, dentista, duração,
+  disponibilidade ou temporal;
+- **não cria continuação** — `continuacoes_composicao` não é tocada por esta
+  operação;
+- **não executa efeito externo** — nenhuma escrita fora de `estado_conversa` e
+  `mensagens_recebidas` (`interpretacao_persistida_em`);
+- **não decide fluxo** — permanece, como hoje, uma operação de persistência
+  condicional, nunca uma decisão de controlador.
+
+#### 2. Entradas
+
+Conceituais, sem nome físico nem assinatura SQL definitiva (`D2`, ponto 7):
+
+- `clinica_id`;
+- `conversa_id`;
+- `mensagem_id` (equivalente a `mensagem_recebida_id` na operação atual);
+- `claim_token`;
+- `versao_esperada` (substitui `snapshot_atualizado_em`);
+- alterações estruturadas autorizadas (mesmo formato de `alteracoes_aplicaveis`/
+  `AlteracoesDados`, `src/core/tipos.ts` — nenhuma mudança de contrato de domínio
+  nesta especificação);
+- `telefone_normalizado` permanece necessário pelo mesmo motivo já registrado na
+  operação atual (compor a chave natural da conversa) — preservado aqui, não
+  removido.
+
+`versao_contrato_dados` **não integra** esta lista de entradas conceituais — ver
+seção própria abaixo ("Precondição: coerência com o contrato versionado de
+`dados`"), porque sua forma física de transporte permanece em aberto e não deve ser
+presumida como um parâmetro de entrada até essa forma ser decidida.
+
+#### 2.1 Precondição: coerência com o contrato versionado de `dados`
+
+Independente da forma física, a operação está sujeita a esta precondição, **não
+opcional**:
+
+- o estado oficial (`dados`) e as alterações aplicadas por esta operação **devem
+  respeitar o contrato versionado** de `estado_conversa.dados`
+  (`implementacao-persistencia-composicao-v1.md` §5.1: "JSONB sempre versionado";
+  §17: "versão de contrato obrigatória em coluna normalizada própria... versão
+  desconhecida nunca é aceita silenciosamente — produz `registro_corrompido`");
+- essa coerência **deve ser validada atomicamente** pela operação, na mesma
+  transação que aplica as demais verificações (claim, lease, CAS por `versao`) —
+  nunca uma checagem solta, anterior ou posterior à transação de escrita;
+- **permanece em aberto** se a versão contratual:
+  - transita como entrada (fornecida pelo chamador, análoga a `versao_esperada`);
+  - é determinada pelo banco (atribuída ou verificada internamente à operação);
+  - é derivada do próprio estado oficial (lida do que já está gravado em
+    `estado_conversa`, nunca inferida por aproximação);
+  - ou é validada por outro mecanismo único aprovado (por exemplo, `CHECK` de
+    banco, sem trânsito explícito por uma entrada nomeada).
+  Nenhuma dessas alternativas está descartada nem escolhida nesta rodada — só o
+  mecanismo físico permanece adiado, coerente com "o nome SQL definitivo...
+  permanece em aberto" (`D2`, ponto 7); a **existência da validação em si não é
+  opcional**;
+- **não pode existir catálogo independente ou interpretação divergente** dessa
+  versão contratual — qualquer forma física escolhida no futuro usa exatamente o
+  mesmo contrato de versão já vigente em `P4I` (§17), nunca uma numeração ou
+  interpretação própria desta operação.
+
+#### 3. Saídas
+
+União fechada, análoga à já existente (seção "Resultados mínimos da persistência"),
+estendida para distinguir versão de conflito:
+
+- **aplicação com alteração efetiva** — `dados` e `versao` avançam juntos;
+  `interpretacao_persistida_em` preenchido; retorna `estado_oficial` e `versao_estado`
+  resultantes;
+- **interpretação válida sem alteração efetiva** — saída vazia, idempotente, ou
+  somente conflito (mesma casuística já fechada na seção "Casos sem alteração de
+  estado"); mesmo sem alteração de `dados`, a operação **participa da mesma
+  serialização por `versao`** (valida `versao_esperada` atomicamente contra a
+  corrente, na mesma transação); se `versao_esperada` já não corresponder à
+  corrente (outro escritor venceu no meio-tempo), a operação **não grava** o
+  marcador e devolve conflito de versão (ver seção 4) — nunca grava
+  `interpretacao_persistida_em` sobre uma leitura obsoleta; se `versao_esperada`
+  ainda corresponder à corrente, `dados` e `versao` permanecem inalterados,
+  `interpretacao_persistida_em` é preenchido dentro dessa mesma verificação
+  atômica, e a interpretação é considerada persistida com sucesso;
+- **interpretação já persistida** — `interpretacao_persistida_em IS NOT NULL` no
+  momento da validação. **Semântica única, sem variação por outro campo:** este
+  resultado é sempre **reconhecimento idempotente de um fato já ocorrido**, nunca
+  uma variante de `autorizacao_invalida` motivada por outra causa — a mensagem foi
+  legitimamente reivindicada (claim/lease válidos) e sua interpretação já foi
+  gravada antes; a operação não reinterpreta, não reaplica `alteracoes_aplicaveis`,
+  não recalcula `dados` nem `versao`, e não os retorna como se fossem o resultado
+  desta chamada. **Precedência fechada quando o marcador está preenchido e a
+  `versao` apresentada diverge da corrente:** o marcador **sempre precede** — a
+  operação nunca chega a avaliar `versao_esperada` quando
+  `interpretacao_persistida_em IS NOT NULL` (a checagem do marcador ocorre antes,
+  na mesma validação de autorização que hoje verifica claim/lease/status); portanto
+  esse caso **nunca** produz conflito de versão, mesmo que `versao_esperada` esteja
+  desatualizada — produz sempre o mesmo reconhecimento idempotente, independente do
+  valor de `versao_esperada` apresentado. Esta é a **única** regra em toda a
+  especificação para `interpretacao_persistida_em IS NOT NULL` — as seções 5 e 9
+  usam exatamente esta mesma regra, sem variação;
+- **conflito de versão** — `versao_esperada` não corresponde à `versao` corrente;
+  equivalente a `conflito_concorrente`, mas com predicado de `versao`, não de
+  `atualizado_em`; nenhuma alteração aplicada;
+- **claim inválido** — `claim_token` não corresponde ao vigente; parte de
+  `autorizacao_invalida`, preservado;
+- **lease expirado** — `lease_expira_em` não vigente; parte de `autorizacao_invalida`,
+  preservado;
+- **mensagem, clínica ou conversa incompatível** — qualquer descasamento entre os
+  identificadores apresentados e os registrados; parte de `autorizacao_invalida`,
+  preservado (mesma regra de "tratar como inexistente, nunca revelar", já fechada
+  para `referencia_cruzada_clinica` na P4I);
+- **alteração não autorizada** — campo fora da allowlist, ação fora do vocabulário,
+  ou estrutura inválida; mesma regra de rejeição integral já fechada (`INT-05`,
+  `INT-06`, `INT-08`); nenhuma alteração parcial;
+- **erro técnico fechado** — falha de infraestrutura; nunca um novo valor de negócio;
+  rollback integral, preservando "erro técnico permanece exceção controlada — não é
+  resultado de negócio nem novo status persistido" (regra já fechada acima).
+
+Catálogo de nomes definitivo (equivalente a `persistida`/`autorizacao_invalida`/
+`conflito_concorrente` hoje) permanece em aberto — só a distinção semântica acima é
+fechada nesta rodada.
+
+#### 4. Regras de versão
+
+- `versao` **incrementa** exatamente quando há alteração efetiva de `dados` — mesma
+  condição que hoje decide se `atualizado_em` avança;
+- `versao` **não incrementa** quando a interpretação é válida mas não produz
+  alteração efetiva (saída vazia, idempotente, ou somente conflito) — mesma regra já
+  fechada para `atualizado_em` hoje, transposta para `versao`;
+- quando as alterações resultam **no mesmo estado** (idempotência: `dados_novos`
+  igual a `dados_atual`), `versao` permanece igual — nunca incrementada só porque a
+  operação rodou, preservando "uma alteração efetiva... é atômica com
+  `interpretacao_persistida_em`... nunca uma persistência parcial" já fechado;
+- **proibição fechada:** nenhuma operação pode alterar `estado_conversa.dados` sem
+  avanço correspondente de `versao` — nem esta operação, nem qualquer futura via de
+  escrita (`P4` §19, "timestamp nunca é versão", estendido aqui como "toda escrita de
+  `dados` sempre acompanhada do avanço correspondente de `versao`, nunca de
+  `atualizado_em` isolado");
+- **o caminho sem alteração efetiva nunca ignora o CAS:** mesmo quando `dados`
+  permanecerá idêntico, a operação valida `versao_esperada` contra a `versao`
+  corrente **atomicamente, dentro da mesma transação** que decidiria gravar o
+  marcador — nunca por uma leitura solta, antes ou fora da transação de escrita;
+  se outro escritor já tiver avançado a `versao` no meio-tempo, a operação **não
+  grava** `interpretacao_persistida_em` e devolve conflito de versão, exatamente
+  como no caminho com alteração efetiva; `interpretacao_persistida_em` só é gravado
+  se, dentro dessa mesma verificação atômica, a `versao` ainda for a esperada;
+- a nova `versao` (avançada ou não) é **sempre** parte do retorno — nunca omitida,
+  mesmo quando igual à esperada;
+- `atualizado_em` **permanece** como carimbo de auditoria (grava o instante da
+  operação), mas **deixa de ser** o predicado de CAS — mesma distinção já fechada em
+  `P4I.3`/`P4I.5` e na decisão `D2`, ponto 3.
+
+#### 5. Idempotência e replay
+
+- **repetição da mesma chamada:** regra única, a mesma fixada na seção 3
+  ("interpretação já persistida") — `interpretacao_persistida_em IS NOT NULL`
+  produz sempre reconhecimento idempotente; a operação não reinterpreta, não
+  reaplica `alteracoes_aplicaveis`, não recalcula `dados` nem `versao`;
+- **uso de `interpretacao_persistida_em`:** preservado sem alteração — gravado uma
+  única vez, nunca reescrito, decide entre "aplicar" e "reconhecer já persistida";
+  a checagem do marcador **precede** a checagem de `versao_esperada` (mesma ordem
+  já fixada na seção 3) — nunca o contrário;
+- **distinção entre repetição legítima e conflito:** repetição legítima é
+  `interpretacao_persistida_em IS NOT NULL` (reconhecimento idempotente, qualquer
+  que seja `versao_esperada` apresentado — seção 3); conflito de versão só existe
+  quando o marcador **ainda está nulo** e `versao_esperada` diverge da corrente —
+  as duas causas nunca se confundem e nunca são avaliadas na mesma ordem invertida,
+  mesma distinção já fechada entre "conflito de valor" e "conflito concorrente";
+- **relação com replay da composição:** esta operação **não é** o replay da
+  composição (`recuperar_replay`, `implementacao-persistencia-composicao-v1.md`
+  §13.7) — replay da composição opera sobre `resultado_id`, não sobre
+  `interpretacao_persistida_em`; as duas replays são de camadas diferentes e não se
+  substituem; a composição, ao revalidar fatos antes de confirmar (`implementacao-
+  persistencia-composicao-v1.md` §11), lê a `versao` já avançada por esta operação,
+  nunca a reexecuta;
+- **comportamento após queda entre atualização de estado e marcação da
+  interpretação:** proibido por construção — a atualização de `dados`/`versao` e a
+  gravação de `interpretacao_persistida_em` ocorrem na **mesma transação lógica**
+  (item seguinte); uma queda no meio da transação PostgreSQL é revertida
+  integralmente pelo próprio banco (rollback automático) — não existe estado
+  observável em que `versao` avançou sem `interpretacao_persistida_em` gravado, ou
+  vice-versa;
+- **exigência de uma única transação:** preservada sem alteração — "rollback integral
+  em qualquer falha" (ordem fixa já descrita para a operação atual, passo 7) aplica-se
+  integralmente à nova operação.
+
+#### 6. Invalidação de derivados
+
+Usando apenas decisões já aprovadas (nenhum campo novo inventado, nenhuma regra
+nova):
+
+- `persistir_checkpoint` já fecha que a invalidação de derivados **é parte da mesma
+  transação de persistência**, na ordem: "gravar fatos novos e invalidações de
+  derivados" (passo 3) **antes de** "atualizar o estado oficial" (passo 4) e
+  "incrementar a versão" (passo 5) — `implementacao-persistencia-composicao-v1.md`
+  §13.5; a invalidação **nunca** é um passo posterior, separado ou de
+  responsabilidade de outra camada;
+- `ITC-29` já fecha, para a composição, que "o único estado que a função propõe para
+  persistência... já contém a invalidação aplicada; nenhum resultado intermediário
+  expõe a combinação híbrida" — ou seja, **nunca existe um estado observável com
+  fatos novos e derivados antigos simultaneamente**, nem por um instante, nem em
+  nenhuma camada;
+- **aplicado a esta operação, pelo mesmo princípio, sem exceção:** quando a
+  interpretação altera fatos em `dados` que já sustentam derivados existentes
+  (distinção `fatos_temporais`/`criterio_temporal`, seção "Estado oficial" da spec
+  técnica de `P4I`, §7), a operação **persiste atomicamente, na mesma transação**,
+  um estado oficial já coerente — alterações autorizadas, invalidações de derivados
+  exigidas pelas regras já aprovadas, incremento de `versao` (quando houver
+  alteração efetiva) e gravação de `interpretacao_persistida_em` juntos; **nunca**
+  fica pendente para uma camada posterior aplicar depois;
+- as invalidações a aplicar são exatamente as já fechadas em
+  `persistencia-v1.md` §17 e em `P4` §3.A/`P4I` §7 (separação `fatos_temporais`/
+  `criterio_temporal`) — esta operação **não inventa** nenhuma regra adicional de
+  quais derivados invalidar; ela apenas garante que a invalidação já definida
+  acontece dentro da mesma transação que grava os fatos novos, nunca fora dela;
+- **consequência para a composição:** ao ler `estado_conversa` depois desta
+  operação, a composição encontra sempre um estado já coerente — nunca precisa (nem
+  pode) completar uma invalidação que esta operação tenha deixado pendente; a
+  detecção de `versao_estado_origem` incompatível (`ITC-40`/`ITC-41`) continua
+  sendo o mecanismo pelo qual a composição percebe que o estado mudou, mas a
+  invalidação em si já ocorreu antes, dentro desta operação — não depois, na
+  composição.
+
+#### 7. Concorrência
+
+- **duas interpretações concorrentes:** mesma proteção já fechada, com predicado
+  trocado — a segunda a tentar o CAS com `versao_esperada` desatualizada recebe
+  conflito de versão; nenhuma fusão, nenhuma reaplicação automática (mesma regra de
+  `INT-16`, predicado novo);
+- **interpretação sem alteração efetiva (no-op) concorrente com checkpoint
+  (persistência intermediária da composição):** ambas competem pelo mesmo CAS de
+  `versao` na mesma linha de `estado_conversa`, mas o resultado **não é
+  simetricamente "um vencedor, um perdedor com conflito"** — depende de qual
+  operação valida `versao_esperada` primeiro, dentro de sua própria transação:
+  - **se o checkpoint vencer primeiro** (avança `versao` antes de a interpretação
+    validar a sua): a interpretação no-op, ao validar `versao_esperada` contra a
+    `versao` já avançada pelo checkpoint, encontra divergência e recebe conflito de
+    versão — não grava `interpretacao_persistida_em`, exatamente como qualquer
+    outro conflito de versão (seção 4);
+  - **se a interpretação no-op vencer primeiro** (valida `versao_esperada` ainda
+    igual à corrente, antes de o checkpoint avançar): ela grava **apenas**
+    `interpretacao_persistida_em`, preservando `dados` e `versao` inalterados —
+    isso **não bloqueia** o checkpoint; o checkpoint ainda pode prosseguir depois,
+    usando a **mesma** `versao_esperada` (que não mudou, porque a interpretação
+    no-op não a incrementou), **desde que suas demais precondições continuem
+    válidas** (continuação ainda retomável, efeito pendente correspondente, etc.);
+  - **portanto:** a serialização por `versao` garante que nenhuma das duas grava
+    seu marcador/efeito sobre uma `versao_esperada` já obsoleta, e impede qualquer
+    estado parcial observável — mas **não implica conflito obrigatório** quando a
+    operação no-op vence primeiro, precisamente porque ela não consome a versão;
+  - **nenhuma das duas "recupera" implicitamente o avanço da outra por
+    aproximação** — quando há de fato conflito de versão (checkpoint vencendo
+    primeiro), a perdedora carrega o avanço oficial e usa replay se houver
+    resultado, senão falha fechada, exatamente como já fechado para a composição
+    (`P4` §9/§10); esta operação, especificamente, **não define** um caminho de
+    recuperação próprio além de devolver o conflito de versão quando ele
+    genuinamente ocorre: a decisão de retomar cabe ao chamador, exatamente como
+    hoje "carrega o avanço oficial" cabe ao orquestrador, não à função de
+    persistência;
+- **interpretação concorrente com resultado final (persistência final da
+  composição):** mesmo princípio — `persistir_resultado_final` já revalida a versão
+  de origem antes de confirmar (`implementacao-persistencia-composicao-v1.md` §11);
+  se a interpretação avançar a versão entre a leitura e a confirmação da composição,
+  a composição detecta e falha fechado (`conflito_versao`), nunca sobrescrevendo
+  silenciosamente;
+- **continuação baseada em versão anterior, tornada obsoleta por esta operação:**
+  quando esta operação avança `versao` (alteração efetiva de interpretação), uma
+  continuação da composição cuja `versao_estado_origem` apontava para a versão
+  anterior **não pode continuar sobre o estado antigo** — a única forma de a
+  máquina de composição aceitar uma `versao_estado`/`estado_oficial` diferente dos
+  já registrados na continuação é a "transição legítima" (`integracao-temporal-
+  composicao-v1.md`, oito condições simultâneas), e essa transição é
+  **estritamente sobre o reconhecimento da persistência intermediária que a
+  própria composição solicitou** (`requisicao_pendente.tipo ===
+  'persistir_estado_interpretado'`, condição 7; `resposta_condicional.efeito_id
+  === requisicao_pendente.efeito_id`, condição 2) — **nunca** uma via genérica
+  para qualquer avanço de versão, e **nunca** aplicável a um avanço de versão
+  produzido por uma interpretação concorrente que a composição não pediu. Fora
+  dessa transição nomeada — inclusive quando esta operação é a causa do avanço de
+  versão — **qualquer** divergência entre a `versao_estado_origem` registrada na
+  continuação e a `versao` corrente produz `continuacao_incompativel`, sem
+  exceção (`integracao-temporal-composicao-v1.md`, "fora desta exceção fechada...
+  qualquer mudança de `estado_oficial`, de `versao_estado` ou de origem entre duas
+  chamadas produz `continuacao_incompativel`"); **`ITC-40` não autoriza,
+  genericamente, uma continuação a prosseguir sobre uma versão superada** — ela
+  cobre apenas o caso nomeado de confirmação de efeito solicitado pela própria
+  máquina;
+- **qualquer retomada posterior a uma continuação tornada obsoleta** deve usar o
+  estado e a `versao` oficiais **atuais**, lidos de novo — nunca os registrados na
+  continuação superada — ou, quando a continuação for reapresentada como se ainda
+  fosse válida, resultar em `continuacao_incompativel` (fora da transição legítima)
+  ou em superação formal da continuação (`P4` §7: continuação `superada`, nunca
+  reaberta), conforme as regras já aprovadas — esta operação não introduz um
+  terceiro desfecho;
+- **trabalhador antigo com claim obsoleto:** preservado sem alteração — "um worker
+  com `claim_token` antigo... nunca persiste em `estado_conversa`... garantias
+  absolutas" (invariante já fechada, citada acima) continua valendo integralmente
+  para esta operação, com o mesmo mecanismo de rotação de token já descrito em
+  `adquirir_claim_mensagem` (`P4I` §13.2).
+
+#### 8. Transição
+
+Apenas invariantes — nenhuma migration fechada nesta especificação:
+
+- a escrita atual por `atualizado_em` (`aplicar_interpretacao_condicional`) deve
+  **deixar de ser via ativa** antes da ativação da `P4I` — nunca depois, e nunca
+  simultaneamente por um período indefinido;
+- **nunca podem existir duas autoridades ativas de escrita** sobre
+  `estado_conversa.dados` ao mesmo tempo — nem duas funções, nem uma função e uma
+  operação P4I coexistindo como caminhos igualmente ativos;
+- a existência de consumidores externos de `aplicar_interpretacao_condicional` (fora
+  deste repositório) deve ser verificada antes do corte operacional — a ausência de
+  consumidor **no repositório**, confirmada por busca no código-fonte deste
+  repositório, não substitui essa verificação; consumidor externo **permanece
+  indeterminado** — nenhuma busca de código local prova nem descarta sua
+  existência;
+- a remoção física da função e do adaptador atuais, a ordem, a quantidade e o
+  agrupamento das migrations que executarão esta transição **permanecem adiados**, a
+  decidir em especificação técnica posterior — mesma disciplina já aplicada à
+  transição de `reivindicar_mensagem` (`D1`).
+
+#### 9. Testes obrigatórios
+
+Cenários mínimos, catalogados como `INT-P4I-01` a `INT-P4I-14` — prefixo novo, não
+reutiliza `INT-*` (Etapa 6/7 por `atualizado_em`), `P4T-*`/`P4IT-*` (persistência
+física da composição), `ITC-*` (integração temporal/composição), `COMP-*`, `DED-*` ou
+`TMP-*`. Todos **documentais e futuros — nenhum executável nesta rodada, nenhum
+somado à suíte oficial** (permanece 730/725/5/0):
+
+| ID | Cenário | Resultado esperado |
+|---|---|---|
+| `INT-P4I-01` | CAS com duas transações concorrentes disputando a mesma `versao_esperada` | Exatamente uma persiste; a outra recebe conflito de versão; nenhuma fusão |
+| `INT-P4I-02` | Alteração efetiva sobre estado válido, com derivados dependentes de fatos alterados (`fatos_temporais` que sustentam um `criterio_temporal` já calculado) | `dados`, invalidação dos derivados e `versao` avançam juntos, na mesma transação; `interpretacao_persistida_em` preenchido junto; nenhum estado observável com fatos novos e derivado antigo simultâneos (`ITC-29`) |
+| `INT-P4I-03` | Interpretação sem alteração efetiva (saída vazia, idempotente ou só conflito), concorrente com um checkpoint de composição (`persistir_checkpoint`) disputando a mesma `versao_esperada` — **dois sub-casos, cada um com desfecho próprio, nunca fundidos**: (a) o checkpoint valida `versao_esperada` primeiro e avança `versao`; (b) a interpretação no-op valida `versao_esperada` primeiro, antes do checkpoint | (a) a interpretação no-op, ao validar depois, encontra `versao` já avançada e recebe conflito de versão — não grava `interpretacao_persistida_em`; (b) a interpretação no-op grava **apenas** `interpretacao_persistida_em`, sem alterar `dados` nem `versao` — o checkpoint **não é bloqueado** e ainda prossegue depois sobre a mesma `versao_esperada` (inalterada), desde que suas demais precondições continuem válidas; em nenhum dos dois sub-casos há gravação de marcador ou efeito sobre `versao_esperada` já obsoleta, nem estado parcial observável; o sub-caso (b) **não é conflito** |
+| `INT-P4I-04` | `interpretacao_persistida_em` já preenchido, chamada repetida com `versao_esperada` divergente da corrente | Reconhecimento idempotente (marcador precede a checagem de versão); nenhum conflito de versão relatado; nenhuma reaplicação; nenhuma nova chamada ao modelo — precedência do marcador sobre a versão, sem exceção |
+| `INT-P4I-05` | `versao_esperada` divergente da `versao` corrente, com marcador ainda nulo | Conflito de versão; nenhuma alteração aplicada; nenhuma reaplicação automática |
+| `INT-P4I-06` | `claim_token` não corresponde ao vigente | `autorizacao_invalida`; nenhuma alteração; rollback integral |
+| `INT-P4I-07` | `lease_expira_em` não vigente no momento da operação | `autorizacao_invalida`; nenhuma alteração; rollback integral |
+| `INT-P4I-08` | Falha injetada entre o avanço de `versao` e a gravação de `interpretacao_persistida_em` | Rollback integral pelo próprio banco; nenhum estado observável com um gravado e o outro não |
+| `INT-P4I-09` | Continuação de composição com `versao_estado_origem` tornada obsoleta por uma interpretação concorrente (fora da transição legítima, sem `requisicao_pendente.tipo = 'persistir_estado_interpretado'` correspondente) | `continuacao_incompativel`; a continuação não prossegue sobre o estado antigo; retomada exige ler `estado_oficial`/`versao` atuais ou resulta em superação, nunca em reconciliação por `ITC-40` fora do caso nomeado |
+| `INT-P4I-10` | Interpretação concorrente com persistência final da composição (`persistir_resultado_final`) sobre a mesma linha | Revalidação da composição detecta a divergência; `conflito_versao`; nenhuma confirmação sobre versão antiga |
+| `INT-P4I-11` | Duas clínicas, mesma estrutura de conversa | Isolamento multiclínica preservado; nenhum cruzamento; `referencia_cruzada_clinica` quando aplicável |
+| `INT-P4I-12` | Tentativa de alteração fora da allowlist canônica de campos/ações (mesmo contrato de `AlteracoesDados`, nenhum catálogo alternativo) | Rejeitada integralmente por qualquer camada de enforcement (Core e/ou banco); nenhuma aplicação parcial; nenhuma camada aceita campo/ação fora do contrato único (mesma regra de `INT-05`/`INT-06`/`INT-08`) |
+| `INT-P4I-13` | Chamada de escrita por CAS de `atualizado_em` (`aplicar_interpretacao_condicional`) tentada após a ativação da `P4I` | Escrita por `atualizado_em` impedida — a função legada não é mais via ativa (`D2`, "Transição") |
+| `INT-P4I-14` | Chamada com `versao_contrato_dados` desconhecida, ausente quando exigida, ou divergente da vigente | `registro_corrompido`; nunca interpretação por aproximação nem uso parcial (`P4I` §17); nenhuma alteração aplicada |
+
+#### 10. Limites
+
+- **nenhuma IA executa esta operação** — a IA produz `alteracoes_aplicaveis`; quem
+  chama a operação de persistência é sempre o Core/orquestrador, nunca o modelo
+  (`../docs/02-arquitetura.md`, herdado sem alteração);
+- **o Core/orquestrador chama a operação** — nunca a Edge Function ou o adaptador
+  decidem por conta própria quando persistir; a chamada segue o mesmo fluxo já
+  aprovado (claim → interpretar → persistir → concluir);
+- **nenhuma leitura externa ocorre dentro dela** — nenhuma chamada a Google Calendar,
+  n8n, Evolution, painel ou qualquer serviço fora da própria transação PostgreSQL;
+- **nenhuma composição é executada dentro dela** — nenhum resolvedor (procedimento,
+  dentista, duração, disponibilidade, temporal) é chamado por esta operação;
+- **nenhuma migration ou implementação é autorizada por esta especificação** — o nome
+  SQL definitivo, a assinatura completa e a estratégia de transição permanecem em
+  aberto até aprovação própria, posterior a este documento.
+
 ### Conclusão condicional
 
 Um único `UPDATE` PostgREST condicional em `mensagens_recebidas` — sem RPC dedicada.
