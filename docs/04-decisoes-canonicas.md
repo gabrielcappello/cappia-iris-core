@@ -246,6 +246,32 @@ Decisões que fecham a especificação **técnica documental** da implementaçã
 foi executado, nenhum banco foi alterado, e **nenhuma estrutura legada da Iris antiga
 está autorizada**. Detalhe completo: `../specs/implementacao-persistencia-composicao-v1.md`.
 
+### Namespaces canônicos de identificador `D*` (instituído nesta rodada)
+
+Três numerações `D1`/`D2`/`D3`-like coexistem no projeto e **nunca devem ser
+confundidas entre si**. A partir desta rodada, toda referência nova usa
+exclusivamente o identificador **qualificado**:
+
+- **`ITC-D1`, `ITC-D2`, `ITC-D3`** — os três casos de idempotência/concorrência da
+  máquina de composição pura, fechados em `../specs/integracao-temporal-composicao-v1.md`
+  (reexecução íntegra idêntica; resposta sem requisição pendente correspondente;
+  divergência verificável diretamente contra a requisição pendente). **Não
+  renumerados, não alterados nesta rodada.**
+- **`P4I-D1` a `P4I-D12`** — as doze divergências estruturais da auditoria de
+  `estado_conversa`/`mensagens_recebidas` contra o modelo de `P4`, catalogadas em
+  `../specs/implementacao-persistencia-composicao-v1.md` §3.1/§3.2 (ex.: `P4I-D1` —
+  ausência de coluna de versão inteira; `P4I-D6` — constraint de deduplicação sem
+  `clinica_id`/canal). **Não renumeradas, não alteradas nesta rodada.**
+- **`DA-P4-01`, `DA-P4-02`, `DA-P4-03`, ...** — decisões arquiteturais e
+  técnico-operacionais sobre a persistência de `P4`, tomadas rodada a rodada nesta
+  frente. **Os blocos anteriormente registrados como "Decisão arquitetural D1" e
+  "Decisão arquitetural D2" abaixo são, respectivamente, `DA-P4-01` e `DA-P4-02`** —
+  os nomes históricos "D1"/"D2" são preservados como alias, nunca apagados.
+
+Nenhuma decisão técnica já aprovada em `DA-P4-01` ou `DA-P4-02` é alterada por esta
+instituição de namespace — apenas o rótulo passa a ser qualificado, com o histórico
+preservado.
+
 - **Seis tabelas, sem autoridade duplicada** (`P4I.1`): `estado_conversa` e
   `mensagens_recebidas` (**existentes**, auditadas e evoluídas de forma
   **predominantemente aditiva**) mais `continuacoes_composicao`,
@@ -272,8 +298,8 @@ está autorizada**. Detalhe completo: `../specs/implementacao-persistencia-compo
   envia apenas a versão esperada; criação inicial da linha trata conflito de corrida
   reconhecendo a linha existente, sem erro operacional. `atualizado_em` permanece
   auditoria e nunca é predicado de CAS desta camada.
-- **Decisão arquitetural D1 — destino de `reivindicar_mensagem` (aprovada, rodada
-  operacional 277; não implementada):** `public.reivindicar_mensagem` (função SQL) e
+- **`DA-P4-01` — anteriormente denominada "decisão arquitetural D1" — destino de
+  `reivindicar_mensagem` (aprovada, rodada operacional 277; não implementada):** `public.reivindicar_mensagem` (função SQL) e
   o adaptador `reivindicarMensagem` (`src/core/reivindicar-mensagem.ts`) **deixarão de
   ser autoridades ativas** e serão **substituídos** pelos contratos separados de
   registro/deduplicação (`registrar_ou_recuperar_mensagem`, seção 13.1 da spec
@@ -297,8 +323,9 @@ está autorizada**. Detalhe completo: `../specs/implementacao-persistencia-compo
      etapa posterior, sujeita a aprovação própria;
   6. a ordem, quantidade e agrupamento das migrations que executarão esta decisão
      **permanecem em aberto**, a definir posteriormente.
-- **Decisão arquitetural D2 — CAS de `aplicar_interpretacao_condicional` sob
-  `estado_conversa.versao` (aprovada, rodada operacional 286; não implementada):**
+- **`DA-P4-02` — anteriormente denominada "decisão arquitetural D2" — CAS de
+  `aplicar_interpretacao_condicional` sob `estado_conversa.versao` (aprovada, rodada
+  operacional 286; não implementada):**
   toda alteração efetiva de `estado_conversa.dados`, **inclusive a resultante da
   interpretação**, participa da única sequência monotônica `estado_conversa.versao` —
   nunca de uma segunda numeração paralela. O avanço usa CAS por `clinica_id` +
@@ -334,6 +361,12 @@ está autorizada**. Detalhe completo: `../specs/implementacao-persistencia-compo
      etapa posterior, sujeita a aprovação própria;
   6. a ordem, quantidade e agrupamento das migrations que executarão esta decisão
      **permanecem em aberto**, a definir posteriormente.
+- **`DA-P4-03` — próxima decisão arquitetural/técnico-operacional da persistência
+  `P4` (registro de título e objeto; ainda não analisada, sem conteúdo decisório
+  nesta rodada):** reconciliação canônica do histórico de migrations do ambiente
+  dev com os arquivos versionados neste repositório, e definição da regra de
+  versionamento/ordenação para a primeira migration de `P4I`. Nenhuma alternativa,
+  risco ou solução foi analisada nesta rodada.
 - **Nova chave de deduplicação substitui a constraint antiga** (`P4I.6`): a
   constraint vigente de `mensagens_recebidas` (`provider` + `instancia_whatsapp` +
   `message_id`) **não inclui `clinica_id` nem canal, e não é responsável por
