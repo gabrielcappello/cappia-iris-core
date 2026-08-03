@@ -272,6 +272,31 @@ está autorizada**. Detalhe completo: `../specs/implementacao-persistencia-compo
   envia apenas a versão esperada; criação inicial da linha trata conflito de corrida
   reconhecendo a linha existente, sem erro operacional. `atualizado_em` permanece
   auditoria e nunca é predicado de CAS desta camada.
+- **Decisão arquitetural D1 — destino de `reivindicar_mensagem` (aprovada, rodada
+  operacional 277; não implementada):** `public.reivindicar_mensagem` (função SQL) e
+  o adaptador `reivindicarMensagem` (`src/core/reivindicar-mensagem.ts`) **deixarão de
+  ser autoridades ativas** e serão **substituídos** pelos contratos separados de
+  registro/deduplicação (`registrar_ou_recuperar_mensagem`, seção 13.1 da spec
+  técnica) e de aquisição de claim (`adquirir_claim_mensagem`, seção 13.2) definidos
+  pela `P4I` — nunca por uma função adaptada que funda as duas responsabilidades, nem
+  por uma segunda função coexistindo como autoridade ativa de claim com a atual. Esta
+  decisão fecha **apenas a direção arquitetural**; não autoriza migration,
+  implementação, alteração de banco ou de código. Invariantes aprovadas junto com a
+  decisão:
+  1. nenhuma função legada permanece com autoridade concorrente sobre registro,
+     deduplicação ou claim;
+  2. preservada a regra já vigente em `P4I.6`, nunca pode existir janela sem
+     deduplicação (a constraint nova é validada e ativada antes de a antiga ser
+     removida, nunca depois);
+  3. nunca podem existir duas autoridades ativas de claim ao mesmo tempo;
+  4. a existência de consumidores externos de `reivindicar_mensagem` (fora deste
+     repositório) deve ser verificada antes do corte operacional — a ausência de
+     consumidor no repositório, confirmada nesta rodada por busca no código-fonte, não
+     substitui essa verificação para ambientes fora do repositório;
+  5. a remoção física da função e do adaptador **não faz parte** desta decisão — é
+     etapa posterior, sujeita a aprovação própria;
+  6. a ordem, quantidade e agrupamento das migrations que executarão esta decisão
+     **permanecem em aberto**, a definir posteriormente.
 - **Nova chave de deduplicação substitui a constraint antiga** (`P4I.6`): a
   constraint vigente de `mensagens_recebidas` (`provider` + `instancia_whatsapp` +
   `message_id`) **não inclui `clinica_id` nem canal, e não é responsável por
