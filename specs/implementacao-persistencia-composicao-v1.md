@@ -136,20 +136,36 @@ fundidas:**
    **naquela rodada**, a migration **não foi aplicada em nenhum banco, real ou dev**
    — isto é evidência histórica sobre o momento em que o arquivo foi escrito, não uma
    afirmação sobre agora;
-3. **estado atual de aplicação em banco: desconhecido.** Este documento **não infere**
-   se a migration foi aplicada desde então, em quais ambientes, quais objetos existem
-   hoje, quais versões de função estão ativas, ou se houve alteração posterior fora
-   deste repositório. **Nenhuma dessas perguntas é respondida pelo controle de
-   versão.**
+3. **estado atual de aplicação em banco: confirmado por preflight (histórico
+   nesta passagem — ver atualização abaixo).** ~~Este documento não infere se a
+   migration foi aplicada desde então, em quais ambientes, quais objetos
+   existem hoje, quais versões de função estão ativas, ou se houve alteração
+   posterior fora deste repositório. Nenhuma dessas perguntas é respondida
+   pelo controle de versão.~~ Esta era a formulação vigente antes do
+   preflight — preservada apenas como histórico da incerteza que motivou a
+   exigência abaixo.
 
-**Somente um preflight read-only futuro, executado imediatamente antes de qualquer
-migration nova**, pode determinar: se `../src/supabase/migrations/20260730_iris_nova_interpretacao_v1.sql` foi
-aplicada; em quais ambientes; quais objetos (`claim_token`, `lease_expira_em`,
-`interpretacao_persistida_em`, as duas RPCs) existem de fato; quais versões de função
-estão ativas; e se houve alteração posterior não registrada neste repositório. Essa é
-a mesma exigência que a própria migration de interpretação já registra no seu
-cabeçalho, e esta especificação a preserva sem enfraquecer: **nenhuma implementação
-futura presume o resultado dessa verificação.**
+**Estado atualizado (`DA-P4-03`, rodada operacional 314):** o preflight técnico
+read-only **CODE 271** já foi executado, com **CODE 285** como reconfirmação
+parcial pertinente durante a análise de `DA-P4-02`. A **materialização das
+estruturas existentes foi confirmada** no ambiente dev
+(`bcmuqautblvjdqzhjfbw`): `../src/supabase/migrations/20260730_iris_nova_interpretacao_v1.sql`
+está aplicada; as três colunas (`claim_token`, `lease_expira_em`,
+`interpretacao_persistida_em`) e as duas RPCs (`reivindicar_mensagem`,
+`aplicar_interpretacao_condicional`) existem de fato, com corpo idêntico ao
+declarado; equivalência integral do SQL executável comprovada por hash
+normalizado (nunca igualdade binária — ver `../reviews/da-p4-03-parecer-code.md`).
+**As estruturas novas de `P4I`** (as quatro tabelas, `versao`,
+`versao_contrato_dados`, `canal`, `payload_fingerprint`, e demais colunas ainda
+não criadas) **permanecem ausentes**, confirmado pelo mesmo preflight. **Um
+novo preflight, imediatamente antes de escrever ou aplicar a migration de
+`P4I`, continua obrigatório** — não mais para responder "se foi aplicada",
+que já está fechado, mas para: detectar **drift posterior** ao preflight de
+CODE 271/285; reconfirmar dados e constraints **no instante da mudança**; e
+verificar que os objetos de `P4I` continuam ausentes ou no estado esperado
+imediatamente antes da aplicação. **Nenhuma implementação futura presume o
+resultado dessa revalidação** — a exigência de preflight nunca foi
+enfraquecida, apenas deixou de ser sobre uma incerteza já resolvida.
 
 ### 3.1 `estado_conversa` — divergências encontradas
 
@@ -171,7 +187,7 @@ futura presume o resultado dessa verificação.**
 | D9 | **Não possui payload bruto nem marcador de expiração do bruto** | `persistencia-v1.md` §19: bruto por 7 dias, linha preservada | **Bloqueante.** Exige colunas aditivas de conteúdo bruto e `bruto_removido_em` |
 | D10 | Não possui vínculo com continuação atual nem com resultado | `P4` §3.B: referência de resultado; replay | **Bloqueante.** Exige colunas aditivas de vínculo (seção 6) |
 | D11 | `status_processamento` com quatro valores (`recebida`, `processando`, `concluida`, `falhou`) | `P4` §7, eixo Mensagem: exatamente esses quatro | **Compatível.** Nenhuma alteração necessária |
-| D12 | `claim_token`, `lease_expira_em`, `interpretacao_persistida_em` — artefato versionado confirmado (ver 3.2.2); lease de 60 s | Seção 15: lease de mensagem = 60 s | **Compatível em contrato.** Estado atual de materialização no banco: **desconhecido até preflight** — ver 3.2.2 |
+| D12 | `claim_token`, `lease_expira_em`, `interpretacao_persistida_em` — artefato versionado confirmado (ver 3.2.2); lease de 60 s | Seção 15: lease de mensagem = 60 s | **Compatível em contrato.** Estado atual de materialização no banco: **confirmado por preflight (CODE 271; reconfirmação parcial em CODE 285)** — ver 3.2.2 |
 
 ### 3.2.1 D6 — reescrita precisa
 
@@ -253,6 +269,14 @@ exige o passo a passo acima e um rollback próprio.
 
 ### 3.2.2 D12 — estado da migration de interpretação, definitivamente
 
+**Status atualizado (`DA-P4-03`, rodada operacional 314):** o preflight técnico
+read-only que este documento previa como futuro **já foi executado** — **CODE 271**
+é a rodada-fonte, com **CODE 285** como reconfirmação parcial pertinente durante a
+análise de `DA-P4-02`. O estado de materialização, antes registrado como
+"desconhecido até preflight", está **fechado por evidência direta** (item 3 abaixo,
+reescrito). A formulação anterior ("desconhecido até preflight") permanece
+**apenas como histórico** desta subseção — nunca como afirmação sobre o presente.
+
 **Três afirmações distintas, nunca fundidas** — nenhuma passagem deste documento
 substitui uma pela outra:
 
@@ -264,20 +288,34 @@ substitui uma pela outra:
    (`reivindicar_mensagem`, `aplicar_interpretacao_condicional`), com lease de
    mensagem de 60 s. Isto é fato sobre o **arquivo**, confirmável por leitura direta
    do repositório.
-3. **Estado atual de materialização no banco: desconhecido até preflight.** O
-   cabeçalho do arquivo registra que, **na rodada em que foi escrito**, a migration
-   **não havia sido aplicada** em nenhum banco, real ou dev — isto é **evidência
-   histórica sobre aquela rodada**, nunca uma afirmação sobre o presente. Se as três
-   colunas e as duas RPCs existem hoje, em quais ambientes, com quais versões
-   ativas, e se houve alteração posterior fora deste repositório — **nada disso é
-   determinável pelo controle de versão**. Só um **preflight read-only futuro**,
-   executado imediatamente antes de qualquer migration nova, pode responder.
+3. **Estado atual de materialização no banco: confirmado por preflight
+   (CODE 271; reconfirmação parcial em CODE 285).** As três colunas e as duas RPCs
+   **existem materializadas** no ambiente dev (`bcmuqautblvjdqzhjfbw`), com o corpo
+   das duas funções idêntico, campo a campo, ao declarado no arquivo — confirmado
+   por leitura direta de `information_schema.columns` e `pg_proc`/
+   `pg_get_functiondef`. Adicionalmente, o SQL executável do arquivo local e o
+   `statements` remoto registrado em `supabase_migrations.schema_migrations`
+   têm **equivalência integral comprovada** por hash normalizado idêntico,
+   calculado independentemente em ambos os lados (ver
+   `../reviews/da-p4-03-parecer-code.md`) — a diferença binária entre os dois
+   (arquivo local maior que o `statements` remoto) é explicada integralmente por
+   comentários e formatação não executável, **nunca** por conteúdo de schema
+   divergente. **Isto não é, e não deve ser lido como, igualdade binária** —
+   apenas materialização física e equivalência de SQL executável, duas coisas
+   distintas, ambas comprovadas. O cabeçalho do arquivo, registrando que **na
+   rodada em que foi escrito** a migration não havia sido aplicada em nenhum
+   banco, permanece **evidência histórica correta sobre aquela rodada** — nunca
+   mais lida como afirmação sobre o presente, que agora está fechado pela
+   evidência acima.
 
-**Proibido:** afirmar, em qualquer outra passagem deste documento, que a migration
-"permanece atualmente não aplicada" ou que os objetos "permanecem atualmente não
-materializados" — ambas são inferências sobre o presente que este documento não tem
-base para fazer. A única afirmação factual válida sobre o presente é "desconhecido
-até preflight".
+**Historicamente proibido, preservado como registro do que este documento
+determinava antes da rodada 314:** afirmar, em qualquer outra passagem deste
+documento, que a migration "permanece atualmente não aplicada" ou que os objetos
+"permanecem atualmente não materializados" — essas seriam inferências sobre o
+presente sem base, **enquanto o estado era desconhecido**. Agora que o estado foi
+confirmado por preflight, a afirmação factual válida sobre o presente é a do item 3
+acima — materialização confirmada, equivalência executável comprovada, nunca
+igualdade binária.
 
 ### 3.2.3 Rollback da troca de constraint — condicionado à compatibilidade dos dados
 
@@ -1341,17 +1379,40 @@ O plano é **predominantemente aditivo**, com **uma exceção controlada**: a tr
 chave de deduplicação de `mensagens_recebidas` (D6, seção 3.2.1) exige substituir uma
 constraint existente, não apenas adicionar. Quando for autorizada, a migration deve:
 
-- ser **SQL versionado no repositório como artefato único**, no padrão Supabase já
-  usado por este projeto;
+- ser **SQL versionado no repositório**, no padrão Supabase já usado por este
+  projeto. **Correção (`DA-P4-03`, harmonizada com `DA-P4-01`/`DA-P4-02`):** a
+  implementação física poderá usar uma **migration única ou um conjunto
+  coordenado de migrations** — quantidade, ordem e agrupamento permanecem para a
+  futura estratégia físico-operacional, não fechados aqui. O requisito
+  normativo desta seção é **coerência da estratégia futura**, **ausência de
+  janela sem deduplicação**, e **ausência de autoridades ativas concorrentes**
+  (mesmo princípio já fechado para `DA-P4-01`: nenhuma função legada com
+  autoridade concorrente sobre registro, deduplicação ou claim) — nunca a
+  obrigatoriedade de uma migration única, de uma única transação cobrindo
+  toda a transição, ou de um único arquivo físico. **As atomicidades
+  transacionais já aprovadas para operações lógicas específicas** (a
+  persistência intermediária e a persistência final, cada uma como transação
+  lógica única — seção 13.5/13.6; o CAS por versão — seção 14) **permanecem
+  intactas e não são afetadas por esta correção** — o que se remove aqui é
+  apenas a ideia de uma "atomicidade da transição" como requisito único e
+  global cobrindo toda a migration, nunca as atomicidades já fechadas de
+  operações específicas;
 - conter **alterações aditivas na quase totalidade** — nenhuma coluna existente
   renomeada, nenhuma tabela removida, nenhum tipo de coluna povoada alterado; **a
   única exceção prevista é a substituição controlada da constraint de deduplicação**
   (`P4I.6`), que segue seus próprios sete passos e seu próprio rollback (seção
   3.2.3), nunca tratada como aditiva simples;
 - ser precedida de **preflight read-only completo do ambiente-alvo** (seção 3.2.2,
-  `P4I.2`) — nunca presumindo se
-  `../src/supabase/migrations/20260730_iris_nova_interpretacao_v1.sql` foi aplicada
-  desde sua rodada de criação, nem que o banco vivo corresponde ao schema versionado;
+  `P4I.2`). **Estado atualizado (`DA-P4-03`):** esse preflight **já foi executado**
+  (CODE 271, reconfirmação parcial em CODE 285) — confirmou que
+  `../src/supabase/migrations/20260730_iris_nova_interpretacao_v1.sql` está
+  aplicada no ambiente dev, com materialização e equivalência executável
+  comprovadas (seção 3.2.2). Uma futura migration de `P4I` não parte mais de
+  "desconhecido" quanto a essa migration específica — mas **continua exigindo
+  preflight read-only próprio, imediatamente antes de si mesma**, para as
+  quatro tabelas novas e demais colunas ainda não materializadas, nunca
+  presumindo que o restante do schema-alvo corresponde ao versionado sem nova
+  verificação;
 - incluir o **preflight de compatibilidade das colunas novas** de `mensagens_recebidas`
   (seção 5.2.1, `P4I.10`): quantidade de linhas, origem, cobertura real de `canal`,
   `conversa_id`, `payload_fingerprint` e vínculos — antes de qualquer backfill;
@@ -1597,13 +1658,19 @@ algumas foram consolidadas para preservar o total de 24, e três são novas.
   substituída porque sua permanência impediria representar identidades distintas por
   canal — nenhuma adição pura resolve essa divergência.
 - **Consequência:** a migration futura começa por **preflight read-only do
-  ambiente-alvo** — nunca por criação, e nunca presumindo se
-  `../src/supabase/migrations/20260730_iris_nova_interpretacao_v1.sql` foi aplicada
-  desde a sua rodada de criação: o repositório só comprova que ela foi escrita e
-  versionada; o estado atual de aplicação em banco é desconhecido até esse preflight
-  (seção 3.2.2).
-- **Risco:** o banco vivo divergir do schema versionado. Mitigado pela exigência de
-  verificação read-only sem presunção (seção 21).
+  ambiente-alvo** — nunca por criação. **Estado atualizado (`DA-P4-03`):** o
+  preflight que determinaria se
+  `../src/supabase/migrations/20260730_iris_nova_interpretacao_v1.sql` foi
+  aplicada **já foi executado** (CODE 271, reconfirmação parcial em CODE 285)
+  — a migration está aplicada, com materialização confirmada (seção 3.2.2).
+  Um novo preflight, imediatamente antes de escrever ou aplicar a migration
+  de `P4I`, continua obrigatório — não mais para essa pergunta já respondida,
+  mas para detectar drift posterior, reconfirmar dados/constraints no
+  instante da mudança, e verificar o estado atual das estruturas novas de
+  `P4I`, ainda ausentes.
+- **Risco:** o banco vivo divergir do schema versionado **desde o preflight de
+  CODE 271/285**. Mitigado pela exigência de revalidação read-only imediatamente
+  antes da aplicação, sem presumir que nada mudou desde então (seção 21).
 - **Teste de prova:** P4IT-09.
 
 ### `P4I.3` — Versão inteira substitui o CAS por timestamp
@@ -1988,9 +2055,14 @@ permanecem no mapa geral do projeto:
 - As duas estruturas existentes não estão aprovadas até que as divergências bloqueantes
   da seção 3 sejam fechadas — aditivamente, **exceto** a troca da chave de
   deduplicação (D6, `P4I.6`), que é substituição controlada, não adição pura.
-- O estado atual de aplicação em banco de `../src/supabase/migrations/20260730_iris_nova_interpretacao_v1.sql` é
-  **desconhecido** até um preflight read-only futuro; o repositório só comprova que
-  ela foi escrita e versionada, nunca o que existe hoje em qualquer ambiente.
+- O estado de aplicação em banco de `../src/supabase/migrations/20260730_iris_nova_interpretacao_v1.sql`
+  foi **confirmado por preflight** (CODE 271, reconfirmação parcial em CODE 285,
+  `DA-P4-03`): está aplicada no ambiente dev, com materialização e equivalência
+  executável comprovadas — nunca igualdade binária. As estruturas novas de
+  `P4I` permanecem ausentes. Um preflight próprio, imediatamente antes da
+  aplicação da migration de `P4I`, continua obrigatório — não mais para
+  responder "se foi aplicada", mas para revalidar contra drift posterior e
+  confirmar o estado das estruturas ainda ausentes.
 - A versão do estado é `bigint`, começa em zero e é incrementada **somente pelo banco**;
   timestamp nunca é versão.
 - Todo CAS inclui `clinica_id`, `conversa_id` e a versão esperada; zero linhas é sempre

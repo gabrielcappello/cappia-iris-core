@@ -287,12 +287,18 @@ preservado.
   auditoria do ambiente-alvo deve ser refeita **read-only**, sem presumir que o banco
   vivo corresponde ao schema versionado.
 - **Estado da migration de interpretação — três afirmações distintas, nunca
-  fundidas**: `20260730_iris_nova_interpretacao_v1.sql` está **escrita e versionada**
-  no repositório; o próprio cabeçalho declara que, **na rodada em que foi criada**,
-  não havia sido aplicada em nenhum banco; o **estado atual de aplicação é
-  desconhecido** — só um preflight read-only futuro, imediatamente antes de qualquer
-  migration nova, pode determinar se foi aplicada, em quais ambientes, quais objetos
-  existem e se houve alteração posterior.
+  fundidas** (histórico original desta decisão; **estado atualizado por `DA-P4-03`,
+  ver bullet correspondente abaixo**): `20260730_iris_nova_interpretacao_v1.sql`
+  está **escrita e versionada** no repositório; o próprio cabeçalho declara que,
+  **na rodada em que foi criada**, não havia sido aplicada em nenhum banco — esta
+  afirmação segue correta como **evidência histórica daquela rodada**. **O
+  preflight que confirmaria o estado atual já foi executado** (CODE 271,
+  reconfirmação parcial em CODE 285): a migration **está aplicada** no ambiente
+  dev, com materialização confirmada (colunas e RPCs) e equivalência integral do
+  SQL executável comprovada por hash normalizado — nunca igualdade binária, apenas
+  materialização física e equivalência executável, ambas distintas e ambas
+  comprovadas (detalhe completo em `DA-P4-03`, mais abaixo, e em
+  `../reviews/da-p4-03-parecer-code.md`).
 - **Versão inteira substitui o CAS por timestamp** (`P4I.3`, `P4I.5`): coluna `versao`
   (`bigint`) nova, começando em zero, incrementada **somente pelo banco**; o cliente
   envia apenas a versão esperada; criação inicial da linha trata conflito de corrida
@@ -361,12 +367,85 @@ preservado.
      etapa posterior, sujeita a aprovação própria;
   6. a ordem, quantidade e agrupamento das migrations que executarão esta decisão
      **permanecem em aberto**, a definir posteriormente.
-- **`DA-P4-03` — próxima decisão arquitetural/técnico-operacional da persistência
-  `P4` (registro de título e objeto; ainda não analisada, sem conteúdo decisório
-  nesta rodada):** reconciliação canônica do histórico de migrations do ambiente
-  dev com os arquivos versionados neste repositório, e definição da regra de
-  versionamento/ordenação para a primeira migration de `P4I`. Nenhuma alternativa,
-  risco ou solução foi analisada nesta rodada.
+- **`DA-P4-03` — reconciliação do histórico de migrations e regra de
+  versionamento para `P4I` (aprovada, rodada operacional 314; não
+  implementada):** reconciliação canônica do histórico de migrations do
+  ambiente dev (`bcmuqautblvjdqzhjfbw`, `cappia-iris-core-dev`) com os
+  arquivos versionados neste repositório, e definição da regra de
+  versionamento/ordenação para a primeira migration de `P4I`. Análise
+  técnica completa registrada em `reviews/da-p4-03-parecer-code.md` (fonte
+  de evidência, não documentação canônica duplicada — este bullet é o
+  registro canônico da decisão). **Decisão canônica:** o legado permanece
+  imutável e reconciliado por manifesto obrigatório que vincula versões
+  remotas, nomes, arquivos e hashes; migrations futuras usam versão UTC
+  única de 14 dígitos posterior a `20260731164424`, sem alteração após
+  aplicação, e rollbacks são vinculados por versão, nome, filename e
+  SHA-256, sempre fora do fluxo de migrations de avanço, independentemente
+  da futura adoção da Supabase CLI.
+
+  **Fechado nesta decisão:**
+  1. o mecanismo histórico exato de aplicação das três migrations legadas
+     (`20260729033207`/`iris_nova_identificacao_v1`,
+     `20260729113821`/`iris_nova_identificacao_v1_correcao`,
+     `20260731164424`/`iris_nova_interpretacao_v1`) **permanece
+     indeterminado** — a presença de `created_by` e `statements` na tabela
+     `supabase_migrations.schema_migrations` não permite distinguir entre
+     Dashboard, Management API ou CLI de outro ambiente; nenhuma dessas
+     hipóteses é afirmada como fato;
+  2. as três migrations legadas têm: arquivos locais históricos imutáveis
+     (em `src/supabase/migrations/`); versões remotas conhecidas;
+     **equivalência integral do SQL executável comprovada** por hash
+     normalizado idêntico entre local e remoto (nas três, calculado
+     independentemente em ambos os lados). **Duas diferenças de medição
+     distintas, nunca fundidas:** (a) a **diferença binária entre arquivo
+     local e `statements` remoto** é explicada integralmente por comentários
+     e formatação não executável — nunca por conteúdo de schema divergente;
+     (b) **dentro do próprio `statements` remoto** da migration de
+     interpretação, `length()` retorna `12081` (caracteres) e
+     `octet_length()` retorna `12091` (bytes UTF-8) para o **mesmo texto** —
+     essa diferença de 10 unidades é explicada por **caracteres multibyte em
+     UTF-8** (o mesmo conteúdo, medido em duas unidades diferentes), **não**
+     é uma segunda fonte de divergência entre local e remoto;
+  3. o **manifesto local↔remoto é obrigatório** como parte desta decisão —
+     não é uma pendência em aberto; **sua criação física ocorrerá em etapa
+     posterior**, sujeita a aprovação própria;
+  4. o manifesto deverá vincular, para cada migration legada, no mínimo:
+     ambiente auditado; versão remota; nome remoto; filename histórico
+     local; SHA-256 remoto; SHA-256 local; hash executável normalizado;
+     resultado da comparação semântica; objetos materializados verificados;
+     rollback associado; SHA-256 do rollback;
+  5. migrations futuras de `P4I`: formato `AAAAMMDDHHMMSS_<nome_logico>.sql`;
+     timestamp UTC atribuído uma única vez na criação do arquivo; versão
+     única e estritamente crescente; primeira migration de `P4I`
+     numericamente posterior a `20260731164424`; arquivo nunca renomeado
+     após aplicação; conteúdo aplicado nunca alterado retroativamente;
+     qualquer correção ocorre por nova migration, nunca edição do arquivo
+     já aplicado;
+  6. rollbacks: não são migrations normais de avanço; permanecem fora do
+     diretório normal de migrations reconhecido por qualquer ferramenta;
+     vinculados por versão remota, nome lógico, filename e SHA-256
+     simultâneos (nunca um só desses campos isoladamente); execução exige
+     autorização explícita e preflight de compatibilidade contra o
+     ambiente-alvo; proibidos quando incompatíveis após tráfego novo — nesse
+     caso, usar nova migration corretiva, nunca reaplicação forçada;
+  7. a **adoção da Supabase CLI permanece decisão operacional futura e
+     separada** de `DA-P4-03` — a regra de nomenclatura acima é compatível
+     com essa adoção futura, sem pressupô-la;
+  8. **se uma ferramenta operacional de migrations for adotada, as
+     representações exigidas das três versões remotas deverão existir antes
+     do primeiro uso dessa ferramenta** — nunca por simples renomeação dos
+     arquivos legados presumindo equivalência. Permanecem explicitamente em
+     aberto, não fechados por esta decisão: criação física dessas
+     representações; conteúdo exato; localização; qual ferramenta (se
+     alguma) será adotada; e o momento da execução;
+  9. **nenhum `migration repair` está autorizado ou justificado neste
+     momento** — não há evidência de que o histórico remoto esteja
+     incorreto, e `migration repair` muta a tabela de histórico.
+
+  **Permanece para etapa posterior, fora desta decisão:** a criação física
+  do manifesto; a criação de representações operacionais; a decisão de
+  adotar ou não a Supabase CLI; e a estratégia física de transição de
+  `DA-P4-01`/`DA-P4-02`, não iniciada por esta decisão.
 - **Nova chave de deduplicação substitui a constraint antiga** (`P4I.6`): a
   constraint vigente de `mensagens_recebidas` (`provider` + `instancia_whatsapp` +
   `message_id`) **não inclui `clinica_id` nem canal, e não é responsável por
