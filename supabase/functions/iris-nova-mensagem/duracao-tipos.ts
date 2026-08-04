@@ -1,0 +1,147 @@
+// Tipos do resolvedor deterministico de duracao.
+//
+// Contrato: specs/duracao-v1.md. Estruturas de DOMINIO, nunca schema fisico
+// -- a spec nao define tabelas (secao 13, pendencia 4: "Onde a configuracao
+// de duracao vive fisicamente -- schema fora de escopo"), e o resolvedor
+// recebe as configuracoes prontas em vez de consultar banco.
+
+/**
+ * Configuracao oficial de duracao de UMA clinica para UM procedimento.
+ *
+ * Fonte oficial (secao 1): `clinica_id + procedimento_id = duracao_min`.
+ *
+ * A duracao pertence a configuracao da clinica para o procedimento; e igual
+ * para todos os dentistas aptos; NAO pertence ao dentista, NAO pertence ao
+ * vinculo, e NAO e duracao global compartilhada entre clinicas.
+ *
+ * **Nenhum campo `ativo`**: a spec nao define estado ativo/inativo para a
+ * configuracao de duracao -- so a existencia do par
+ * `(clinica_id, procedimento_id)` e o valor. Criar esse campo aqui seria
+ * estrutura antecipada, o que a secao 4 proibe explicitamente ("nao deve
+ * gerar estruturas antecipadas nesta versao").
+ *
+ * **Nenhum campo de modo**: `geral_dentista`, `especifica_vinculo` e
+ * qualquer enum de modo estao fora da v1 (secao 4).
+ */
+export interface ConfiguracaoDuracao {
+  clinica_id: string;
+  procedimento_id: string;
+  /**
+   * Duracao em minutos. Tipado como `number`, mas SEMPRE validado em
+   * runtime: o dado atravessa fronteira de confianca (vem da configuracao
+   * da clinica), e a secao 2 exige que "o Core tambem devera validar o
+   * valor recebido da fonte oficial e falhar fechado diante de
+   * inconsistencia -- a validacao do painel nao dispensa a validacao do
+   * Core".
+   */
+  duracao_min: number;
+}
+
+/**
+ * `clinica_id` vem SEMPRE da instancia autenticada, ja resolvida pelo
+ * servidor -- nunca do paciente e nunca da IA (docs/03-seguranca.md).
+ *
+ * `procedimento_id` e a identidade OFICIAL ja resolvida pelo resolvedor de
+ * procedimento -- opaca, nunca re-resolvida aqui, nunca substituida por
+ * `nome_pt`, alias, especialidade ou texto do paciente (secao 5:
+ * "resolucao por nome" e proibida sem excecao).
+ *
+ * **Nenhum `dentista_id` na entrada**: dentista e vinculo comprovam aptidao
+ * e isolamento, mas nao alteram o valor da duracao (secao 1). Aceitar
+ * dentista aqui abriria caminho para duracao por dentista, fora da v1.
+ */
+export interface EntradaResolucaoDuracao {
+  clinica_id: string;
+  procedimento_id: string;
+  configuracoes: readonly ConfiguracaoDuracao[];
+}
+
+/**
+ * Motivo pelo qual um valor configurado nao cumpre a secao 2. Cada motivo
+ * corresponde exatamente a uma das regras publicadas -- nenhum limite
+ * inventado.
+ *
+ * O valor NUNCA e corrigido, arredondado ou truncado (secao 2: "Nao
+ * arredondar, truncar ou corrigir automaticamente, em nenhuma camada").
+ */
+export type MotivoDuracaoInvalida =
+  /** Nao e numero real: tipo errado, `NaN`, `Infinity` ou `-Infinity`. String nunca e convertida. */
+  | 'nao_numerica'
+  /** Numero com parte fracionaria. Nunca truncado para inteiro. */
+  | 'nao_inteira'
+  /** Abaixo do minimo de 10 minutos -- inclui zero e valores negativos. */
+  | 'abaixo_do_minimo'
+  /** Acima do maximo de 240 minutos. */
+  | 'acima_do_maximo'
+  /** Inteiro dentro dos limites, mas nao multiplo de 10. Nunca ajustado. */
+  | 'nao_multipla_de_10';
+
+/**
+ * Codigos fechados de erro estrutural de configuracao. Classificacao por
+ * CODIGO, nunca por mensagem livre (mesmo padrao dos resolvedores de
+ * procedimento e de dentista).
+ *
+ * Existe um unico codigo porque a configuracao tem apenas tres campos e
+ * `(clinica_id, procedimento_id)` e a chave: a unica divergencia
+ * estruturalmente possivel para a mesma chave e no proprio `duracao_min`.
+ */
+export type CodigoErroConfiguracaoDuracao =
+  /** Mesma chave `(clinica_id, procedimento_id)` com valores de duracao divergentes. */
+  'duracao_conflitante';
+
+/**
+ * Resultado tipado: exatamente um dos quatro desfechos. Uniao discriminada
+ * por `tipo` -- o chamador nunca precisa inferir.
+ *
+ * `nao_configurada` e `invalida` sao ambos falha fechada perante o
+ * controlador (secao 6), com motivos internos distintos preservados para
+ * auditoria -- mesmo padrao de `dentistas-vinculos-v1.md` secao 4.
+ */
+export type ResultadoResolucaoDuracao =
+  | {
+      tipo: 'resolvida';
+      clinica_id: string;
+      procedimento_id: string;
+      /** Valor oficial validado. Nunca ajustado, nunca aproximado. */
+      duracao_min: number;
+    }
+  | { tipo: 'nao_configurada' }
+  | {
+      tipo: 'invalida';
+      motivo: MotivoDuracaoInvalida;
+      /**
+       * Valor exatamente como recebido, para auditoria tecnica -- somente
+       * quando for numero FINITO (ex.: `0`, `15`, `30.5`, `250`).
+       *
+       * Correcao 0155: campo opcional e restrito a `number`. Quando o valor
+       * configurado nao e numero finito (string, objeto, array, `null`,
+       * `NaN`, `Infinity`), o campo e OMITIDO -- nunca convertido, nunca
+       * serializado, nunca substituido por marcador. Isso impede que
+       * conteudo arbitrario vindo da configuracao atravesse a fronteira do
+       * resultado publico, e garante que `JSON.stringify` do resultado
+       * jamais produza `null` derivado de `NaN`/`Infinity`.
+       */
+      valor_recebido?: number;
+    }
+  | {
+      tipo: 'erro_configuracao';
+      codigo: CodigoErroConfiguracaoDuracao;
+      /**
+       * `procedimento_id` envolvido. Array por consistencia com os demais
+       * resolvedores; na pratica contem sempre exatamente um elemento,
+       * porque o escopo desta consulta e um unico procedimento.
+       */
+      procedimento_ids: readonly string[];
+      /**
+       * Valores conflitantes encontrados, deduplicados e ordenados
+       * numericamente. Sao numeros de configuracao da clinica -- nunca
+       * nome de procedimento, catalogo completo ou dado do paciente.
+       *
+       * Correcao 0155: garantidamente somente numeros FINITOS. O conflito
+       * so e avaliado depois que todos os valores correspondentes foram
+       * confirmados como numeros finitos -- entao string, objeto, `null`,
+       * `NaN` ou infinito nunca podem entrar aqui, e a serializacao JSON
+       * preserva exatamente os mesmos valores.
+       */
+      duracoes_conflitantes: readonly number[];
+    };
