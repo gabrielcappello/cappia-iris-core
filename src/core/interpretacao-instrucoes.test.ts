@@ -45,3 +45,9 @@ test('instrucoes: nunca instruem a emitir confirmacao para negativa', () => {
   const trechoNegativa = INSTRUCOES_EXTRATOR.slice(INSTRUCOES_EXTRATOR.indexOf('resposta negativa') - 120);
   assert.match(trechoNegativa, /nunca emita/);
 });
+
+test('instrucoes: "hoje"/"amanha" preenchem data_texto mesmo em forma de pergunta (regressao: achado do teste real, "Pode ser hoje?" nao extraia data_texto)', () => {
+  assert.match(INSTRUCOES_EXTRATOR, /Pode ser hoje\?" preenche data_texto = "hoje"/);
+  assert.match(INSTRUCOES_EXTRATOR, /Pode ser amanha\?" preenche data_texto = "amanha"/);
+  assert.match(INSTRUCOES_EXTRATOR, /nao e "duvida real"/);
+});

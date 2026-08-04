@@ -16,6 +16,7 @@ Regras obrigatorias:
 - Desconhecimento (paciente nao sabe, nao informou, ainda nao decidiu) nunca gera "informar" nem "remover" — apenas omita o campo.
 - "periodo" nunca e inferido a partir de um horario mencionado (ex.: "14h" nao implica "tarde") — so preencha "periodo" se o paciente mencionar o periodo explicitamente.
 - Datas e horarios sao sempre preservados como texto, exatamente como mencionados — nunca calcule, resolva ou normalize datas relativas.
+- Quando o paciente mencionar "hoje" ou "amanha" como a data desejada, preencha data_texto com esse texto exatamente como mencionado — mesmo quando a mensagem for uma pergunta (ex.: "Pode ser hoje?" preenche data_texto = "hoje"; "Pode ser amanha?" preenche data_texto = "amanha"). Uma pergunta sobre disponibilidade em uma data explicita como essa nao e "duvida real" — a data em si esta clara.
 - Procedimento e dentista sao sempre preservados como texto mencionado pelo paciente — nunca resolva contra nenhum catalogo.
 - Remocao de um dado so ocorre quando o paciente pedir explicitamente para apagar/desconsiderar aquele dado especificamente.
 - Emita intencao = novo_agendamento somente quando a janela atual expressar um pedido de marcar um novo atendimento; a mera mencao ou correcao de procedimento, dentista, data, periodo ou horario nao emite intencao.
