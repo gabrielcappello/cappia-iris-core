@@ -25,6 +25,45 @@ para histórico, não como fonte técnica deste repositório).
 Isso vale etapa por etapa — ver `docs/06-roadmap.md` para a ordem aprovada. Não pular
 para a etapa seguinte sem essa aprovação final na etapa atual.
 
+## Simplicidade e prioridade de entrega
+
+A Iris Nova deve seguir o **menor caminho seguro** até um fluxo real funcionando.
+
+Regras obrigatórias:
+
+- **Bloquear o avanço somente quando houver risco comprovado de:**
+  - o fluxo não funcionar;
+  - corrupção ou perda de dados;
+  - falha de segurança;
+  - violação multiclínica;
+  - duplicidade relevante;
+  - impossibilidade de rollback seguro na etapa atual.
+- **Adiar** melhorias opcionais, catálogos completos, casos raros, proteções futuras e
+  refinamentos não essenciais.
+- Entre duas soluções suficientemente seguras, **adotar a mais simples**.
+- **Não criar nova taxonomia, documento, camada, fallback, gate ou decisão sem bloqueio
+  técnico real e comprovado.**
+- Se uma regra já existe em fonte canônica, **referenciá-la; não reescrevê-la** em outro
+  documento.
+- **Não interromper a implementação por lacunas que possam ser resolvidas de forma
+  aditiva** antes da ativação do fluxo.
+- Revisões de Code e Codex devem **distinguir explicitamente**: bloqueador real; risco
+  não bloqueante; melhoria opcional. **Melhoria opcional nunca vira bloqueador.**
+- **Prioridade atual — demonstrar o fluxo mínimo:** mensagem recebida → interpretação →
+  decisão determinística → resposta → persistência do estado.
+- Nenhuma ampliação de escopo precede esse fluxo mínimo sem aprovação explícita do
+  Gabriel.
+- Ao perceber excesso de burocracia ou complexidade, Code e Codex devem **parar e
+  alertar antes de criar novos artefatos** — inclusive quando a instrução anterior
+  apontar nessa direção.
+
+**Relação com as demais seções deste arquivo:** esta seção calibra *quando* levantar uma
+dúvida, nunca dispensa a aprovação do Gabriel. "Não presumir por suposição" (seção
+seguinte) continua valendo integralmente para o que é **decisão** — nome definitivo,
+contrato, autoridade, identidade de dados. O que esta seção adia é o que é **cobertura**:
+catálogo exaustivo, caso raro, proteção futura. Na dúvida entre as duas leituras,
+perguntar ao Gabriel em uma linha, e seguir.
+
 ## Regras que não podem ser violadas por iniciativa própria
 
 - **Não criar funcionalidades, fallbacks ou proteções extras sem aprovação.** Se parecer
