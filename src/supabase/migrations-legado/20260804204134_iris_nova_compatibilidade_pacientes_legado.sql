@@ -68,7 +68,9 @@
 -- usa IF NOT EXISTS: colisao de nome falha explicitamente em vez de ser
 -- ignorada em silencio.
 --
--- NAO APLICADA em nenhum projeto no momento desta escrita.
+-- APLICADA em udizowyfjnhuhgxkeayk em 2026-08-04, verificada e testada
+-- (ponta a ponta, via WhatsApp) no mesmo dia. Nao aplicada em nenhum outro
+-- projeto.
 
 alter table pacientes
   add column telefone_normalizado text generated always as ('55' || telefone) stored;
