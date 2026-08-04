@@ -840,6 +840,11 @@ test('conversao: remover com valor string invalida', () => {
   assert.throws(() => converterParaContratoInterno({ alteracoes: [{ campo: 'cpf', acao: 'remover', valor: 'algum-valor' }] }));
 });
 
+test('conversao: confirmacao sim converte para o mapa interno', () => {
+  const resultado = converterParaContratoInterno({ alteracoes: [{ campo: 'confirmacao', acao: 'informar', valor: 'sim' }] });
+  assert.deepEqual(resultado, { confirmacao: { acao: 'informar', valor: 'sim' } });
+});
+
 test('conversao: campo, acao ou propriedade desconhecida invalida', () => {
   assert.throws(() => converterParaContratoInterno({ alteracoes: [{ campo: 'telefone', acao: 'informar', valor: 'x' }] }));
   assert.throws(() => converterParaContratoInterno({ alteracoes: [{ campo: 'nome', acao: 'apagar_tudo', valor: 'x' }] }));
@@ -865,6 +870,17 @@ test('requisicao: usa modelo fixado, store false, strict true e nenhuma tool', a
   assert.equal(corpo.text.format.type, 'json_schema');
   assert.equal(corpo.text.format.strict, true);
   assert.ok(!('tools' in corpo));
+});
+
+test('requisicao: schema enviado inclui confirmacao no enum de campo', async () => {
+  const { fetchFalso, chamadas } = criarFetchFalso([() => respostaSucesso([])]);
+  const cliente = criarCliente({ fetch: fetchFalso });
+
+  await cliente.executar(entradaValida());
+
+  const corpo = JSON.parse(chamadas[0].opcoes.body as string);
+  const enumCampo = corpo.text.format.schema.properties.alteracoes.items.properties.campo.enum;
+  assert.ok(enumCampo.includes('confirmacao'));
 });
 
 test('requisicao: somente instrucoes e payload autorizado sao enviados', async () => {

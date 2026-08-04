@@ -43,6 +43,7 @@ const SCHEMA_PORTATIL_APROVADO = {
               'data_texto',
               'periodo',
               'horario_texto',
+              'confirmacao',
               'nome',
               'cpf',
               'data_nascimento',
