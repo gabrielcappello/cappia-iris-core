@@ -9,9 +9,19 @@ const PROVIDER = 'evolution';
 const INSTANCIA = 'clinica-teste';
 const TELEFONE = '5511999999999';
 
-function semearClinica(tabelas: TabelasFalsas): string {
+// 2026-08-03 = segunda-feira (verificado); usado como "hoje" nos testes que
+// chegam ate a disponibilidade.
+const INSTANTE_ATUAL = { data: '2026-08-03', minuto_min: 480 };
+
+function semearClinica(tabelas: TabelasFalsas, dentistas: Record<string, unknown>[] = []): string {
   const clinicaId = crypto.randomUUID();
-  tabelas.clinicas.push({ id: clinicaId, provider: PROVIDER, instancia_whatsapp: INSTANCIA });
+  tabelas.clinicas.push({
+    id: clinicaId,
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA,
+    fuso_horario: 'America/Sao_Paulo',
+    dentistas,
+  });
   return clinicaId;
 }
 
@@ -47,6 +57,7 @@ test('procedimento nao resolvido: orquestrador para em aguardando_procedimento',
     telefone_normalizado: TELEFONE,
     mensagens_atuais: ['oi'],
     catalogo: catalogoBase(clinicaId),
+    instante_atual: INSTANTE_ATUAL,
   });
 
   assert.equal(resultado.clinica_id, clinicaId);
@@ -56,7 +67,7 @@ test('procedimento nao resolvido: orquestrador para em aguardando_procedimento',
   }
 });
 
-test('procedimento + dentista unico apto + duracao configurada: pronto_para_horario', async () => {
+test('procedimento + dentista unico apto + duracao configurada, sem data: aguardando_data_horario', async () => {
   const tabelas = criarTabelasFalsasVazias();
   const clinicaId = semearClinica(tabelas);
   semearConversa(tabelas, clinicaId);
@@ -92,14 +103,86 @@ test('procedimento + dentista unico apto + duracao configurada: pronto_para_hora
     telefone_normalizado: TELEFONE,
     mensagens_atuais: ['quero marcar uma limpeza'],
     catalogo,
+    instante_atual: INSTANTE_ATUAL,
   });
 
+  // procedimento/dentista/duracao resolvidos, mas nenhum data_texto/periodo/
+  // horario_texto informado -> fatos_temporais vazio -> resolverTemporal
+  // (nao alterado) devolve incompleto/intencao_ausente pelo caminho ja
+  // existente, nunca um horario inventado.
   assert.deepEqual(resultado.decisao, {
-    tipo: 'pronto_para_horario',
-    procedimento_id: procedimentoId,
-    dentista_id: dentistaId,
-    duracao_min: 30,
+    tipo: 'aguardando_data_horario',
+    resultado: { tipo: 'incompleto', motivo: 'intencao_ausente' },
   });
+});
+
+test('fluxo completo ate horario real: procedimento -> dentista -> duracao -> "hoje" -> horarios_disponiveis', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const procedimentoId = crypto.randomUUID();
+  const dentistaId = crypto.randomUUID();
+  const clinicaId = semearClinica(tabelas, [
+    {
+      id: dentistaId,
+      ativo: true,
+      modo: 'auto',
+      inicio: '08:00',
+      fim: '12:00',
+      dur: 30,
+      sabado: false,
+      alm_ini: null,
+      alm_fim: null,
+      procedimentos: [],
+    },
+  ]);
+  semearConversa(tabelas, clinicaId);
+  const clienteBanco = new ClienteFalso(tabelas);
+  const clienteModelo = new ClienteModeloFalso([
+    {
+      alteracoes: {
+        procedimento_texto: { acao: 'informar', valor: 'limpeza' },
+        data_texto: { acao: 'informar', valor: 'hoje' },
+        periodo: { acao: 'informar', valor: 'manha' },
+      },
+    },
+  ]);
+
+  const catalogo: CatalogoClinica = {
+    procedimentos: [
+      { procedimento_id: procedimentoId, clinica_id: clinicaId, nome_pt: 'Limpeza', ativo: true, eh_consulta_avaliacao: false },
+    ],
+    aliasesProcedimento: [{ clinica_id: clinicaId, procedimento_id: procedimentoId, texto: 'limpeza', ativo: true }],
+    dentistas: [
+      {
+        dentista_id: dentistaId,
+        clinica_id: clinicaId,
+        nome_exibido: 'Dra. Ana',
+        nome_completo_resolucao: 'Ana Souza',
+        nome_curto_resolucao: 'Ana',
+        ativo: true,
+      },
+    ],
+    vinculos: [{ clinica_id: clinicaId, dentista_id: dentistaId, procedimento_id: procedimentoId, ativo: true }],
+    configuracoesDuracao: [{ clinica_id: clinicaId, procedimento_id: procedimentoId, duracao_min: 30 }],
+  };
+
+  const resultado = await processarMensagem(clienteModelo, clienteBanco, {
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA,
+    telefone_normalizado: TELEFONE,
+    mensagens_atuais: ['quero marcar uma limpeza hoje de manha'],
+    catalogo,
+    instante_atual: INSTANTE_ATUAL,
+  });
+
+  assert.equal(resultado.decisao.tipo, 'horarios_disponiveis');
+  if (resultado.decisao.tipo !== 'horarios_disponiveis') return;
+  assert.equal(resultado.decisao.procedimento_id, procedimentoId);
+  assert.equal(resultado.decisao.dentista_id, dentistaId);
+  assert.equal(resultado.decisao.duracao_min, 30);
+  assert.equal(resultado.decisao.resultado.tipo, 'opcoes');
+  if (resultado.decisao.resultado.tipo === 'opcoes') {
+    assert.ok(resultado.decisao.resultado.opcoes.length > 0, 'jornada 08:00-12:00 as 08:00 deve ter horarios livres');
+  }
 });
 
 test('alias ambiguo no catalogo: erro_catalogo_procedimento, nunca aguardando_procedimento', async () => {
@@ -134,6 +217,7 @@ test('alias ambiguo no catalogo: erro_catalogo_procedimento, nunca aguardando_pr
     telefone_normalizado: TELEFONE,
     mensagens_atuais: ['quero marcar uma limpeza'],
     catalogo,
+    instante_atual: INSTANTE_ATUAL,
   });
 
   assert.equal(resultado.decisao.tipo, 'erro_catalogo_procedimento');
@@ -190,6 +274,7 @@ test('dois dentistas aptos, sem preferencia: aguardando_escolha_dentista', async
     telefone_normalizado: TELEFONE,
     mensagens_atuais: ['quero marcar uma limpeza'],
     catalogo,
+    instante_atual: INSTANTE_ATUAL,
   });
 
   assert.equal(resultado.decisao.tipo, 'aguardando_escolha_dentista');

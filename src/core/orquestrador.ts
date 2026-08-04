@@ -3,21 +3,24 @@ import { interpretarEAplicar } from './interpretar-e-aplicar.ts';
 import { resolverProcedimento } from './resolver-procedimento.ts';
 import { resolverDentista } from './resolver-dentista.ts';
 import { resolverDuracao } from './resolver-duracao.ts';
+import { montarFatosTemporais } from './montar-fatos-temporais.ts';
+import { resolverTemporal } from './resolver-temporal.ts';
+import { carregarEntradaDisponibilidade } from './carregar-disponibilidade.ts';
 import type { ClienteBancoDados } from './tipos.ts';
 import type { ClienteModeloEstruturado } from './interpretacao-tipos.ts';
+import type { InstanteAtual, ModoConsulta } from './disponibilidade-tipos.ts';
+import type { ResolucaoTemporalOficial } from './temporal-tipos.ts';
 import type { CatalogoClinica, DecisaoOrquestrador, EntradaOrquestrador, ResultadoOrquestrador } from './orquestrador-tipos.ts';
 
 /**
  * Orquestrador minimo do primeiro fluxo: identificacao -> interpretacao ->
- * resolvedores de dominio ja publicados, ate o primeiro dado que falta ou
- * ate procedimento+dentista+duracao estarem prontos (`pronto_para_horario`).
- *
- * Escopo explicitamente fora desta funcao, por decisao do Gabriel (moratoria
- * sobre P4 completo): resolucao temporal e disponibilidade. Ver
- * orquestrador-tipos.ts para o motivo exato.
+ * resolvedores de dominio ja publicados -> resolucao temporal (fatia minima)
+ * -> disponibilidade real. Ver orquestrador-tipos.ts para o vocabulario
+ * temporal exato coberto e o que fica de fora por decisao do Gabriel.
  *
  * Nao gera texto de resposta ao paciente (redacao/NLG e P5, fora de
- * escopo) -- devolve uma decisao estruturada para o chamador formatar.
+ * escopo) -- devolve uma decisao estruturada para o chamador formatar. Nao
+ * toca reserva, confirmacao, remarcacao nem cancelamento.
  */
 export async function processarMensagem(
   clienteModelo: ClienteModeloEstruturado,
@@ -46,15 +49,17 @@ export async function processarMensagem(
     clinica_id: identificacao.clinica_id,
     conversa_id: identificacao.conversa.id,
     conflitos: interpretacao.conflitos,
-    decisao: decidir(identificacao.clinica_id, dados, entrada.catalogo),
+    decisao: await decidir(clienteBanco, identificacao.clinica_id, dados, entrada.catalogo, entrada.instante_atual),
   };
 }
 
-function decidir(
+async function decidir(
+  clienteBanco: ClienteBancoDados,
   clinicaId: string,
   dados: Record<string, string | undefined>,
-  catalogo: CatalogoClinica
-): DecisaoOrquestrador {
+  catalogo: CatalogoClinica,
+  instanteAtual: InstanteAtual
+): Promise<DecisaoOrquestrador> {
   const resultadoProcedimento = resolverProcedimento({
     clinica_id: clinicaId,
     procedimento_texto: dados.procedimento_texto ?? null,
@@ -86,12 +91,79 @@ function decidir(
   if (resultadoDuracao.tipo === 'nao_configurada') return { tipo: 'duracao_nao_configurada' };
   if (resultadoDuracao.tipo !== 'resolvida') return { tipo: 'erro_configuracao_duracao', resultado: resultadoDuracao };
 
-  return {
-    tipo: 'pronto_para_horario',
-    procedimento_id: resultadoProcedimento.procedimento_id,
+  // fuso ausente (clinica sem configuracao, ou linha nao encontrada) nao e
+  // validado aqui por conta propria -- passa direto pra resolverTemporal,
+  // que ja tem o motivo de erro proprio (erro_configuracao/fuso_ausente),
+  // em vez de duplicar essa checagem no orquestrador.
+  const fuso = await buscarFusoHorario(clienteBanco, clinicaId);
+
+  const resultadoTemporal = resolverTemporal({
+    clinica_id: clinicaId,
+    fuso: fuso ?? '',
+    instante_atual: instanteAtual,
+    fatos_temporais: montarFatosTemporais({
+      data_texto: dados.data_texto,
+      periodo: dados.periodo,
+      horario_texto: dados.horario_texto,
+    }),
+  });
+
+  if (resultadoTemporal.tipo !== 'resolvido') {
+    return { tipo: 'aguardando_data_horario', resultado: resultadoTemporal };
+  }
+
+  const carregado = await carregarEntradaDisponibilidade(clienteBanco, {
+    clinica_id: clinicaId,
     dentista_id: resolucaoDentista.dentistaId,
-    duracao_min: resultadoDuracao.duracao_min,
-  };
+    procedimento_id: resultadoProcedimento.procedimento_id,
+    data: resultadoTemporal.data,
+    instante_atual: instanteAtual,
+    modo: derivarModoConsulta(resultadoTemporal),
+  });
+
+  switch (carregado.tipo) {
+    case 'carregado':
+      return {
+        tipo: 'horarios_disponiveis',
+        procedimento_id: resultadoProcedimento.procedimento_id,
+        dentista_id: resolucaoDentista.dentistaId,
+        duracao_min: resultadoDuracao.duracao_min,
+        resultado: carregado.resultado,
+      };
+    case 'clinica_nao_encontrada':
+      // Nao deveria ocorrer (identificarConversa ja confirmou a clinica
+      // antes desta funcao ser chamada) -- tratado como configuracao
+      // temporal ausente, nunca uma excecao nao tratada.
+      return { tipo: 'aguardando_data_horario', resultado: { tipo: 'erro_configuracao', motivo: 'fuso_ausente' } };
+    case 'dentista_nao_encontrado':
+      return { tipo: 'sem_dentista_disponivel' };
+    case 'duracao_nao_resolvida':
+      return carregado.resultado.tipo === 'nao_configurada'
+        ? { tipo: 'duracao_nao_configurada' }
+        : { tipo: 'erro_configuracao_duracao', resultado: carregado.resultado };
+  }
+}
+
+async function buscarFusoHorario(cliente: ClienteBancoDados, clinicaId: string): Promise<string | null> {
+  const { data, error } = await cliente.from('clinicas').select('fuso_horario').eq('id', clinicaId).maybeSingle();
+  if (error) throw new Error(`falha ao buscar fuso da clinica: ${error.message}`);
+  const fuso = (data as Record<string, unknown> | null)?.fuso_horario;
+  return typeof fuso === 'string' && fuso.trim() !== '' ? fuso : null;
+}
+
+// Traduz o resultado temporal resolvido pro modo que resolverDisponibilidade
+// espera (ja publicado, nao alterado): horario explicito tem prioridade
+// (modo 'horario_exato' nao aceita periodo simultaneamente, pelo proprio
+// contrato fechado de ModoConsulta); sem horario, usa periodo quando
+// informado; sem os dois, grade do dia inteiro.
+function derivarModoConsulta(resultado: ResolucaoTemporalOficial): ModoConsulta {
+  if (resultado.horario_min !== undefined) {
+    return { tipo: 'horario_exato', horario_min: resultado.horario_min };
+  }
+  if (resultado.periodo !== undefined) {
+    return { tipo: 'grade', periodo: resultado.periodo };
+  }
+  return { tipo: 'grade' };
 }
 
 type ResolucaoDentistaComFallback = { decisaoAntecipada: DecisaoOrquestrador } | { dentistaId: string };

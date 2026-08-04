@@ -7,6 +7,8 @@ import type { AliasProcedimento, ProcedimentoOficial, ResultadoResolucaoProcedim
 import type { DentistaApto, DentistaOficial, ResultadoResolucaoDentista, VinculoDentistaProcedimento } from './dentista-tipos.ts';
 import type { ConfiguracaoDuracao, ResultadoResolucaoDuracao } from './duracao-tipos.ts';
 import type { Conflito } from './interpretacao-tipos.ts';
+import type { InstanteAtual, ResultadoDisponibilidade } from './disponibilidade-tipos.ts';
+import type { ResultadoResolucaoTemporal } from './temporal-tipos.ts';
 
 /**
  * Catalogo de UMA clinica, ja carregado pelo chamador. Este modulo nunca
@@ -29,17 +31,24 @@ export interface EntradaOrquestrador {
   telefone_normalizado: string;
   mensagens_atuais: string[];
   catalogo: CatalogoClinica;
+  // O orquestrador nunca le relogio -- mesmo principio ja fixo em
+  // resolverTemporal/resolverDisponibilidade (nenhum dos dois chama
+  // Date.now()). Fornecido pelo chamador (futuro transporte/Edge Function).
+  instante_atual: InstanteAtual;
 }
 
 /**
- * Uniao discriminada por `tipo`. `pronto_para_horario` e o ponto exato onde
- * este orquestrador para hoje: a conversao de `data_texto`/`horario_texto`/
- * `periodo` (texto livre ja aceito por aplicar-dados.ts) para os atomos
- * temporais estruturados que resolverTemporal exige (temporal-tipos.ts)
- * ainda nao existe em nenhum modulo do repositorio -- e uma decisao
- * arquitetural em aberto (o modelo passa a emitir atomos diretamente, ou um
- * parser deterministico separado interpreta os tres campos), nao inventada
- * aqui.
+ * Uniao discriminada por `tipo`. `aguardando_data_horario` e
+ * `horarios_disponiveis` sao os dois desfechos depois de procedimento/
+ * dentista/duracao resolvidos -- via montar-fatos-temporais.ts (fatia
+ * minima: hoje, amanha, data explicita DD/MM[/AAAA], manha, tarde, horario
+ * explicito HH:MM/HHh[MM]) + resolverTemporal + carregarEntradaDisponibilidade
+ * (nenhum dos dois alterado). Texto fora desse vocabulario fechado nao
+ * produz atomo -- cai naturalmente em `aguardando_data_horario` com motivo
+ * `incompleto`, o mesmo caminho que resolverTemporal ja usa pra "faltou
+ * dado". Casos complexos (dia da semana, restricao "depois das Xh", datas
+ * relativas alem de hoje/amanha) ficam de fora desta etapa, por decisao do
+ * Gabriel -- nao inventados aqui.
  */
 export type DecisaoOrquestrador =
   | { tipo: 'aguardando_procedimento'; resultado: ResultadoResolucaoProcedimento }
@@ -49,7 +58,14 @@ export type DecisaoOrquestrador =
   | { tipo: 'erro_catalogo_dentista'; resultado: ResultadoResolucaoDentista }
   | { tipo: 'duracao_nao_configurada' }
   | { tipo: 'erro_configuracao_duracao'; resultado: ResultadoResolucaoDuracao }
-  | { tipo: 'pronto_para_horario'; procedimento_id: string; dentista_id: string; duracao_min: number };
+  | { tipo: 'aguardando_data_horario'; resultado: ResultadoResolucaoTemporal }
+  | {
+      tipo: 'horarios_disponiveis';
+      procedimento_id: string;
+      dentista_id: string;
+      duracao_min: number;
+      resultado: ResultadoDisponibilidade;
+    };
 
 export interface ResultadoOrquestrador {
   clinica_id: string;
