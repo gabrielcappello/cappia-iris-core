@@ -6,25 +6,31 @@ import { resolverDuracao } from './resolver-duracao.ts';
 import { montarFatosTemporais } from './montar-fatos-temporais.ts';
 import { resolverTemporal } from './resolver-temporal.ts';
 import { carregarEntradaDisponibilidade } from './carregar-disponibilidade.ts';
+import { reservarAgendamento } from './reservar-agendamento.ts';
 import type { ClienteBancoDados } from './tipos.ts';
 import type { ClienteModeloEstruturado } from './interpretacao-tipos.ts';
-import type { InstanteAtual, ModoConsulta } from './disponibilidade-tipos.ts';
+import type { ClienteRpc } from './mensagens-recebidas-tipos.ts';
+import type { InstanteAtual, ModoConsulta, OpcaoHorario } from './disponibilidade-tipos.ts';
 import type { ResolucaoTemporalOficial } from './temporal-tipos.ts';
 import type { CatalogoClinica, DecisaoOrquestrador, EntradaOrquestrador, ResultadoOrquestrador } from './orquestrador-tipos.ts';
 
 /**
  * Orquestrador minimo do primeiro fluxo: identificacao -> interpretacao ->
  * resolvedores de dominio ja publicados -> resolucao temporal (fatia minima)
- * -> disponibilidade real. Ver orquestrador-tipos.ts para o vocabulario
- * temporal exato coberto e o que fica de fora por decisao do Gabriel.
+ * -> disponibilidade real -> confirmacao explicita -> reserva
+ * (cappia_reservar_agendamento, RPC ja em producao, ver orquestrador-tipos.ts).
+ * Ver orquestrador-tipos.ts para o vocabulario temporal exato coberto e o
+ * que fica de fora por decisao do Gabriel.
  *
- * Nao gera texto de resposta ao paciente (redacao/NLG e P5, fora de
- * escopo) -- devolve uma decisao estruturada para o chamador formatar. Nao
- * toca reserva, confirmacao, remarcacao nem cancelamento.
+ * Nao gera texto de resposta ao paciente (redacao/NLG e P5, fora de escopo)
+ * -- devolve uma decisao estruturada para o chamador formatar. Nao toca
+ * remarcacao, cancelamento, consulta de agendamento, outbox nem cadastro de
+ * paciente novo (ver decisao 'cadastro_necessario').
  */
 export async function processarMensagem(
   clienteModelo: ClienteModeloEstruturado,
   clienteBanco: ClienteBancoDados,
+  clienteRpc: ClienteRpc,
   entrada: EntradaOrquestrador
 ): Promise<ResultadoOrquestrador> {
   const identificacao = await identificarConversa(clienteBanco, {
@@ -49,13 +55,25 @@ export async function processarMensagem(
     clinica_id: identificacao.clinica_id,
     conversa_id: identificacao.conversa.id,
     conflitos: interpretacao.conflitos,
-    decisao: await decidir(clienteBanco, identificacao.clinica_id, dados, entrada.catalogo, entrada.instante_atual),
+    decisao: await decidir(
+      clienteBanco,
+      clienteRpc,
+      identificacao.clinica_id,
+      identificacao.paciente.id,
+      entrada.telefone_normalizado,
+      dados,
+      entrada.catalogo,
+      entrada.instante_atual
+    ),
   };
 }
 
 async function decidir(
   clienteBanco: ClienteBancoDados,
+  clienteRpc: ClienteRpc,
   clinicaId: string,
+  pacienteId: string | null,
+  telefoneNormalizado: string,
   dados: Record<string, string | undefined>,
   catalogo: CatalogoClinica,
   instanteAtual: InstanteAtual
@@ -123,6 +141,24 @@ async function decidir(
 
   switch (carregado.tipo) {
     case 'carregado':
+      // horario_exato_disponivel = o paciente escolheu um horario especifico
+      // (via horario_texto -> montarFatosTemporais -> modo horario_exato) e
+      // ele esta livre: e o unico desfecho que pode levar a reserva. Todos
+      // os outros (opcoes/sem_disponibilidade/horario_exato_indisponivel/
+      // erros de configuracao) so mostram o que ha, nunca reservam.
+      if (carregado.resultado.tipo === 'horario_exato_disponivel') {
+        return await decidirConfirmacaoOuReserva(
+          clienteRpc,
+          clinicaId,
+          pacienteId,
+          telefoneNormalizado,
+          resultadoProcedimento.procedimento_id,
+          resolucaoDentista.dentistaId,
+          resultadoDuracao.duracao_min,
+          carregado.resultado.opcao,
+          dados.confirmacao
+        );
+      }
       return {
         tipo: 'horarios_disponiveis',
         procedimento_id: resultadoProcedimento.procedimento_id,
@@ -142,6 +178,78 @@ async function decidir(
         ? { tipo: 'duracao_nao_configurada' }
         : { tipo: 'erro_configuracao_duracao', resultado: carregado.resultado };
   }
+}
+
+/**
+ * So chega aqui com um horario ja comprovadamente livre na leitura
+ * (resolverDisponibilidade ja devolveu horario_exato_disponivel). Nunca
+ * recalcula procedimento/dentista/duracao/horario -- todos os quatro
+ * chegam exatamente como ja resolvidos por decidir(), sem nova consulta.
+ */
+async function decidirConfirmacaoOuReserva(
+  clienteRpc: ClienteRpc,
+  clinicaId: string,
+  pacienteId: string | null,
+  telefoneNormalizado: string,
+  procedimentoId: string,
+  dentistaId: string,
+  duracaoMin: number,
+  opcao: OpcaoHorario,
+  confirmacao: string | undefined
+): Promise<DecisaoOrquestrador> {
+  // Regra absoluta: nunca reservar sem confirmacao explicita ('sim',
+  // vocabulario fechado ja validado por aplicar-dados.ts). Ausencia ou
+  // qualquer outro valor -- nunca tratado como confirmacao implicita.
+  if (confirmacao !== 'sim') {
+    return { tipo: 'aguardando_confirmacao', procedimento_id: procedimentoId, dentista_id: dentistaId, opcao };
+  }
+
+  // cappia_reservar_agendamento exige paciente_id (nao tem default) -- sem
+  // paciente ja cadastrado pelo telefone, nao ha o que reservar. Cadastro de
+  // paciente novo fica fora desta etapa, por decisao do Gabriel.
+  if (pacienteId === null) {
+    return { tipo: 'cadastro_necessario' };
+  }
+
+  const horario = minutosParaHHMM(opcao.inicio_min);
+  const resultadoReserva = await reservarAgendamento(clienteRpc, {
+    clinica_id: clinicaId,
+    procedimento_id: procedimentoId,
+    dentista_id: dentistaId,
+    paciente_id: pacienteId,
+    data: opcao.data,
+    horario,
+    telefone_normalizado: telefoneNormalizado,
+  });
+
+  switch (resultadoReserva.tipo) {
+    case 'reservado':
+      return {
+        tipo: 'reserva_criada',
+        agendamento_id: resultadoReserva.agendamento_id,
+        dentista_id: resultadoReserva.dentista_id,
+        procedimento_id: procedimentoId,
+        duracao_min: resultadoReserva.duracao_min,
+        data: resultadoReserva.data,
+        horario: resultadoReserva.horario,
+      };
+    case 'conflito':
+      // A trava real da RPC (testada em producao) recusou por sobreposicao,
+      // mesmo com a leitura anterior indicando livre (corrida real) --
+      // nunca insiste sozinho, devolve conflito para pedir nova escolha.
+      return { tipo: 'reserva_conflito' };
+    case 'falhou':
+      return { tipo: 'reserva_falhou', motivo: resultadoReserva.motivo };
+  }
+}
+
+// resolverDisponibilidade opera em minutos locais (secao 2 de
+// specs/disponibilidade.md); cappia_reservar_agendamento espera HH:MM
+// (auditado). Unica conversao necessaria pra reaproveitar a RPC existente.
+function minutosParaHHMM(minutos: number): string {
+  const hora = Math.floor(minutos / 60);
+  const minuto = minutos % 60;
+  return `${String(hora).padStart(2, '0')}:${String(minuto).padStart(2, '0')}`;
 }
 
 async function buscarFusoHorario(cliente: ClienteBancoDados, clinicaId: string): Promise<string | null> {

@@ -1,4 +1,4 @@
-import { ACOES_PERMITIDAS, CAMPOS_PERMITIDOS, INTENCOES_PERMITIDAS, PERIODOS_PERMITIDOS } from './aplicar-dados.ts';
+import { ACOES_PERMITIDAS, CAMPOS_PERMITIDOS, CONFIRMACOES_PERMITIDAS, INTENCOES_PERMITIDAS, PERIODOS_PERMITIDOS } from './aplicar-dados.ts';
 import { EntradaInvalidaError, InterpretacaoInvalidaError } from './erros.ts';
 import { INSTRUCOES_EXTRATOR, SCHEMA_SAIDA_INTERPRETACAO } from './interpretacao-instrucoes.ts';
 import {
@@ -219,6 +219,9 @@ function validarMapaDeCampos(
     if (campo === 'intencao' && !INTENCOES_PERMITIDAS.includes(valor)) {
       throw new EntradaInvalidaError(campo, `valor de '${campo}' invalido`);
     }
+    if (campo === 'confirmacao' && !CONFIRMACOES_PERMITIDAS.includes(valor)) {
+      throw new EntradaInvalidaError(campo, `valor de '${campo}' invalido`);
+    }
   }
 }
 
@@ -281,6 +284,9 @@ export function validarSaidaInterpretacao(saida: unknown): asserts saida is Said
       throw new InterpretacaoInvalidaError('valor_fora_do_dominio', `${caminhoCampo}.valor`);
     }
     if (campo === 'intencao' && !INTENCOES_PERMITIDAS.includes(valor)) {
+      throw new InterpretacaoInvalidaError('valor_fora_do_dominio', `${caminhoCampo}.valor`);
+    }
+    if (campo === 'confirmacao' && !CONFIRMACOES_PERMITIDAS.includes(valor)) {
       throw new InterpretacaoInvalidaError('valor_fora_do_dominio', `${caminhoCampo}.valor`);
     }
   }

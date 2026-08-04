@@ -7,8 +7,9 @@ import type { AliasProcedimento, ProcedimentoOficial, ResultadoResolucaoProcedim
 import type { DentistaApto, DentistaOficial, ResultadoResolucaoDentista, VinculoDentistaProcedimento } from './dentista-tipos.ts';
 import type { ConfiguracaoDuracao, ResultadoResolucaoDuracao } from './duracao-tipos.ts';
 import type { Conflito } from './interpretacao-tipos.ts';
-import type { InstanteAtual, ResultadoDisponibilidade } from './disponibilidade-tipos.ts';
+import type { InstanteAtual, OpcaoHorario, ResultadoDisponibilidade } from './disponibilidade-tipos.ts';
 import type { ResultadoResolucaoTemporal } from './temporal-tipos.ts';
+import type { MotivoErroReserva } from './reservar-agendamento.ts';
 
 /**
  * Catalogo de UMA clinica, ja carregado pelo chamador. Este modulo nunca
@@ -65,7 +66,29 @@ export type DecisaoOrquestrador =
       dentista_id: string;
       duracao_min: number;
       resultado: ResultadoDisponibilidade;
-    };
+    }
+  // O paciente escolheu um horario exato e ele esta livre (resolverDisponibilidade
+  // ja devolveu horario_exato_disponivel), mas ainda nao disse "sim" -- nunca
+  // reserva sem essa confirmacao explicita (campo `confirmacao`, dados.ts).
+  | { tipo: 'aguardando_confirmacao'; procedimento_id: string; dentista_id: string; opcao: OpcaoHorario }
+  // Confirmado, horario livre, mas o telefone nao corresponde a nenhum
+  // paciente cadastrado -- cappia_reservar_agendamento exige paciente_id;
+  // cadastro de paciente novo fica fora desta etapa, por decisao do Gabriel.
+  | { tipo: 'cadastro_necessario' }
+  | {
+      tipo: 'reserva_criada';
+      agendamento_id: string;
+      dentista_id: string;
+      procedimento_id: string;
+      duracao_min: number;
+      data: string;
+      horario: string;
+    }
+  // O horario estava livre na leitura, mas cappia_reservar_agendamento (trava
+  // real, ja testada em producao) recusou por sobreposição -- nunca insiste
+  // sozinho, devolve conflito para o chamador pedir uma nova escolha.
+  | { tipo: 'reserva_conflito' }
+  | { tipo: 'reserva_falhou'; motivo: MotivoErroReserva };
 
 export interface ResultadoOrquestrador {
   clinica_id: string;

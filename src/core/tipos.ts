@@ -78,6 +78,7 @@ export type CampoDadosConversa =
   | 'data_texto'
   | 'periodo'
   | 'horario_texto'
+  | 'confirmacao'
   | 'nome'
   | 'cpf'
   | 'data_nascimento'

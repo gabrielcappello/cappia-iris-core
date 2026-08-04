@@ -4,6 +4,14 @@ import { processarMensagem } from './orquestrador.ts';
 import type { CatalogoClinica } from './orquestrador-tipos.ts';
 import { ClienteFalso, criarTabelasFalsasVazias, type TabelasFalsas } from './teste-cliente-falso.ts';
 import { ClienteModeloFalso } from './teste-cliente-modelo-falso.ts';
+import { ClienteRpcFalso, type RespostaRpc } from './teste-cliente-rpc-falso.ts';
+
+// Dublê sem nenhuma resposta configurada: usado em todos os testes que nao
+// deveriam chegar a reservar -- se `cappia_reservar_agendamento` for chamada
+// por engano, o proprio dublê lanca erro, provando o isolamento.
+function clienteRpcNuncaChamado(): ClienteRpcFalso {
+  return new ClienteRpcFalso({});
+}
 
 const PROVIDER = 'evolution';
 const INSTANCIA = 'clinica-teste';
@@ -40,6 +48,12 @@ function semearConversa(tabelas: TabelasFalsas, clinicaId: string) {
   });
 }
 
+function semearPaciente(tabelas: TabelasFalsas, clinicaId: string): string {
+  const pacienteId = crypto.randomUUID();
+  tabelas.pacientes.push({ id: pacienteId, clinica_id: clinicaId, telefone_normalizado: TELEFONE });
+  return pacienteId;
+}
+
 function catalogoBase(clinicaId: string): CatalogoClinica {
   return { procedimentos: [], aliasesProcedimento: [], dentistas: [], vinculos: [], configuracoesDuracao: [] };
 }
@@ -51,7 +65,7 @@ test('procedimento nao resolvido: orquestrador para em aguardando_procedimento',
   const clienteBanco = new ClienteFalso(tabelas);
   const clienteModelo = new ClienteModeloFalso([{ alteracoes: {} }]);
 
-  const resultado = await processarMensagem(clienteModelo, clienteBanco, {
+  const resultado = await processarMensagem(clienteModelo, clienteBanco, clienteRpcNuncaChamado(), {
     provider: PROVIDER,
     instancia_whatsapp: INSTANCIA,
     telefone_normalizado: TELEFONE,
@@ -97,7 +111,7 @@ test('procedimento + dentista unico apto + duracao configurada, sem data: aguard
     configuracoesDuracao: [{ clinica_id: clinicaId, procedimento_id: procedimentoId, duracao_min: 30 }],
   };
 
-  const resultado = await processarMensagem(clienteModelo, clienteBanco, {
+  const resultado = await processarMensagem(clienteModelo, clienteBanco, clienteRpcNuncaChamado(), {
     provider: PROVIDER,
     instancia_whatsapp: INSTANCIA,
     telefone_normalizado: TELEFONE,
@@ -165,7 +179,7 @@ test('fluxo completo ate horario real: procedimento -> dentista -> duracao -> "h
     configuracoesDuracao: [{ clinica_id: clinicaId, procedimento_id: procedimentoId, duracao_min: 30 }],
   };
 
-  const resultado = await processarMensagem(clienteModelo, clienteBanco, {
+  const resultado = await processarMensagem(clienteModelo, clienteBanco, clienteRpcNuncaChamado(), {
     provider: PROVIDER,
     instancia_whatsapp: INSTANCIA,
     telefone_normalizado: TELEFONE,
@@ -211,7 +225,7 @@ test('alias ambiguo no catalogo: erro_catalogo_procedimento, nunca aguardando_pr
     configuracoesDuracao: [],
   };
 
-  const resultado = await processarMensagem(clienteModelo, clienteBanco, {
+  const resultado = await processarMensagem(clienteModelo, clienteBanco, clienteRpcNuncaChamado(), {
     provider: PROVIDER,
     instancia_whatsapp: INSTANCIA,
     telefone_normalizado: TELEFONE,
@@ -268,7 +282,7 @@ test('dois dentistas aptos, sem preferencia: aguardando_escolha_dentista', async
     configuracoesDuracao: [{ clinica_id: clinicaId, procedimento_id: procedimentoId, duracao_min: 30 }],
   };
 
-  const resultado = await processarMensagem(clienteModelo, clienteBanco, {
+  const resultado = await processarMensagem(clienteModelo, clienteBanco, clienteRpcNuncaChamado(), {
     provider: PROVIDER,
     instancia_whatsapp: INSTANCIA,
     telefone_normalizado: TELEFONE,
@@ -282,4 +296,171 @@ test('dois dentistas aptos, sem preferencia: aguardando_escolha_dentista', async
     const ids = resultado.decisao.dentistas.map((d) => d.dentista_id).sort();
     assert.deepEqual(ids, [dentista1, dentista2].sort());
   }
+});
+
+// --- Escolha de horario + confirmacao explicita + reserva ---
+
+function montarCenarioReserva(tabelas: TabelasFalsas) {
+  const procedimentoId = crypto.randomUUID();
+  const dentistaId = crypto.randomUUID();
+  const clinicaId = semearClinica(tabelas, [
+    {
+      id: dentistaId,
+      ativo: true,
+      modo: 'auto',
+      inicio: '08:00',
+      fim: '12:00',
+      dur: 30,
+      sabado: false,
+      alm_ini: null,
+      alm_fim: null,
+      procedimentos: [],
+    },
+  ]);
+  semearConversa(tabelas, clinicaId);
+
+  const catalogo: CatalogoClinica = {
+    procedimentos: [
+      { procedimento_id: procedimentoId, clinica_id: clinicaId, nome_pt: 'Limpeza', ativo: true, eh_consulta_avaliacao: false },
+    ],
+    aliasesProcedimento: [{ clinica_id: clinicaId, procedimento_id: procedimentoId, texto: 'limpeza', ativo: true }],
+    dentistas: [
+      {
+        dentista_id: dentistaId,
+        clinica_id: clinicaId,
+        nome_exibido: 'Dra. Ana',
+        nome_completo_resolucao: 'Ana Souza',
+        nome_curto_resolucao: 'Ana',
+        ativo: true,
+      },
+    ],
+    vinculos: [{ clinica_id: clinicaId, dentista_id: dentistaId, procedimento_id: procedimentoId, ativo: true }],
+    configuracoesDuracao: [{ clinica_id: clinicaId, procedimento_id: procedimentoId, duracao_min: 30 }],
+  };
+
+  return { clinicaId, procedimentoId, dentistaId, catalogo };
+}
+
+function clienteModeloEscolha(confirmacao?: string) {
+  const alteracoes: Record<string, { acao: string; valor: string }> = {
+    procedimento_texto: { acao: 'informar', valor: 'limpeza' },
+    data_texto: { acao: 'informar', valor: 'hoje' },
+    horario_texto: { acao: 'informar', valor: '10:00' },
+  };
+  if (confirmacao !== undefined) alteracoes.confirmacao = { acao: 'informar', valor: confirmacao };
+  return new ClienteModeloFalso([{ alteracoes }]);
+}
+
+test('paciente escolhe horario livre, sem confirmar: aguardando_confirmacao, nunca reserva', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const { clinicaId, procedimentoId, dentistaId, catalogo } = montarCenarioReserva(tabelas);
+  const clienteBanco = new ClienteFalso(tabelas);
+  const clienteRpc = clienteRpcNuncaChamado();
+
+  const resultado = await processarMensagem(clienteModeloEscolha(), clienteBanco, clienteRpc, {
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA,
+    telefone_normalizado: TELEFONE,
+    mensagens_atuais: ['quero marcar limpeza hoje as 10:00'],
+    catalogo,
+    instante_atual: INSTANTE_ATUAL,
+  });
+
+  assert.equal(resultado.decisao.tipo, 'aguardando_confirmacao');
+  if (resultado.decisao.tipo !== 'aguardando_confirmacao') return;
+  assert.equal(resultado.decisao.procedimento_id, procedimentoId);
+  assert.equal(resultado.decisao.dentista_id, dentistaId);
+  assert.equal(resultado.decisao.opcao.inicio_min, 600);
+  assert.equal(clienteRpc.chamadas.length, 0, 'nunca reserva sem confirmacao explicita');
+});
+
+test('confirmado mas paciente nao cadastrado: cadastro_necessario, nunca reserva', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const { catalogo } = montarCenarioReserva(tabelas);
+  const clienteBanco = new ClienteFalso(tabelas);
+  const clienteRpc = clienteRpcNuncaChamado();
+
+  const resultado = await processarMensagem(clienteModeloEscolha('sim'), clienteBanco, clienteRpc, {
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA,
+    telefone_normalizado: TELEFONE,
+    mensagens_atuais: ['sim, confirmo'],
+    catalogo,
+    instante_atual: INSTANTE_ATUAL,
+  });
+
+  assert.deepEqual(resultado.decisao, { tipo: 'cadastro_necessario' });
+  assert.equal(clienteRpc.chamadas.length, 0);
+});
+
+test('escolha + confirmacao + paciente cadastrado: reserva_criada, chamando cappia_reservar_agendamento com os ids ja resolvidos', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const { clinicaId, procedimentoId, dentistaId, catalogo } = montarCenarioReserva(tabelas);
+  const pacienteId = semearPaciente(tabelas, clinicaId);
+  const clienteBanco = new ClienteFalso(tabelas);
+  const agendamentoId = crypto.randomUUID();
+  const clienteRpc = new ClienteRpcFalso({
+    cappia_reservar_agendamento: {
+      data: {
+        sucesso: true,
+        agendamento_id: agendamentoId,
+        dentista_id: dentistaId,
+        duracao_min: 30,
+        data: '2026-08-03',
+        horario: '10:00',
+      },
+      error: null,
+    } satisfies RespostaRpc,
+  });
+
+  const resultado = await processarMensagem(clienteModeloEscolha('sim'), clienteBanco, clienteRpc, {
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA,
+    telefone_normalizado: TELEFONE,
+    mensagens_atuais: ['sim, confirmo'],
+    catalogo,
+    instante_atual: INSTANTE_ATUAL,
+  });
+
+  assert.deepEqual(resultado.decisao, {
+    tipo: 'reserva_criada',
+    agendamento_id: agendamentoId,
+    dentista_id: dentistaId,
+    procedimento_id: procedimentoId,
+    duracao_min: 30,
+    data: '2026-08-03',
+    horario: '10:00',
+  });
+  assert.equal(clienteRpc.chamadas.length, 1);
+  assert.deepEqual(clienteRpc.chamadas[0].parametros, {
+    p_clinica_id: clinicaId,
+    p_data: '2026-08-03',
+    p_horario: '10:00',
+    p_procedimento_id: procedimentoId,
+    p_paciente_id: pacienteId,
+    p_dentista_id: dentistaId,
+    p_telefone: TELEFONE,
+  });
+});
+
+test('RPC recusa por sobreposicao real (corrida): reserva_conflito, nunca insiste sozinho', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const { clinicaId, catalogo } = montarCenarioReserva(tabelas);
+  semearPaciente(tabelas, clinicaId);
+  const clienteBanco = new ClienteFalso(tabelas);
+  const clienteRpc = new ClienteRpcFalso({
+    cappia_reservar_agendamento: { data: { sucesso: false, motivo: 'horario_ocupado' }, error: null } satisfies RespostaRpc,
+  });
+
+  const resultado = await processarMensagem(clienteModeloEscolha('sim'), clienteBanco, clienteRpc, {
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA,
+    telefone_normalizado: TELEFONE,
+    mensagens_atuais: ['sim, confirmo'],
+    catalogo,
+    instante_atual: INSTANTE_ATUAL,
+  });
+
+  assert.deepEqual(resultado.decisao, { tipo: 'reserva_conflito' });
+  assert.equal(clienteRpc.chamadas.length, 1, 'chamou a RPC exatamente uma vez, nunca reinsiste sozinho');
 });

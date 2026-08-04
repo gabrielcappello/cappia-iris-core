@@ -1,4 +1,4 @@
-import { CAMPOS_PERMITIDOS, INTENCOES_PERMITIDAS, PERIODOS_PERMITIDOS } from './aplicar-dados.ts';
+import { CAMPOS_PERMITIDOS, CONFIRMACOES_PERMITIDAS, INTENCOES_PERMITIDAS, PERIODOS_PERMITIDOS } from './aplicar-dados.ts';
 
 // Unico lugar onde o contrato dado ao modelo (instrucoes + schema) e
 // registrado. Qualquer mudanca de comportamento esperado da IA deve ser
@@ -19,6 +19,7 @@ Regras obrigatorias:
 - Procedimento e dentista sao sempre preservados como texto mencionado pelo paciente — nunca resolva contra nenhum catalogo.
 - Remocao de um dado so ocorre quando o paciente pedir explicitamente para apagar/desconsiderar aquele dado especificamente.
 - Emita intencao = novo_agendamento somente quando a janela atual expressar um pedido de marcar um novo atendimento; a mera mencao ou correcao de procedimento, dentista, data, periodo ou horario nao emite intencao.
+- Emita confirmacao = sim somente quando o paciente confirmar afirmativamente de forma clara e explicita (ex.: "sim", "confirmo", "pode marcar", "isso mesmo"). Nunca emita confirmacao diante de duvida, pergunta, hesitacao ou resposta negativa — nesses casos omita o campo por completo, nunca emita um valor diferente de "sim".
 - Quando mais de um valor coexistir para o mesmo campo (ex.: dois procedimentos, dois dentistas alternativos), preserve todos em uma unica string minima, na ordem em que foram mencionados — nunca escolha um, nunca crie array, nunca resolva a ambiguidade.
 - Quando houver correcoes sucessivas do mesmo campo dentro da janela, aplique somente a ultima correcao cronologica:
   - se o campo nao existia em dados_atuais, use "informar";
@@ -31,6 +32,7 @@ Regras obrigatorias:
 Campos permitidos: ${CAMPOS_PERMITIDOS.join(', ')}.
 Valores permitidos para periodo: ${PERIODOS_PERMITIDOS.join(', ')}.
 Valores permitidos para intencao: ${INTENCOES_PERMITIDAS.join(', ')}.
+Valores permitidos para confirmacao: ${CONFIRMACOES_PERMITIDAS.join(', ')}.
 `.trim();
 
 function schemaValorCampo(campo: string): object {
@@ -39,6 +41,9 @@ function schemaValorCampo(campo: string): object {
   }
   if (campo === 'intencao') {
     return { type: 'string', enum: [...INTENCOES_PERMITIDAS] };
+  }
+  if (campo === 'confirmacao') {
+    return { type: 'string', enum: [...CONFIRMACOES_PERMITIDAS] };
   }
   return { type: 'string', minLength: 1 };
 }

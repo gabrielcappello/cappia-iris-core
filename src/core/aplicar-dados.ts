@@ -19,6 +19,7 @@ export const CAMPOS_PERMITIDOS: readonly CampoDadosConversa[] = [
   'data_texto',
   'periodo',
   'horario_texto',
+  'confirmacao',
   'nome',
   'cpf',
   'data_nascimento',
@@ -28,6 +29,10 @@ export const CAMPOS_PERMITIDOS: readonly CampoDadosConversa[] = [
 export const ACOES_PERMITIDAS: readonly AcaoAlteracaoDados[] = ['informar', 'corrigir', 'remover'];
 export const PERIODOS_PERMITIDOS = ['manha', 'tarde', 'noite'];
 export const INTENCOES_PERMITIDAS = ['novo_agendamento'];
+// Fechado a 'sim': ausencia de confirmacao nunca e tratada como negacao
+// silenciosa, so como "ainda nao confirmou" -- mesmo principio ja usado em
+// dentista_texto/procedimento_texto ausentes.
+export const CONFIRMACOES_PERMITIDAS = ['sim'];
 const MAX_TENTATIVAS = 5;
 
 // Exportado para reuso (ex.: interpretarEAplicar precisa do mesmo snapshot
@@ -308,6 +313,9 @@ function validarAlteracoes(alteracoes: unknown): asserts alteracoes is Alteracoe
       }
       if (campo === 'intencao' && !INTENCOES_PERMITIDAS.includes(valor)) {
         throw new EntradaInvalidaError(campo, `intencao '${valor}' invalida`);
+      }
+      if (campo === 'confirmacao' && !CONFIRMACOES_PERMITIDAS.includes(valor)) {
+        throw new EntradaInvalidaError(campo, `confirmacao '${valor}' invalida`);
       }
     }
   }

@@ -15,7 +15,7 @@ import type { AlteracoesDados, CampoDadosConversa, ResultadoAplicarDados } from 
 
 export type CampoOperacionalInterpretacao = Extract<
   CampoDadosConversa,
-  'intencao' | 'procedimento_texto' | 'dentista_texto' | 'data_texto' | 'periodo' | 'horario_texto'
+  'intencao' | 'procedimento_texto' | 'dentista_texto' | 'data_texto' | 'periodo' | 'horario_texto' | 'confirmacao'
 >;
 
 export type CampoCadastralInterpretacao = Extract<
@@ -30,6 +30,7 @@ export const CAMPOS_OPERACIONAIS_INTERPRETACAO: readonly CampoOperacionalInterpr
   'data_texto',
   'periodo',
   'horario_texto',
+  'confirmacao',
 ];
 
 export const CAMPOS_CADASTRAIS_INTERPRETACAO: readonly CampoCadastralInterpretacao[] = [
