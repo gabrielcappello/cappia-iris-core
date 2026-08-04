@@ -11,10 +11,19 @@ export interface TabelasFalsas {
   pacientes: Record<string, unknown>[];
   estado_conversa: Record<string, unknown>[];
   mensagens_recebidas: Record<string, unknown>[];
+  horarios_bloqueados: Record<string, unknown>[];
+  agendamentos: Record<string, unknown>[];
 }
 
 export function criarTabelasFalsasVazias(): TabelasFalsas {
-  return { clinicas: [], pacientes: [], estado_conversa: [], mensagens_recebidas: [] };
+  return {
+    clinicas: [],
+    pacientes: [],
+    estado_conversa: [],
+    mensagens_recebidas: [],
+    horarios_bloqueados: [],
+    agendamentos: [],
+  };
 }
 
 class ConsultaFalsa implements ConsultaEncadeavel {
@@ -72,6 +81,23 @@ class ConsultaFalsa implements ConsultaEncadeavel {
     }
     return { data: linhas[0] ?? null, error: null };
   }
+
+  // Torna a consulta aguardavel diretamente (await consulta), mesmo
+  // protocolo do PostgrestFilterBuilder real -- nunca um metodo nomeado.
+  then<TResult1 = { data: Record<string, unknown>[]; error: { message: string } | null }, TResult2 = never>(
+    onfulfilled?:
+      | ((value: { data: Record<string, unknown>[] | null; error: { message: string } | null }) => TResult1 | PromiseLike<TResult1>)
+      | undefined
+      | null,
+    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | undefined | null
+  ): PromiseLike<TResult1 | TResult2> {
+    const resultado = (async () => {
+      await Promise.resolve();
+      if (this.erro) return { data: null, error: this.erro };
+      return { data: this.linhasFiltradas ?? this.todasLinhas, error: null };
+    })();
+    return resultado.then(onfulfilled, onrejected);
+  }
 }
 
 // 'eq' cobre .eq() e .is(coluna, null); 'not_null' cobre .not(coluna, 'is', null)
@@ -123,6 +149,23 @@ class AtualizacaoFalsa implements ConsultaEncadeavel {
     if (!alvo) return { data: null, error: null };
     Object.assign(alvo, this.valores);
     return { data: alvo, error: null };
+  }
+
+  // Nunca exercitado pelos fluxos reais de update (sempre terminam em
+  // maybeSingle) -- existe so para satisfazer o contrato de ConsultaEncadeavel
+  // (aguardavel diretamente, mesmo protocolo do PostgrestFilterBuilder real).
+  then<TResult1 = { data: Record<string, unknown>[]; error: { message: string } | null }, TResult2 = never>(
+    onfulfilled?:
+      | ((value: { data: Record<string, unknown>[] | null; error: { message: string } | null }) => TResult1 | PromiseLike<TResult1>)
+      | undefined
+      | null,
+    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | undefined | null
+  ): PromiseLike<TResult1 | TResult2> {
+    const resultado = (async () => {
+      await Promise.resolve();
+      return { data: this.linhas.filter((linha) => this.filtros.every((f) => filtroCasa(linha, f))), error: null };
+    })();
+    return resultado.then(onfulfilled, onrejected);
   }
 }
 

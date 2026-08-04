@@ -46,6 +46,8 @@ function clienteComErroDeUpdate(mensagemErro: string): ClienteBancoDados {
     not: () => consultaComErro,
     select: () => consultaComErro,
     maybeSingle: async () => ({ data: null, error: { message: mensagemErro } }),
+    then: (onfulfilled, onrejected) =>
+      Promise.resolve({ data: null, error: { message: mensagemErro } }).then(onfulfilled, onrejected),
   };
   return {
     from: () => ({

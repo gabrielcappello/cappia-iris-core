@@ -328,6 +328,7 @@ function clienteParaReconsultaInvalida(
       not: () => consulta,
       select: () => consulta,
       maybeSingle: async () => ({ data, error: null }),
+      then: (onfulfilled, onrejected) => Promise.resolve({ data: data ? [data] : [], error: null }).then(onfulfilled, onrejected),
     };
     return consulta;
   }

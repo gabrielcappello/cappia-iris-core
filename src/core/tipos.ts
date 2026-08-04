@@ -30,10 +30,23 @@ export interface ResultadoIdentificacao {
   };
 }
 
+// Formato que um PostgrestFilterBuilder do supabase-js resolve quando
+// aguardado diretamente (sem .single()/.maybeSingle()): sempre uma lista,
+// nunca uma linha unica.
+type ResultadoListagem<T> = { data: T[] | null; error: { message: string } | null };
+
 // Interface estrutural minima do cliente de banco usada por este modulo.
 // Qualquer implementacao que exponha esses metodos e compativel — tanto o
 // SupabaseClient real (@supabase/supabase-js) quanto um dublê de teste.
-export interface ConsultaEncadeavel<T = Record<string, unknown>> {
+//
+// Estende PromiseLike (nunca um metodo nomeado tipo `.listar()`): o
+// PostgrestFilterBuilder real ja e aguardavel diretamente e resolve para
+// { data: T[], error } por padrao -- ele nao tem nenhum metodo com esse
+// nome. Consultas que esperam zero ou mais linhas (ex.: bloqueios/
+// agendamentos de um dia) terminam a cadeia com `await` puro, nunca com
+// `.maybeSingle()` nem com um metodo inventado que so o dublê de teste
+// implementaria.
+export interface ConsultaEncadeavel<T = Record<string, unknown>> extends PromiseLike<ResultadoListagem<T>> {
   eq(coluna: string, valor: unknown): ConsultaEncadeavel<T>;
   is(coluna: string, valor: null): ConsultaEncadeavel<T>;
   // Espelha PostgrestFilterBuilder.not() do supabase-js. Usado hoje somente
