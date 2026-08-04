@@ -1,0 +1,67 @@
+-- Iris Nova - compatibilidade minima em clinicas para o banco operacional
+-- legado (udizowyfjnhuhgxkeayk).
+--
+-- Projeto-alvo: udizowyfjnhuhgxkeayk (banco operacional real, com painel e
+-- clinicas/pacientes reais). PROIBIDO aplicar em bcmuqautblvjdqzhjfbw
+-- (ambiente isolado de desenvolvimento/testes da Iris Nova) ou em qualquer
+-- outro projeto. Esta migration vive numa pasta separada
+-- (migrations-legado/, nao migrations/) de proposito: o resto de
+-- src/supabase/migrations/ e src/supabase/rollbacks/ neste repo sempre
+-- teve bcmuqautblvjdqzhjfbw como alvo -- misturar as duas convencoes
+-- criaria risco real de aplicar isto no projeto errado.
+--
+-- Decisao de Gabriel (2026-08-04): nao sincronizar nem duplicar os dados do
+-- painel entre projetos. udizowyfjnhuhgxkeayk vira o banco operacional da
+-- Iris Nova junto do painel (ja tem catalogo de procedimentos, dentistas,
+-- agenda, bloqueios e as funcoes de reserva reais). bcmuqautblvjdqzhjfbw
+-- continua isolado, so para desenvolvimento/testes.
+--
+-- ESCOPO -- estritamente aditivo, 1 tabela, 2 colunas, nenhuma copia de
+-- dado, nenhuma tabela nova, nenhuma mudanca no Core:
+--
+--   - clinicas.provider: nao existe hoje neste projeto (nenhum campo
+--     distingue provedor de WhatsApp -- so Evolution foi usado ate aqui).
+--     Adicionada com default 'evolution', que backfila as linhas
+--     existentes e cobre as futuras. Satisfaz identificacao.ts do Core
+--     (chamado pela Edge Function iris-nova-mensagem), que consulta
+--     clinicas por (provider, instancia_whatsapp) -- contrato ja fechado,
+--     nao alterado aqui.
+--
+--   - clinicas.instancia_whatsapp: `generated always as (whatsapp_instancia)
+--     stored` -- alias computado do campo ja existente `whatsapp_instancia`,
+--     nunca duplicado, nunca dessincronizavel (Postgres recalcula sozinho a
+--     cada UPDATE de whatsapp_instancia). E o unico ajuste necessario para
+--     que a consulta ja existente do Core encontre a clinica certa; o Core
+--     continua sem saber que `whatsapp_instancia` existe.
+--
+-- FORA DE ESCOPO nesta migration: qualquer copia de procedimentos,
+-- dentistas, pacientes, agenda ou bloqueios entre projetos; qualquer
+-- mudanca no Core; publicacao da Edge Function neste projeto (etapa
+-- posterior, so depois desta migration ser aplicada e revisada); os 3
+-- alertas de RLS desligada (n8n_chat_histories, clinicas_eventos_conexao,
+-- _backup_tempos_cappia_20260714) encontrados na auditoria de 2026-08-04 --
+-- nao relacionados a este fluxo, tratados a parte se e quando decidido.
+--
+-- PREFLIGHT (read-only, 2026-08-04, sobre udizowyfjnhuhgxkeayk): a tabela
+-- `clinicas` NAO tem `provider` nem `instancia_whatsapp` hoje (confirmado
+-- por erro de coluna inexistente ao consultar as duas). Tem
+-- `whatsapp_instancia` (text). 2 linhas reais existentes ("gabriel teste",
+-- "cleardent"), ambas com whatsapp_instancia preenchido. Historico de
+-- migrations proprio deste projeto (nao rastreado neste repositorio) tem
+-- 100+ entradas, a mais recente vista em 2026-08-04:
+-- 20260724002122_horarios_bloqueados_comando_id -- nenhuma delas mexe em
+-- `provider`/`instancia_whatsapp`.
+--
+-- REEXECUTAR O PREFLIGHT imediatamente antes de aplicar: confirmar de novo
+-- que as duas colunas ainda nao existem e que nenhuma migration
+-- concorrente do sistema legado alterou `clinicas` nesse meio-tempo. Nenhum
+-- ADD COLUMN usa IF NOT EXISTS: colisao de nome falha explicitamente em
+-- vez de ser ignorada em silencio.
+--
+-- NAO APLICADA em nenhum projeto no momento desta escrita.
+
+alter table clinicas
+  add column provider text not null default 'evolution';
+
+alter table clinicas
+  add column instancia_whatsapp text generated always as (whatsapp_instancia) stored;

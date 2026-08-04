@@ -1,0 +1,77 @@
+-- Iris Nova - compatibilidade minima em pacientes para o banco operacional
+-- legado (udizowyfjnhuhgxkeayk).
+--
+-- Projeto-alvo: udizowyfjnhuhgxkeayk (banco operacional real, com painel e
+-- pacientes reais). PROIBIDO aplicar em bcmuqautblvjdqzhjfbw (ambiente
+-- isolado de desenvolvimento/testes da Iris Nova) ou em qualquer outro
+-- projeto. Mesma pasta separada (migrations-legado/) da migration irma de
+-- clinicas (20260804202732), pelo mesmo motivo: evitar mistura com a
+-- convencao de src/supabase/migrations/, que sempre teve
+-- bcmuqautblvjdqzhjfbw como alvo.
+--
+-- Origem: publiquei a Edge Function iris-nova-mensagem neste projeto
+-- (2026-08-04) e o teste ao vivo com a instancia autorizada retornou
+-- 500 erro_interno. Rastreei a causa executando a mesma query que
+-- identificacao.ts (Core) roda: falhou com
+-- "ERROR: 42703: column 'telefone_normalizado' does not exist". A tabela
+-- so tem `telefone` (text), sem a coluna que o Core exige.
+--
+-- AUDITORIA DE FORMATO (read-only, 2026-08-04, sobre udizowyfjnhuhgxkeayk):
+-- SELECT count(*) FILTER (...) sobre TODOS os registros de `pacientes` (as
+-- 2 clinicas reais existentes) -- nao so a amostra de uma clinica.
+--   total de linhas.......................... 1
+--   nulos..................................... 0
+--   com caractere nao-digito.................. 0
+--   digitos mas tamanho fora de 10/11......... 0
+--   ja comeca com '55'........................ 0
+--   ok (10 ou 11 digitos, sem '55')........... 1
+-- 100% dos registros reais existentes seguem o padrao brasileiro sem DDI
+-- (ex.: "21976543210", 11 digitos). Amostra pequena (n=1, banco ainda em
+-- fase inicial) -- documentado aqui para quem reler esta migration no
+-- futuro, nao inflar confianca alem do que a amostra sustenta. Nenhuma
+-- CHECK constraint existe hoje em `pacientes.telefone` (so
+-- pacientes_pkey e pacientes_clinica_id_fkey) -- a garantia de formato,
+-- se existir, vem so do app legado (fora do escopo desta auditoria).
+--
+-- ESCOPO -- estritamente aditivo, 1 tabela, 1 coluna + 1 constraint,
+-- nenhuma copia de dado entre projetos, nenhuma tabela nova, nenhuma
+-- mudanca no Core, `telefone` original nunca tocado:
+--
+--   - pacientes.telefone_normalizado: `generated always as ('55' ||
+--     telefone) stored` -- computada automaticamente a partir de
+--     `telefone`, nunca duplicada nem dessincronizavel (mesmo padrao ja
+--     usado em clinicas.instancia_whatsapp na migration irma). Satisfaz
+--     telefoneNormalizadoValido do Core (regex ^55[0-9]{10,11}$) sem
+--     reescrever nenhum valor existente.
+--
+--   - constraint unique (clinica_id, telefone_normalizado): identificacao.ts
+--     do Core busca paciente com `.eq('clinica_id',...).eq(
+--     'telefone_normalizado',...).maybeSingle()` -- maybeSingle() so e
+--     seguro se no maximo uma linha puder corresponder. Sem essa garantia
+--     no banco, dois pacientes com o mesmo telefone na mesma clinica
+--     fariam a consulta do Core falhar (PostgREST rejeita maybeSingle com
+--     mais de uma linha). Preflight confirma 0 duplicatas possiveis hoje
+--     (so 1 linha na tabela inteira).
+--
+-- FORA DE ESCOPO nesta migration: qualquer copia de dado entre projetos;
+-- qualquer mudanca no Core; qualquer correcao de formato malformado (nao
+-- encontrado -- se fosse encontrado, a instrucao era parar e reportar, nao
+-- corrigir aqui); publicacao/redeploy da Edge Function (ja publicada,
+-- nao depende desta migration para o deploy em si, so para o fluxo
+-- completo funcionar); os 3 alertas de RLS desligada ja reportados na
+-- auditoria de 2026-08-04.
+--
+-- REEXECUTAR O PREFLIGHT imediatamente antes de aplicar: reconferir que
+-- `telefone_normalizado` ainda nao existe, que a contagem de formato
+-- invalido continua zero, e que nenhum par (clinica_id, telefone) esta
+-- duplicado (senao a constraint unique falha ao criar). Nenhum ADD COLUMN
+-- usa IF NOT EXISTS: colisao de nome falha explicitamente em vez de ser
+-- ignorada em silencio.
+--
+-- NAO APLICADA em nenhum projeto no momento desta escrita.
+
+alter table pacientes
+  add column telefone_normalizado text generated always as ('55' || telefone) stored;
+
+alter table pacientes
+  add constraint pacientes_clinica_id_telefone_normalizado_key unique (clinica_id, telefone_normalizado);

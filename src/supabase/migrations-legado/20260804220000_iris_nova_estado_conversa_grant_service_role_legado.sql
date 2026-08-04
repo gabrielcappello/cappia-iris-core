@@ -1,0 +1,36 @@
+-- Iris Nova - correcao de ACL em estado_conversa no banco operacional
+-- legado (udizowyfjnhuhgxkeayk).
+--
+-- Projeto-alvo: udizowyfjnhuhgxkeayk (mesmo alvo da migration irma
+-- 20260804205444_iris_nova_estado_conversa_legado.sql). PROIBIDO aplicar em
+-- bcmuqautblvjdqzhjfbw ou em qualquer outro projeto.
+--
+-- Origem: apos a migration 20260804205444 criar `estado_conversa` com RLS
+-- ativa e `revoke all ... from anon, authenticated`, o teste ao vivo do
+-- endpoint retornou 500, com "ERROR: permission denied for table
+-- estado_conversa" nos logs (postgres + api). Causa raiz: a migration
+-- original so revogou privilegios de anon/authenticated, nunca concedeu
+-- privilegios explicitos a service_role -- diferente de bcmuqautblvjdqzhjfbw
+-- (projeto novo, onde service_role ja tinha privilegios herdados por
+-- default), este projeto legado teve historico proprio de hardening de ACL
+-- (ex.: restringir_tabelas_internas_n8n, restringir_escrita_catalogos) que
+-- resultou em tabelas novas SEM privilegio automatico para service_role.
+--
+-- Esta migration registra em arquivo a correcao que ja foi aplicada ao vivo
+-- em 2026-08-04, por autorizacao direta e pontual de Gabriel (sem rodada de
+-- Codex previa, dado o carater mecanico e de baixo risco do ajuste --
+-- conceder exatamente os privilegios que a tabela ja deveria ter desde a
+-- criacao). Nenhuma mudanca de schema, so ACL.
+--
+-- PREFLIGHT (read-only, 2026-08-04, sobre udizowyfjnhuhgxkeayk): service_role
+-- ja possui select/insert/update em estado_conversa (verificado via
+-- information_schema.role_table_grants) -- aplicar este GRANT novamente e
+-- idempotente (GRANT nao falha se o privilegio ja existe).
+--
+-- ESCOPO -- estritamente ACL, nenhuma tabela nova, nenhum dado alterado:
+--   grant select, insert, update on estado_conversa to service_role.
+--
+-- APLICADA ao vivo em udizowyfjnhuhgxkeayk em 2026-08-04 (antes da escrita
+-- deste arquivo). Este arquivo so formaliza o que ja esta em producao.
+
+grant select, insert, update on table public.estado_conversa to service_role;
