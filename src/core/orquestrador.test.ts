@@ -102,6 +102,46 @@ test('procedimento + dentista unico apto + duracao configurada: pronto_para_hora
   });
 });
 
+test('alias ambiguo no catalogo: erro_catalogo_procedimento, nunca aguardando_procedimento', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const clinicaId = semearClinica(tabelas);
+  semearConversa(tabelas, clinicaId);
+  const clienteBanco = new ClienteFalso(tabelas);
+  const clienteModelo = new ClienteModeloFalso([
+    { alteracoes: { procedimento_texto: { acao: 'informar', valor: 'limpeza' } } },
+  ]);
+
+  const procedimentoId1 = crypto.randomUUID();
+  const procedimentoId2 = crypto.randomUUID();
+  const catalogo: CatalogoClinica = {
+    procedimentos: [
+      { procedimento_id: procedimentoId1, clinica_id: clinicaId, nome_pt: 'Limpeza', ativo: true, eh_consulta_avaliacao: false },
+      { procedimento_id: procedimentoId2, clinica_id: clinicaId, nome_pt: 'Limpeza 2', ativo: true, eh_consulta_avaliacao: false },
+    ],
+    // mesmo texto normalizado apontando para dois procedimento_id distintos.
+    aliasesProcedimento: [
+      { clinica_id: clinicaId, procedimento_id: procedimentoId1, texto: 'limpeza', ativo: true },
+      { clinica_id: clinicaId, procedimento_id: procedimentoId2, texto: 'limpeza', ativo: true },
+    ],
+    dentistas: [],
+    vinculos: [],
+    configuracoesDuracao: [],
+  };
+
+  const resultado = await processarMensagem(clienteModelo, clienteBanco, {
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA,
+    telefone_normalizado: TELEFONE,
+    mensagens_atuais: ['quero marcar uma limpeza'],
+    catalogo,
+  });
+
+  assert.equal(resultado.decisao.tipo, 'erro_catalogo_procedimento');
+  if (resultado.decisao.tipo === 'erro_catalogo_procedimento') {
+    assert.equal(resultado.decisao.resultado.tipo, 'erro_catalogo');
+  }
+});
+
 test('dois dentistas aptos, sem preferencia: aguardando_escolha_dentista', async () => {
   const tabelas = criarTabelasFalsasVazias();
   const clinicaId = semearClinica(tabelas);

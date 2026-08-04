@@ -43,6 +43,7 @@ export interface EntradaOrquestrador {
  */
 export type DecisaoOrquestrador =
   | { tipo: 'aguardando_procedimento'; resultado: ResultadoResolucaoProcedimento }
+  | { tipo: 'erro_catalogo_procedimento'; resultado: ResultadoResolucaoProcedimento }
   | { tipo: 'aguardando_escolha_dentista'; dentistas: readonly DentistaApto[] }
   | { tipo: 'sem_dentista_disponivel' }
   | { tipo: 'erro_catalogo_dentista'; resultado: ResultadoResolucaoDentista }

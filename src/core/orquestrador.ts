@@ -62,6 +62,9 @@ function decidir(
     aliases: catalogo.aliasesProcedimento,
   });
 
+  if (resultadoProcedimento.tipo === 'erro_catalogo') {
+    return { tipo: 'erro_catalogo_procedimento', resultado: resultadoProcedimento };
+  }
   if (resultadoProcedimento.tipo !== 'resolvido') {
     return { tipo: 'aguardando_procedimento', resultado: resultadoProcedimento };
   }
