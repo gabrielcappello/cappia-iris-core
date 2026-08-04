@@ -12,11 +12,11 @@ import type { ResultadoResolucaoTemporal } from './temporal-tipos.ts';
 import type { MotivoErroReserva } from './reservar-agendamento.ts';
 
 /**
- * Catalogo de UMA clinica, ja carregado pelo chamador. Este modulo nunca
- * consulta banco para obter catalogo -- recebe pronto, mesmo padrao dos
- * cinco resolvedores que compoe (cada um documenta o mesmo principio no
- * proprio cabecalho). Carregar isto a partir do schema real e trabalho
- * separado, ainda pendente de auditoria do legado.
+ * Catalogo de UMA clinica. Montado internamente pelo orquestrador, via
+ * carregar-catalogo.ts, a partir de clinicas.dentistas + procedimentos_
+ * catalogo (schema real) -- nunca mais recebido pronto de fora. Continua
+ * sendo so o formato de entrada que os resolvedores de procedimento/
+ * dentista/duracao ja exigiam (nenhum dos tres foi alterado).
  */
 export interface CatalogoClinica {
   procedimentos: readonly ProcedimentoOficial[];
@@ -31,7 +31,6 @@ export interface EntradaOrquestrador {
   instancia_whatsapp: string;
   telefone_normalizado: string;
   mensagens_atuais: string[];
-  catalogo: CatalogoClinica;
   // O orquestrador nunca le relogio -- mesmo principio ja fixo em
   // resolverTemporal/resolverDisponibilidade (nenhum dos dois chama
   // Date.now()). Fornecido pelo chamador (futuro transporte/Edge Function).
@@ -52,6 +51,10 @@ export interface EntradaOrquestrador {
  * Gabriel -- nao inventados aqui.
  */
 export type DecisaoOrquestrador =
+  // Nao deveria ocorrer na pratica (identificarConversa ja confirmou a
+  // clinica antes do orquestrador chegar aqui) -- tratado explicitamente,
+  // nunca uma excecao nao tratada nem um catalogo vazio inventado.
+  | { tipo: 'clinica_sem_catalogo' }
   | { tipo: 'aguardando_procedimento'; resultado: ResultadoResolucaoProcedimento }
   | { tipo: 'erro_catalogo_procedimento'; resultado: ResultadoResolucaoProcedimento }
   | { tipo: 'aguardando_escolha_dentista'; dentistas: readonly DentistaApto[] }

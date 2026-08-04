@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { processarMensagem } from './orquestrador.ts';
-import type { CatalogoClinica } from './orquestrador-tipos.ts';
 import { ClienteFalso, criarTabelasFalsasVazias, type TabelasFalsas } from './teste-cliente-falso.ts';
 import { ClienteModeloFalso } from './teste-cliente-modelo-falso.ts';
 import { ClienteRpcFalso, type RespostaRpc } from './teste-cliente-rpc-falso.ts';
@@ -54,8 +53,43 @@ function semearPaciente(tabelas: TabelasFalsas, clinicaId: string): string {
   return pacienteId;
 }
 
-function catalogoBase(clinicaId: string): CatalogoClinica {
-  return { procedimentos: [], aliasesProcedimento: [], dentistas: [], vinculos: [], configuracoesDuracao: [] };
+// Forma real de procedimentos_catalogo (schema de producao, ja confirmado
+// por leitura direta do banco) -- so os campos que este dublê realmente le.
+function semearProcedimentoCatalogo(tabelas: TabelasFalsas, id: string, overrides: Record<string, unknown> = {}) {
+  tabelas.procedimentos_catalogo.push({
+    id,
+    nome_pt: 'Limpeza',
+    nome_es: null,
+    nome_en: null,
+    nome_fr: null,
+    nome_de: null,
+    nome_it: null,
+    nome_ru: null,
+    nome_ar: null,
+    tempo_padrao: 30,
+    ativo: true,
+    ...overrides,
+  });
+}
+
+// Forma real de um item de clinicas.dentistas[i] (ja confirmada por leitura
+// direta da ClearDent) -- so os campos que carregar-catalogo.ts/carregar-
+// disponibilidade.ts realmente leem.
+function dentistaReal(overrides: Record<string, unknown> = {}) {
+  return {
+    id: crypto.randomUUID(),
+    nome: 'Ana',
+    titulo: 'Dra.',
+    ativo: true,
+    modo: 'procedimento',
+    inicio: '08:00',
+    fim: '12:00',
+    sabado: false,
+    alm_ini: null,
+    alm_fim: null,
+    procedimentos: [],
+    ...overrides,
+  };
 }
 
 test('procedimento nao resolvido: orquestrador para em aguardando_procedimento', async () => {
@@ -70,7 +104,6 @@ test('procedimento nao resolvido: orquestrador para em aguardando_procedimento',
     instancia_whatsapp: INSTANCIA,
     telefone_normalizado: TELEFONE,
     mensagens_atuais: ['oi'],
-    catalogo: catalogoBase(clinicaId),
     instante_atual: INSTANTE_ATUAL,
   });
 
@@ -81,42 +114,47 @@ test('procedimento nao resolvido: orquestrador para em aguardando_procedimento',
   }
 });
 
-test('procedimento + dentista unico apto + duracao configurada, sem data: aguardando_data_horario', async () => {
+test('clinica sem linha em clinicas.dentistas ainda carrega (array vazio): aguardando_procedimento, nunca excecao', async () => {
   const tabelas = criarTabelasFalsasVazias();
+  // clinica existe mas dentistas fica implicitamente [] (default do helper).
   const clinicaId = semearClinica(tabelas);
   semearConversa(tabelas, clinicaId);
+  const clienteBanco = new ClienteFalso(tabelas);
+  const clienteModelo = new ClienteModeloFalso([{ alteracoes: {} }]);
+
+  const resultado = await processarMensagem(clienteModelo, clienteBanco, clienteRpcNuncaChamado(), {
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA,
+    telefone_normalizado: TELEFONE,
+    mensagens_atuais: ['oi'],
+    instante_atual: INSTANTE_ATUAL,
+  });
+
+  assert.equal(resultado.decisao.tipo, 'aguardando_procedimento');
+});
+
+test('procedimento + dentista unico apto + duracao configurada, sem data: aguardando_data_horario', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const procedimentoId = crypto.randomUUID();
+  const dentistaId = crypto.randomUUID();
+  const clinicaId = semearClinica(tabelas, [
+    dentistaReal({
+      id: dentistaId,
+      procedimentos: [{ id: procedimentoId, nome: 'Limpeza', ativo: true, tempo: 30 }],
+    }),
+  ]);
+  semearConversa(tabelas, clinicaId);
+  semearProcedimentoCatalogo(tabelas, procedimentoId);
   const clienteBanco = new ClienteFalso(tabelas);
   const clienteModelo = new ClienteModeloFalso([
     { alteracoes: { procedimento_texto: { acao: 'informar', valor: 'limpeza' } } },
   ]);
-
-  const procedimentoId = crypto.randomUUID();
-  const dentistaId = crypto.randomUUID();
-  const catalogo: CatalogoClinica = {
-    procedimentos: [
-      { procedimento_id: procedimentoId, clinica_id: clinicaId, nome_pt: 'Limpeza', ativo: true, eh_consulta_avaliacao: false },
-    ],
-    aliasesProcedimento: [{ clinica_id: clinicaId, procedimento_id: procedimentoId, texto: 'limpeza', ativo: true }],
-    dentistas: [
-      {
-        dentista_id: dentistaId,
-        clinica_id: clinicaId,
-        nome_exibido: 'Dra. Ana',
-        nome_completo_resolucao: 'Ana Souza',
-        nome_curto_resolucao: 'Ana',
-        ativo: true,
-      },
-    ],
-    vinculos: [{ clinica_id: clinicaId, dentista_id: dentistaId, procedimento_id: procedimentoId, ativo: true }],
-    configuracoesDuracao: [{ clinica_id: clinicaId, procedimento_id: procedimentoId, duracao_min: 30 }],
-  };
 
   const resultado = await processarMensagem(clienteModelo, clienteBanco, clienteRpcNuncaChamado(), {
     provider: PROVIDER,
     instancia_whatsapp: INSTANCIA,
     telefone_normalizado: TELEFONE,
     mensagens_atuais: ['quero marcar uma limpeza'],
-    catalogo,
     instante_atual: INSTANTE_ATUAL,
   });
 
@@ -135,20 +173,15 @@ test('fluxo completo ate horario real: procedimento -> dentista -> duracao -> "h
   const procedimentoId = crypto.randomUUID();
   const dentistaId = crypto.randomUUID();
   const clinicaId = semearClinica(tabelas, [
-    {
+    dentistaReal({
       id: dentistaId,
-      ativo: true,
       modo: 'auto',
-      inicio: '08:00',
-      fim: '12:00',
       dur: 30,
-      sabado: false,
-      alm_ini: null,
-      alm_fim: null,
-      procedimentos: [],
-    },
+      procedimentos: [{ id: procedimentoId, nome: 'Limpeza', ativo: true, tempo: 999 }], // ignorado: modo auto usa `dur`.
+    }),
   ]);
   semearConversa(tabelas, clinicaId);
+  semearProcedimentoCatalogo(tabelas, procedimentoId);
   const clienteBanco = new ClienteFalso(tabelas);
   const clienteModelo = new ClienteModeloFalso([
     {
@@ -160,31 +193,11 @@ test('fluxo completo ate horario real: procedimento -> dentista -> duracao -> "h
     },
   ]);
 
-  const catalogo: CatalogoClinica = {
-    procedimentos: [
-      { procedimento_id: procedimentoId, clinica_id: clinicaId, nome_pt: 'Limpeza', ativo: true, eh_consulta_avaliacao: false },
-    ],
-    aliasesProcedimento: [{ clinica_id: clinicaId, procedimento_id: procedimentoId, texto: 'limpeza', ativo: true }],
-    dentistas: [
-      {
-        dentista_id: dentistaId,
-        clinica_id: clinicaId,
-        nome_exibido: 'Dra. Ana',
-        nome_completo_resolucao: 'Ana Souza',
-        nome_curto_resolucao: 'Ana',
-        ativo: true,
-      },
-    ],
-    vinculos: [{ clinica_id: clinicaId, dentista_id: dentistaId, procedimento_id: procedimentoId, ativo: true }],
-    configuracoesDuracao: [{ clinica_id: clinicaId, procedimento_id: procedimentoId, duracao_min: 30 }],
-  };
-
   const resultado = await processarMensagem(clienteModelo, clienteBanco, clienteRpcNuncaChamado(), {
     provider: PROVIDER,
     instancia_whatsapp: INSTANCIA,
     telefone_normalizado: TELEFONE,
     mensagens_atuais: ['quero marcar uma limpeza hoje de manha'],
-    catalogo,
     instante_atual: INSTANTE_ATUAL,
   });
 
@@ -203,34 +216,20 @@ test('alias ambiguo no catalogo: erro_catalogo_procedimento, nunca aguardando_pr
   const tabelas = criarTabelasFalsasVazias();
   const clinicaId = semearClinica(tabelas);
   semearConversa(tabelas, clinicaId);
+  // dois procedimentos globais com o MESMO nome -> mesmo alias normalizado
+  // apontando para dois procedimento_id distintos.
+  semearProcedimentoCatalogo(tabelas, crypto.randomUUID(), { nome_pt: 'Limpeza' });
+  semearProcedimentoCatalogo(tabelas, crypto.randomUUID(), { nome_pt: 'Limpeza' });
   const clienteBanco = new ClienteFalso(tabelas);
   const clienteModelo = new ClienteModeloFalso([
     { alteracoes: { procedimento_texto: { acao: 'informar', valor: 'limpeza' } } },
   ]);
-
-  const procedimentoId1 = crypto.randomUUID();
-  const procedimentoId2 = crypto.randomUUID();
-  const catalogo: CatalogoClinica = {
-    procedimentos: [
-      { procedimento_id: procedimentoId1, clinica_id: clinicaId, nome_pt: 'Limpeza', ativo: true, eh_consulta_avaliacao: false },
-      { procedimento_id: procedimentoId2, clinica_id: clinicaId, nome_pt: 'Limpeza 2', ativo: true, eh_consulta_avaliacao: false },
-    ],
-    // mesmo texto normalizado apontando para dois procedimento_id distintos.
-    aliasesProcedimento: [
-      { clinica_id: clinicaId, procedimento_id: procedimentoId1, texto: 'limpeza', ativo: true },
-      { clinica_id: clinicaId, procedimento_id: procedimentoId2, texto: 'limpeza', ativo: true },
-    ],
-    dentistas: [],
-    vinculos: [],
-    configuracoesDuracao: [],
-  };
 
   const resultado = await processarMensagem(clienteModelo, clienteBanco, clienteRpcNuncaChamado(), {
     provider: PROVIDER,
     instancia_whatsapp: INSTANCIA,
     telefone_normalizado: TELEFONE,
     mensagens_atuais: ['quero marcar uma limpeza'],
-    catalogo,
     instante_atual: INSTANTE_ATUAL,
   });
 
@@ -242,52 +241,34 @@ test('alias ambiguo no catalogo: erro_catalogo_procedimento, nunca aguardando_pr
 
 test('dois dentistas aptos, sem preferencia: aguardando_escolha_dentista', async () => {
   const tabelas = criarTabelasFalsasVazias();
-  const clinicaId = semearClinica(tabelas);
+  const procedimentoId = crypto.randomUUID();
+  const dentista1 = crypto.randomUUID();
+  const dentista2 = crypto.randomUUID();
+  const clinicaId = semearClinica(tabelas, [
+    dentistaReal({
+      id: dentista1,
+      nome: 'Ana',
+      procedimentos: [{ id: procedimentoId, nome: 'Limpeza', ativo: true, tempo: 30 }],
+    }),
+    dentistaReal({
+      id: dentista2,
+      nome: 'Bruno',
+      titulo: 'Dr.',
+      procedimentos: [{ id: procedimentoId, nome: 'Limpeza', ativo: true, tempo: 30 }],
+    }),
+  ]);
   semearConversa(tabelas, clinicaId);
+  semearProcedimentoCatalogo(tabelas, procedimentoId);
   const clienteBanco = new ClienteFalso(tabelas);
   const clienteModelo = new ClienteModeloFalso([
     { alteracoes: { procedimento_texto: { acao: 'informar', valor: 'limpeza' } } },
   ]);
-
-  const procedimentoId = crypto.randomUUID();
-  const dentista1 = crypto.randomUUID();
-  const dentista2 = crypto.randomUUID();
-  const catalogo: CatalogoClinica = {
-    procedimentos: [
-      { procedimento_id: procedimentoId, clinica_id: clinicaId, nome_pt: 'Limpeza', ativo: true, eh_consulta_avaliacao: false },
-    ],
-    aliasesProcedimento: [{ clinica_id: clinicaId, procedimento_id: procedimentoId, texto: 'limpeza', ativo: true }],
-    dentistas: [
-      {
-        dentista_id: dentista1,
-        clinica_id: clinicaId,
-        nome_exibido: 'Dra. Ana',
-        nome_completo_resolucao: 'Ana Souza',
-        nome_curto_resolucao: 'Ana',
-        ativo: true,
-      },
-      {
-        dentista_id: dentista2,
-        clinica_id: clinicaId,
-        nome_exibido: 'Dr. Bruno',
-        nome_completo_resolucao: 'Bruno Lima',
-        nome_curto_resolucao: 'Bruno',
-        ativo: true,
-      },
-    ],
-    vinculos: [
-      { clinica_id: clinicaId, dentista_id: dentista1, procedimento_id: procedimentoId, ativo: true },
-      { clinica_id: clinicaId, dentista_id: dentista2, procedimento_id: procedimentoId, ativo: true },
-    ],
-    configuracoesDuracao: [{ clinica_id: clinicaId, procedimento_id: procedimentoId, duracao_min: 30 }],
-  };
 
   const resultado = await processarMensagem(clienteModelo, clienteBanco, clienteRpcNuncaChamado(), {
     provider: PROVIDER,
     instancia_whatsapp: INSTANCIA,
     telefone_normalizado: TELEFONE,
     mensagens_atuais: ['quero marcar uma limpeza'],
-    catalogo,
     instante_atual: INSTANTE_ATUAL,
   });
 
@@ -304,41 +285,17 @@ function montarCenarioReserva(tabelas: TabelasFalsas) {
   const procedimentoId = crypto.randomUUID();
   const dentistaId = crypto.randomUUID();
   const clinicaId = semearClinica(tabelas, [
-    {
+    dentistaReal({
       id: dentistaId,
-      ativo: true,
       modo: 'auto',
-      inicio: '08:00',
-      fim: '12:00',
       dur: 30,
-      sabado: false,
-      alm_ini: null,
-      alm_fim: null,
-      procedimentos: [],
-    },
+      procedimentos: [{ id: procedimentoId, nome: 'Limpeza', ativo: true, tempo: 999 }], // ignorado: modo auto usa `dur`.
+    }),
   ]);
   semearConversa(tabelas, clinicaId);
+  semearProcedimentoCatalogo(tabelas, procedimentoId);
 
-  const catalogo: CatalogoClinica = {
-    procedimentos: [
-      { procedimento_id: procedimentoId, clinica_id: clinicaId, nome_pt: 'Limpeza', ativo: true, eh_consulta_avaliacao: false },
-    ],
-    aliasesProcedimento: [{ clinica_id: clinicaId, procedimento_id: procedimentoId, texto: 'limpeza', ativo: true }],
-    dentistas: [
-      {
-        dentista_id: dentistaId,
-        clinica_id: clinicaId,
-        nome_exibido: 'Dra. Ana',
-        nome_completo_resolucao: 'Ana Souza',
-        nome_curto_resolucao: 'Ana',
-        ativo: true,
-      },
-    ],
-    vinculos: [{ clinica_id: clinicaId, dentista_id: dentistaId, procedimento_id: procedimentoId, ativo: true }],
-    configuracoesDuracao: [{ clinica_id: clinicaId, procedimento_id: procedimentoId, duracao_min: 30 }],
-  };
-
-  return { clinicaId, procedimentoId, dentistaId, catalogo };
+  return { clinicaId, procedimentoId, dentistaId };
 }
 
 function clienteModeloEscolha(confirmacao?: string) {
@@ -353,7 +310,7 @@ function clienteModeloEscolha(confirmacao?: string) {
 
 test('paciente escolhe horario livre, sem confirmar: aguardando_confirmacao, nunca reserva', async () => {
   const tabelas = criarTabelasFalsasVazias();
-  const { clinicaId, procedimentoId, dentistaId, catalogo } = montarCenarioReserva(tabelas);
+  const { procedimentoId, dentistaId } = montarCenarioReserva(tabelas);
   const clienteBanco = new ClienteFalso(tabelas);
   const clienteRpc = clienteRpcNuncaChamado();
 
@@ -362,7 +319,6 @@ test('paciente escolhe horario livre, sem confirmar: aguardando_confirmacao, nun
     instancia_whatsapp: INSTANCIA,
     telefone_normalizado: TELEFONE,
     mensagens_atuais: ['quero marcar limpeza hoje as 10:00'],
-    catalogo,
     instante_atual: INSTANTE_ATUAL,
   });
 
@@ -376,7 +332,7 @@ test('paciente escolhe horario livre, sem confirmar: aguardando_confirmacao, nun
 
 test('confirmado mas paciente nao cadastrado: cadastro_necessario, nunca reserva', async () => {
   const tabelas = criarTabelasFalsasVazias();
-  const { catalogo } = montarCenarioReserva(tabelas);
+  montarCenarioReserva(tabelas);
   const clienteBanco = new ClienteFalso(tabelas);
   const clienteRpc = clienteRpcNuncaChamado();
 
@@ -385,7 +341,6 @@ test('confirmado mas paciente nao cadastrado: cadastro_necessario, nunca reserva
     instancia_whatsapp: INSTANCIA,
     telefone_normalizado: TELEFONE,
     mensagens_atuais: ['sim, confirmo'],
-    catalogo,
     instante_atual: INSTANTE_ATUAL,
   });
 
@@ -395,7 +350,7 @@ test('confirmado mas paciente nao cadastrado: cadastro_necessario, nunca reserva
 
 test('escolha + confirmacao + paciente cadastrado: reserva_criada, chamando cappia_reservar_agendamento com os ids ja resolvidos', async () => {
   const tabelas = criarTabelasFalsasVazias();
-  const { clinicaId, procedimentoId, dentistaId, catalogo } = montarCenarioReserva(tabelas);
+  const { clinicaId, procedimentoId, dentistaId } = montarCenarioReserva(tabelas);
   const pacienteId = semearPaciente(tabelas, clinicaId);
   const clienteBanco = new ClienteFalso(tabelas);
   const agendamentoId = crypto.randomUUID();
@@ -418,7 +373,6 @@ test('escolha + confirmacao + paciente cadastrado: reserva_criada, chamando capp
     instancia_whatsapp: INSTANCIA,
     telefone_normalizado: TELEFONE,
     mensagens_atuais: ['sim, confirmo'],
-    catalogo,
     instante_atual: INSTANTE_ATUAL,
   });
 
@@ -445,7 +399,7 @@ test('escolha + confirmacao + paciente cadastrado: reserva_criada, chamando capp
 
 test('RPC recusa por sobreposicao real (corrida): reserva_conflito, nunca insiste sozinho', async () => {
   const tabelas = criarTabelasFalsasVazias();
-  const { clinicaId, catalogo } = montarCenarioReserva(tabelas);
+  const { clinicaId } = montarCenarioReserva(tabelas);
   semearPaciente(tabelas, clinicaId);
   const clienteBanco = new ClienteFalso(tabelas);
   const clienteRpc = new ClienteRpcFalso({
@@ -457,7 +411,6 @@ test('RPC recusa por sobreposicao real (corrida): reserva_conflito, nunca insist
     instancia_whatsapp: INSTANCIA,
     telefone_normalizado: TELEFONE,
     mensagens_atuais: ['sim, confirmo'],
-    catalogo,
     instante_atual: INSTANTE_ATUAL,
   });
 

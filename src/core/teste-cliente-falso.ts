@@ -13,6 +13,7 @@ export interface TabelasFalsas {
   mensagens_recebidas: Record<string, unknown>[];
   horarios_bloqueados: Record<string, unknown>[];
   agendamentos: Record<string, unknown>[];
+  procedimentos_catalogo: Record<string, unknown>[];
 }
 
 export function criarTabelasFalsasVazias(): TabelasFalsas {
@@ -23,6 +24,7 @@ export function criarTabelasFalsasVazias(): TabelasFalsas {
     mensagens_recebidas: [],
     horarios_bloqueados: [],
     agendamentos: [],
+    procedimentos_catalogo: [],
   };
 }
 

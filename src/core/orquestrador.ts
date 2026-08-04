@@ -6,6 +6,7 @@ import { resolverDuracao } from './resolver-duracao.ts';
 import { montarFatosTemporais } from './montar-fatos-temporais.ts';
 import { resolverTemporal } from './resolver-temporal.ts';
 import { carregarEntradaDisponibilidade } from './carregar-disponibilidade.ts';
+import { carregarCatalogo } from './carregar-catalogo.ts';
 import { reservarAgendamento } from './reservar-agendamento.ts';
 import type { ClienteBancoDados } from './tipos.ts';
 import type { ClienteModeloEstruturado } from './interpretacao-tipos.ts';
@@ -51,6 +52,16 @@ export async function processarMensagem(
   // identificado continua sendo o oficial.
   const dados = (interpretacao.aplicacao?.dados ?? identificacao.conversa.dados) as Record<string, string | undefined>;
 
+  const catalogoCarregado = await carregarCatalogo(clienteBanco, { clinica_id: identificacao.clinica_id });
+  if (catalogoCarregado.tipo !== 'carregado') {
+    return {
+      clinica_id: identificacao.clinica_id,
+      conversa_id: identificacao.conversa.id,
+      conflitos: interpretacao.conflitos,
+      decisao: { tipo: 'clinica_sem_catalogo' },
+    };
+  }
+
   return {
     clinica_id: identificacao.clinica_id,
     conversa_id: identificacao.conversa.id,
@@ -62,7 +73,7 @@ export async function processarMensagem(
       identificacao.paciente.id,
       entrada.telefone_normalizado,
       dados,
-      entrada.catalogo,
+      catalogoCarregado.catalogo,
       entrada.instante_atual
     ),
   };
