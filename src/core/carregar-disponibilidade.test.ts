@@ -234,6 +234,106 @@ test('bloqueio de dia inteiro cobrindo a data: sem_disponibilidade', async () =>
   assert.equal(resultado.resultado.tipo, 'sem_disponibilidade');
 });
 
+test('bloqueio geral da clinica (dentista_id null) tambem bloqueia', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  semearClinica(tabelas, [dentistaAuto()]);
+  tabelas.horarios_bloqueados.push({
+    clinica_id: CLINICA_ID,
+    dentista_id: null,
+    data_inicio: SEGUNDA,
+    data_fim: SEGUNDA,
+    horario_inicio: '00:00',
+    horario_fim: '23:59',
+  });
+  const cliente = new ClienteFalso(tabelas);
+
+  const resultado = await carregarEntradaDisponibilidade(cliente, {
+    clinica_id: CLINICA_ID,
+    dentista_id: DENTISTA_ID,
+    procedimento_id: PROCEDIMENTO_ID,
+    data: SEGUNDA,
+    instante_atual: INSTANTE_ATUAL,
+    modo: { tipo: 'grade' },
+  });
+
+  assert.equal(resultado.tipo, 'carregado');
+  if (resultado.tipo !== 'carregado') return;
+  assert.equal(resultado.resultado.tipo, 'sem_disponibilidade');
+});
+
+test('bloqueio especifico de outro dentista nao bloqueia o dentista atual; bloqueio geral bloqueia os dois', async () => {
+  const OUTRO_DENTISTA_ID = crypto.randomUUID();
+  const tabelas = criarTabelasFalsasVazias();
+  semearClinica(tabelas, [dentistaAuto(), dentistaAuto({ id: OUTRO_DENTISTA_ID })]);
+  tabelas.horarios_bloqueados.push(
+    {
+      clinica_id: CLINICA_ID,
+      dentista_id: OUTRO_DENTISTA_ID,
+      data_inicio: SEGUNDA,
+      data_fim: SEGUNDA,
+      horario_inicio: '00:00',
+      horario_fim: '23:59',
+    },
+    {
+      clinica_id: CLINICA_ID,
+      dentista_id: DENTISTA_ID,
+      data_inicio: SEGUNDA,
+      data_fim: SEGUNDA,
+      horario_inicio: '00:00',
+      horario_fim: '23:59',
+    }
+  );
+  const cliente = new ClienteFalso(tabelas);
+
+  // Bloqueio e do OUTRO dentista + do proprio -- o proprio esta bloqueado
+  // pelo seu bloqueio especifico (nao pelo do outro).
+  const resultado = await carregarEntradaDisponibilidade(cliente, {
+    clinica_id: CLINICA_ID,
+    dentista_id: DENTISTA_ID,
+    procedimento_id: PROCEDIMENTO_ID,
+    data: SEGUNDA,
+    instante_atual: INSTANTE_ATUAL,
+    modo: { tipo: 'grade' },
+  });
+
+  assert.equal(resultado.tipo, 'carregado');
+  if (resultado.tipo !== 'carregado') return;
+  assert.equal(resultado.resultado.tipo, 'sem_disponibilidade');
+  // so o bloqueio do proprio dentista entra em indisponiveis -- o do outro
+  // dentista (nao geral, dentista_id != null e != DENTISTA_ID) e ignorado.
+  assert.equal(resultado.entrada.indisponiveis.filter((i) => i.origem === 'bloqueio').length, 1);
+});
+
+test('isolamento entre clinicas: bloqueio geral de outra clinica nao afeta esta', async () => {
+  const OUTRA_CLINICA_ID = crypto.randomUUID();
+  const tabelas = criarTabelasFalsasVazias();
+  semearClinica(tabelas, [dentistaAuto()]);
+  tabelas.clinicas.push({ id: OUTRA_CLINICA_ID, fuso_horario: 'America/Sao_Paulo', dentistas: [] });
+  tabelas.horarios_bloqueados.push({
+    clinica_id: OUTRA_CLINICA_ID,
+    dentista_id: null,
+    data_inicio: SEGUNDA,
+    data_fim: SEGUNDA,
+    horario_inicio: '00:00',
+    horario_fim: '23:59',
+  });
+  const cliente = new ClienteFalso(tabelas);
+
+  const resultado = await carregarEntradaDisponibilidade(cliente, {
+    clinica_id: CLINICA_ID,
+    dentista_id: DENTISTA_ID,
+    procedimento_id: PROCEDIMENTO_ID,
+    data: SEGUNDA,
+    instante_atual: INSTANTE_ATUAL,
+    modo: { tipo: 'grade' },
+  });
+
+  assert.equal(resultado.tipo, 'carregado');
+  if (resultado.tipo !== 'carregado') return;
+  assert.equal(resultado.resultado.tipo, 'opcoes');
+  assert.equal(resultado.entrada.indisponiveis.filter((i) => i.origem === 'bloqueio').length, 0);
+});
+
 test('bloqueio multi-dia: dia intermediario fica bloqueado por inteiro', async () => {
   const tabelas = criarTabelasFalsasVazias();
   semearClinica(tabelas, [dentistaAuto()]);

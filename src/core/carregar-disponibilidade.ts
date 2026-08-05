@@ -258,16 +258,30 @@ async function buscarBloqueios(
   dentistaId: string,
   data: string
 ): Promise<IntervaloIndisponivel[]> {
-  const { data: linhas, error } = await cliente
-    .from('horarios_bloqueados')
-    .select('data_inicio, data_fim, horario_inicio, horario_fim')
-    .eq('clinica_id', clinicaId)
-    .eq('dentista_id', dentistaId);
+  // Bloqueio do dentista especifico E bloqueio geral da clinica (dentista_id
+  // null, ex.: feriado) contam os dois. ConsultaEncadeavel (tipos.ts) nao
+  // expressa OR -- duas consultas, cada uma ja escopada por clinica_id
+  // (achado do Codex: painel grava dentista_id null para bloqueio de
+  // clinica inteira, e .eq('dentista_id', dentistaId) nunca casa com NULL,
+  // entao esses bloqueios ficavam invisiveis para a Iris).
+  const [especifico, geral] = await Promise.all([
+    cliente
+      .from('horarios_bloqueados')
+      .select('data_inicio, data_fim, horario_inicio, horario_fim')
+      .eq('clinica_id', clinicaId)
+      .eq('dentista_id', dentistaId),
+    cliente
+      .from('horarios_bloqueados')
+      .select('data_inicio, data_fim, horario_inicio, horario_fim')
+      .eq('clinica_id', clinicaId)
+      .is('dentista_id', null),
+  ]);
 
-  if (error) throw new Error(`falha ao buscar bloqueios: ${error.message}`);
+  if (especifico.error) throw new Error(`falha ao buscar bloqueios: ${especifico.error.message}`);
+  if (geral.error) throw new Error(`falha ao buscar bloqueios: ${geral.error.message}`);
 
   const resultado: IntervaloIndisponivel[] = [];
-  for (const linha of linhas ?? []) {
+  for (const linha of [...(especifico.data ?? []), ...(geral.data ?? [])]) {
     const l = linha as Record<string, unknown>;
     const dataInicio = l.data_inicio;
     const dataFim = l.data_fim;
