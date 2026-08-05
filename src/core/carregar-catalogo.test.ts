@@ -220,6 +220,58 @@ test('procedimento inativo no dentista: nunca vira vinculo nem configuracao', as
   assert.deepEqual(resultado.catalogo.configuracoesDuracao, []);
 });
 
+// --- sinonimo informal "limpeza" (mecanismo de alias, escopo 2026-08-05) ---
+
+test('procedimento cleaning: alias informal "limpeza" e adicionado, alem dos nomes oficiais', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  tabelas.clinicas.push({ id: CLINICA_ID, dentistas: null });
+  semearProcedimento(tabelas, { id: 'cleaning', nome_pt: 'Limpeza dental (profilaxia)', nome_es: null, nome_en: null });
+  const cliente = new ClienteFalso(tabelas);
+
+  const resultado = await carregarCatalogo(cliente, { clinica_id: CLINICA_ID });
+  assert.equal(resultado.tipo, 'carregado');
+  if (resultado.tipo !== 'carregado') return;
+
+  const alias = resultado.catalogo.aliasesProcedimento.find((a) => a.texto === 'limpeza');
+  assert.ok(alias, '"limpeza" deve existir como alias');
+  assert.equal(alias?.procedimento_id, 'cleaning');
+  assert.equal(alias?.ativo, true);
+  // nao substitui os aliases oficiais -- "Limpeza dental (profilaxia)" continua existindo.
+  assert.ok(resultado.catalogo.aliasesProcedimento.some((a) => a.texto === 'Limpeza dental (profilaxia)'));
+});
+
+test('procedimento cleaning inativo: alias informal "limpeza" tambem fica inativo (mesma regra dos nomes oficiais)', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  tabelas.clinicas.push({ id: CLINICA_ID, dentistas: null });
+  semearProcedimento(tabelas, {
+    id: 'cleaning',
+    nome_pt: 'Limpeza dental (profilaxia)',
+    nome_es: null,
+    nome_en: null,
+    ativo: false,
+  });
+  const cliente = new ClienteFalso(tabelas);
+
+  const resultado = await carregarCatalogo(cliente, { clinica_id: CLINICA_ID });
+  assert.equal(resultado.tipo, 'carregado');
+  if (resultado.tipo !== 'carregado') return;
+
+  const alias = resultado.catalogo.aliasesProcedimento.find((a) => a.texto === 'limpeza');
+  assert.equal(alias?.ativo, false);
+});
+
+test('procedimento sem sinonimo informal cadastrado (id diferente de "cleaning"): nenhum alias extra e inventado', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  tabelas.clinicas.push({ id: CLINICA_ID, dentistas: null });
+  semearProcedimento(tabelas); // id: 'teste_limpeza', 3 nomes oficiais (pt/es/en)
+  const cliente = new ClienteFalso(tabelas);
+
+  const resultado = await carregarCatalogo(cliente, { clinica_id: CLINICA_ID });
+  assert.equal(resultado.tipo, 'carregado');
+  if (resultado.tipo !== 'carregado') return;
+  assert.equal(resultado.catalogo.aliasesProcedimento.length, 3);
+});
+
 test('registro de dentista malformado (sem id): ignorado, nunca inventa identidade', async () => {
   const tabelas = criarTabelasFalsasVazias();
   tabelas.clinicas.push({ id: CLINICA_ID, dentistas: [{ nome: 'Sem ID', ativo: true }, null, 'string solta'] });

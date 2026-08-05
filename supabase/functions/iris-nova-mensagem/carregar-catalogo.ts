@@ -119,6 +119,16 @@ async function buscarProcedimentosCatalogo(cliente: ClienteBancoDados): Promise<
   return resultado;
 }
 
+// Sinonimos informais que pacientes usam no dia a dia, alem dos 8 nomes
+// oficiais do catalogo -- mecanismo de alias ja existente (AliasProcedimento),
+// so mais uma fonte de texto por procedimento_id. Escopo minimo, decidido
+// por Gabriel em 2026-08-05: comecar so por "limpeza" -> cleaning. Herda
+// `ativo` do proprio procedimento no catalogo (mesma regra dos 8 nomes
+// oficiais): se "cleaning" for desativado, "limpeza" tambem fica inativa.
+const SINONIMOS_INFORMAIS: Readonly<Record<string, readonly string[]>> = {
+  cleaning: ['limpeza'],
+};
+
 function montarProcedimentos(
   clinicaId: string,
   linhas: readonly ProcedimentoCatalogoRow[]
@@ -154,6 +164,10 @@ function montarProcedimentos(
       if (typeof nome === 'string' && nome.trim() !== '') {
         aliasesProcedimento.push({ clinica_id: clinicaId, procedimento_id: linha.id, texto: nome, ativo: linha.ativo });
       }
+    }
+
+    for (const sinonimo of SINONIMOS_INFORMAIS[linha.id] ?? []) {
+      aliasesProcedimento.push({ clinica_id: clinicaId, procedimento_id: linha.id, texto: sinonimo, ativo: linha.ativo });
     }
   }
 

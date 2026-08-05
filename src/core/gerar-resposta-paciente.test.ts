@@ -223,6 +223,30 @@ test('reserva_conflito: pede nova escolha, sem inventar horario alternativo (o t
   assert.equal(gerarRespostaPaciente(decisao), 'Esse horário acabou de ficar indisponível. Pode escolher outro horário?');
 });
 
+// --- saudacao ---
+
+test('saudacao: cumprimenta e pergunta como pode ajudar, nunca null', () => {
+  const decisao: DecisaoCaminhoFeliz = { tipo: 'saudacao' };
+  const texto = gerarRespostaPaciente(decisao);
+  assert.equal(texto, 'Olá! Como posso te ajudar hoje?');
+  assert.notEqual(texto, null);
+});
+
+// --- aguardando_procedimento ---
+//
+// Os quatro motivos (procedimento-tipos.ts) sao equivalentes perante o
+// paciente por contrato (specs/procedimentos-v1.md secao 7) -- mesma
+// pergunta pros quatro, nunca revela qual dos quatro ocorreu.
+
+for (const motivo of ['texto_ausente', 'sem_correspondencia', 'alias_inativo', 'procedimento_inativo'] as const) {
+  test(`aguardando_procedimento (motivo ${motivo}): pergunta qual procedimento, nunca null`, () => {
+    const decisao: DecisaoCaminhoFeliz = { tipo: 'aguardando_procedimento', resultado: { tipo: 'nao_resolvido', motivo } };
+    const texto = gerarRespostaPaciente(decisao);
+    assert.equal(texto, 'Qual procedimento ou atendimento você está buscando?');
+    assert.notEqual(texto, null);
+  });
+}
+
 // --- determinismo ---
 
 test('determinismo: mesma decisao produz sempre o mesmo texto', () => {

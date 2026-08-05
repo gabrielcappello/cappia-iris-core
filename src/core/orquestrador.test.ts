@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { processarMensagem } from './orquestrador.ts';
 import { ClienteFalso, criarTabelasFalsasVazias, type TabelasFalsas } from './teste-cliente-falso.ts';
-import { ClienteModeloFalso } from './teste-cliente-modelo-falso.ts';
+import { ClienteModeloFalso, ClienteModeloNuncaDeveSerChamado } from './teste-cliente-modelo-falso.ts';
 import { ClienteRpcFalso, type RespostaRpc } from './teste-cliente-rpc-falso.ts';
 
 // Dublê sem nenhuma resposta configurada: usado em todos os testes que nao
@@ -103,7 +103,10 @@ test('procedimento nao resolvido: orquestrador para em aguardando_procedimento',
     provider: PROVIDER,
     instancia_whatsapp: INSTANCIA,
     telefone_normalizado: TELEFONE,
-    mensagens_atuais: ['oi'],
+    // Nao pode ser saudacao pura (ex.: "oi") -- isso agora tem desfecho
+    // proprio ('saudacao', ver testes dedicados abaixo). Mensagem sem
+    // conteudo reconhecivel, mas tambem sem ser uma saudacao.
+    mensagens_atuais: ['quero marcar uma consulta'],
     instante_atual: INSTANTE_ATUAL,
   });
 
@@ -111,6 +114,61 @@ test('procedimento nao resolvido: orquestrador para em aguardando_procedimento',
   assert.equal(resultado.decisao.tipo, 'aguardando_procedimento');
   if (resultado.decisao.tipo === 'aguardando_procedimento') {
     assert.deepEqual(resultado.decisao.resultado, { tipo: 'nao_resolvido', motivo: 'texto_ausente' });
+  }
+});
+
+test('saudacao pura, sem procedimento conhecido: decisao saudacao, nunca chama o modelo de interpretacao', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const clinicaId = semearClinica(tabelas);
+  semearConversa(tabelas, clinicaId);
+  const clienteBanco = new ClienteFalso(tabelas);
+  // Dublê que lanca erro se executar() for chamado -- prova que a saudacao
+  // e detectada antes de qualquer interpretacao via IA.
+  const clienteModelo = new ClienteModeloNuncaDeveSerChamado();
+
+  const resultado = await processarMensagem(clienteModelo, clienteBanco, clienteRpcNuncaChamado(), {
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA,
+    telefone_normalizado: TELEFONE,
+    mensagens_atuais: ['Boa tarde!'],
+    instante_atual: INSTANTE_ATUAL,
+  });
+
+  assert.deepEqual(resultado.decisao, { tipo: 'saudacao' });
+});
+
+test('saudacao no meio de uma conversa que ja tem procedimento conhecido: nunca interrompe o fluxo em andamento', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const clinicaId = semearClinica(tabelas);
+  // dados ja tem procedimento_texto de uma mensagem anterior -- a nova
+  // mensagem ("oi") nao acrescenta nada (alteracoes vazias), entao `dados`
+  // continua sendo o snapshot ja persistido (orquestrador.ts).
+  tabelas.estado_conversa.push({
+    id: crypto.randomUUID(),
+    clinica_id: clinicaId,
+    telefone_normalizado: TELEFONE,
+    estado: 'atendimento',
+    dados: { procedimento_texto: 'limpeza' },
+    paciente_id: null,
+    atualizado_em: new Date('2026-08-01T00:00:00.000Z').toISOString(),
+  });
+  const clienteBanco = new ClienteFalso(tabelas);
+  const clienteModelo = new ClienteModeloFalso([{ alteracoes: {} }]);
+
+  const resultado = await processarMensagem(clienteModelo, clienteBanco, clienteRpcNuncaChamado(), {
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA,
+    telefone_normalizado: TELEFONE,
+    mensagens_atuais: ['oi'],
+    instante_atual: INSTANTE_ATUAL,
+  });
+
+  // procedimento_texto 'limpeza' nao bate em nenhum catalogo desta clinica
+  // (nenhum procedimento semeado) -> aguardando_procedimento por
+  // sem_correspondencia, nunca 'saudacao' -- a saudacao nao reabre o fluxo.
+  assert.equal(resultado.decisao.tipo, 'aguardando_procedimento');
+  if (resultado.decisao.tipo === 'aguardando_procedimento') {
+    assert.deepEqual(resultado.decisao.resultado, { tipo: 'nao_resolvido', motivo: 'sem_correspondencia' });
   }
 });
 
@@ -126,7 +184,7 @@ test('clinica sem linha em clinicas.dentistas ainda carrega (array vazio): aguar
     provider: PROVIDER,
     instancia_whatsapp: INSTANCIA,
     telefone_normalizado: TELEFONE,
-    mensagens_atuais: ['oi'],
+    mensagens_atuais: ['quero marcar uma consulta'],
     instante_atual: INSTANTE_ATUAL,
   });
 

@@ -133,12 +133,14 @@ Deno.serve(async (req: Request) => {
       case "horarios_disponiveis":
       case "aguardando_confirmacao":
       case "reserva_criada":
-      case "reserva_conflito": {
+      case "reserva_conflito":
+      case "saudacao":
+      case "aguardando_procedimento": {
         const resposta = gerarRespostaPaciente(resultado.decisao);
         return jsonResponse({ resposta }, 200);
       }
       default:
-        // Um dos outros onze estados -- ainda sem texto em portugues
+        // Um dos outros nove estados -- ainda sem texto em portugues
         // (escopo desta etapa). Nunca inventa texto generico.
         return jsonResponse({ resposta: null, decisao_tipo: resultado.decisao.tipo }, 200);
     }

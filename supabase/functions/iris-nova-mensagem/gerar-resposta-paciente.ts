@@ -6,23 +6,30 @@
 // a decisao nao os carrega (so IDs) e este modulo nao busca nada por conta
 // propria (nenhuma nova consulta, nenhuma nova arquitetura).
 //
-// Escopo desta etapa (decisao do Gabriel): somente os quatro estados do
-// "caminho feliz" -- horarios_disponiveis, aguardando_confirmacao,
-// reserva_criada, reserva_conflito. Os outros onze estados de
-// DecisaoOrquestrador NAO sao aceitos por este modulo -- o parametro so
-// tipa os quatro cobertos, entao qualquer outro estado e erro de
-// compilacao no chamador, nunca um fallback generico em tempo de execucao.
-//
-// Nao altera orquestrador.ts nem e chamado por ele nesta etapa -- modulo
-// avulso, pronto para ser ligado por um transporte futuro.
+// Escopo (decisao do Gabriel): os quatro estados originais do "caminho
+// feliz" -- horarios_disponiveis, aguardando_confirmacao, reserva_criada,
+// reserva_conflito -- mais dois estados de comportamento conversacional
+// minimo, acrescentados em 2026-08-05: saudacao e aguardando_procedimento
+// (nunca mais retornam resposta:null ao paciente). Os outros nove estados
+// de DecisaoOrquestrador NAO sao aceitos por este modulo -- o parametro so
+// tipa os seis cobertos, entao qualquer outro estado e erro de compilacao
+// no chamador, nunca um fallback generico em tempo de execucao.
 
 import type { DecisaoOrquestrador } from './orquestrador-tipos.ts';
 import type { OpcaoHorario, ResultadoDisponibilidade } from './disponibilidade-tipos.ts';
 
-/** Exatamente os quatro estados cobertos nesta etapa -- nenhum outro tipa aqui. */
+/** Exatamente os seis estados cobertos -- nenhum outro tipa aqui. */
 export type DecisaoCaminhoFeliz = Extract<
   DecisaoOrquestrador,
-  { tipo: 'horarios_disponiveis' | 'aguardando_confirmacao' | 'reserva_criada' | 'reserva_conflito' }
+  {
+    tipo:
+      | 'horarios_disponiveis'
+      | 'aguardando_confirmacao'
+      | 'reserva_criada'
+      | 'reserva_conflito'
+      | 'saudacao'
+      | 'aguardando_procedimento';
+  }
 >;
 
 export function gerarRespostaPaciente(decisao: DecisaoCaminhoFeliz): string {
@@ -35,6 +42,14 @@ export function gerarRespostaPaciente(decisao: DecisaoCaminhoFeliz): string {
       return `Prontinho! Agendamento confirmado para ${formatarData(decisao.data)} às ${decisao.horario}.`;
     case 'reserva_conflito':
       return 'Esse horário acabou de ficar indisponível. Pode escolher outro horário?';
+    case 'saudacao':
+      return 'Olá! Como posso te ajudar hoje?';
+    case 'aguardando_procedimento':
+      // Os quatro motivos de nao_resolvido (procedimento-tipos.ts) sao
+      // equivalentes perante o paciente (specs/procedimentos-v1.md secao 7):
+      // nunca revelar se um procedimento existe mas esta inativo/desativado
+      // -- por isso uma unica pergunta, igual para os quatro.
+      return 'Qual procedimento ou atendimento você está buscando?';
   }
 }
 

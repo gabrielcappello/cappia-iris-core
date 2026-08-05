@@ -55,6 +55,11 @@ export type DecisaoOrquestrador =
   // clinica antes do orquestrador chegar aqui) -- tratado explicitamente,
   // nunca uma excecao nao tratada nem um catalogo vazio inventado.
   | { tipo: 'clinica_sem_catalogo' }
+  // Mensagem e uma saudacao pura (oi/ola/bom dia/boa tarde/boa noite, sem
+  // mais nenhum conteudo) e ainda nao ha procedimento conhecido nesta
+  // conversa -- detectado por texto bruto (detectar-saudacao.ts), nunca
+  // pela IA (comportamento conversacional-v1, Gabriel 2026-08-05).
+  | { tipo: 'saudacao' }
   | { tipo: 'aguardando_procedimento'; resultado: ResultadoResolucaoProcedimento }
   | { tipo: 'erro_catalogo_procedimento'; resultado: ResultadoResolucaoProcedimento }
   | { tipo: 'aguardando_escolha_dentista'; dentistas: readonly DentistaApto[] }

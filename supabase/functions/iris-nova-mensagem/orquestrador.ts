@@ -1,5 +1,7 @@
 import { identificarConversa } from './identificacao.ts';
 import { interpretarEAplicar } from './interpretar-e-aplicar.ts';
+import { ehSaudacaoPura } from './detectar-saudacao.ts';
+import { textoAusenteParaResolucao } from './normalizacao-texto.ts';
 import { resolverProcedimento } from './resolver-procedimento.ts';
 import { resolverDentista } from './resolver-dentista.ts';
 import { resolverDuracao } from './resolver-duracao.ts';
@@ -39,6 +41,25 @@ export async function processarMensagem(
     instancia_whatsapp: entrada.instancia_whatsapp,
     telefone_normalizado: entrada.telefone_normalizado,
   });
+
+  // Saudacao pura ("oi", "boa tarde"...) e ainda sem nenhum procedimento
+  // conhecido nesta conversa: cumprimenta e pergunta como ajudar, sem gastar
+  // uma chamada de IA nem tocar a cadeia deterministica de resolucao abaixo.
+  // Deteccao por texto bruto da mensagem, nunca pela IA (detectar-
+  // saudacao.ts) -- comportamento conversacional-v1 (Gabriel, 2026-08-05).
+  // Uma vez que a conversa ja tem procedimento_texto (de qualquer mensagem
+  // anterior), uma nova saudacao no meio nunca interrompe o fluxo em
+  // andamento -- essa mesma mensagem simplesmente segue para interpretacao
+  // normal, como ja acontecia antes desta mudanca.
+  const dadosConhecidos = identificacao.conversa.dados as Record<string, string | undefined>;
+  if (textoAusenteParaResolucao(dadosConhecidos.procedimento_texto) && ehSaudacaoPura(entrada.mensagens_atuais)) {
+    return {
+      clinica_id: identificacao.clinica_id,
+      conversa_id: identificacao.conversa.id,
+      conflitos: [],
+      decisao: { tipo: 'saudacao' },
+    };
+  }
 
   const interpretacao = await interpretarEAplicar(clienteModelo, clienteBanco, {
     conversa_id: identificacao.conversa.id,
