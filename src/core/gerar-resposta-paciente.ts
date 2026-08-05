@@ -11,16 +11,25 @@
 // reserva_conflito -- mais cinco estados de comportamento conversacional
 // minimo (2026-08-05: saudacao, aguardando_procedimento; 2026-08-05,
 // specs/interpretacao-natureza-mensagem-v1.md: duvida_livre,
-// mensagem_nao_compreendida, desistencia) -- nenhum deles retorna
-// resposta:null ao paciente. Os outros seis estados de DecisaoOrquestrador
-// NAO sao aceitos por este modulo -- o parametro so tipa os nove
-// cobertos, entao qualquer outro estado e erro de compilacao no chamador,
-// nunca um fallback generico em tempo de execucao.
+// mensagem_nao_compreendida, desistencia) -- mais aguardando_data_horario
+// (2026-08-05, auditoria dos 6 tipos/31 motivos de ResultadoResolucaoTemporal
+// que chegam aqui) -- nenhum deles retorna resposta:null ao paciente. Os
+// outros cinco estados de DecisaoOrquestrador NAO sao aceitos por este
+// modulo -- o parametro so tipa os dez cobertos, entao qualquer outro
+// estado e erro de compilacao no chamador, nunca um fallback generico em
+// tempo de execucao.
 
 import type { DecisaoOrquestrador } from './orquestrador-tipos.ts';
 import type { OpcaoHorario, ResultadoDisponibilidade } from './disponibilidade-tipos.ts';
+import type {
+  MotivoErroConfiguracaoTemporal,
+  MotivoIncompletudeTemporal,
+  MotivoInvalidoTemporal,
+  MotivoPassadoTemporal,
+  ResultadoResolucaoTemporal,
+} from './temporal-tipos.ts';
 
-/** Exatamente os nove estados cobertos -- nenhum outro tipa aqui. */
+/** Exatamente os dez estados cobertos -- nenhum outro tipa aqui. */
 export type DecisaoCaminhoFeliz = Extract<
   DecisaoOrquestrador,
   {
@@ -33,7 +42,8 @@ export type DecisaoCaminhoFeliz = Extract<
       | 'aguardando_procedimento'
       | 'duvida_livre'
       | 'mensagem_nao_compreendida'
-      | 'desistencia';
+      | 'desistencia'
+      | 'aguardando_data_horario';
   }
 >;
 
@@ -66,6 +76,109 @@ export function gerarRespostaPaciente(decisao: DecisaoCaminhoFeliz): string {
       // Situacao "Desistencia" (atendimento-v1.md secao 5): encerra com
       // cordialidade, nunca trata como cancelamento de agendamento existente.
       return 'Sem problemas! Se precisar, é só chamar.';
+    case 'aguardando_data_horario':
+      return respostaAguardandoDataHorario(decisao.resultado);
+  }
+}
+
+// resultado.tipo aqui cobre as SEIS variantes de ResultadoResolucaoTemporal
+// que chegam nesta posicao (todas exceto 'resolvido', que o orquestrador ja
+// intercepta antes de montar 'aguardando_data_horario'). Agrupamento por
+// tipo/motivo aprovado por Gabriel em 2026-08-05, apos auditoria dos 31
+// motivos: so 8 sao alcancaveis pelo adaptador atual
+// (montar-fatos-temporais.ts), os demais sao tratados so por exaustividade
+// de contrato -- nunca texto inventado, nunca `resposta:null`.
+function respostaAguardandoDataHorario(
+  resultado: Exclude<ResultadoResolucaoTemporal, { tipo: 'resolvido' }>
+): string {
+  switch (resultado.tipo) {
+    case 'incompleto':
+      return respostaIncompleto(resultado.motivo);
+    case 'ambiguo':
+      // Os 5 motivos (temporal-tipos.ts) sao hoje inalcancaveis pelo
+      // adaptador atual (nunca produz dia_semana, horario_12h ou mais de um
+      // periodo) -- um unico texto generico, tratado so por exaustividade.
+      return 'Não consegui entender exatamente a data ou horário. Pode me dizer de um jeito mais direto, tipo "15/03" ou "14h"?';
+    case 'invalido':
+      return respostaInvalido(resultado.motivo);
+    case 'passado':
+      return respostaPassado(resultado.motivo);
+    case 'conflito':
+      // Os 7 motivos (temporal-tipos.ts) sao hoje inalcancaveis pelo
+      // adaptador atual (nunca produz mais de uma data/horario/intencao por
+      // leva, nunca restricao) -- um unico texto generico.
+      return 'Percebi mais de uma data ou horário na sua mensagem e fiquei em dúvida. Pode confirmar só uma?';
+    case 'erro_configuracao':
+      return respostaErroConfiguracaoTemporal(resultado.motivo);
+  }
+}
+
+// intencao_ausente (leva vazia) e data_ausente (estruturalmente
+// inalcancavel hoje -- intencao so e emitida junto com a data em
+// montar-fatos-temporais.ts) pedem a mesma coisa: a data. horario_recorrente
+// _nao_suportado e o unico motivo deste grupo que nao compartilha -- e sobre
+// "qualquer horario mais proximo" combinado com horario exato, nunca sobre
+// falta de data.
+function respostaIncompleto(motivo: MotivoIncompletudeTemporal): string {
+  switch (motivo) {
+    case 'intencao_ausente':
+    case 'data_ausente':
+      return 'Para qual data você gostaria de agendar? Pode ser hoje, amanhã ou uma data específica.';
+    case 'horario_recorrente_nao_suportado':
+      return 'No momento só consigo buscar horário pra uma data específica. Qual data você prefere?';
+  }
+}
+
+// Tres grupos: "data invalida" (so data_impossivel e alcancavel hoje;
+// ano_fora_do_dominio/ano_dois_digitos sao inalcancaveis pelo adaptador
+// atual), "horario invalido" (hora/minuto_fora_do_dominio e horario_24_00,
+// todos alcancaveis) e um generico tecnico para os dois motivos estruturais
+// (atomo_invalido, quantidade_atomica_excedida) que nunca ocorrem hoje.
+function respostaInvalido(motivo: MotivoInvalidoTemporal): string {
+  switch (motivo) {
+    case 'data_impossivel':
+    case 'ano_fora_do_dominio':
+    case 'ano_dois_digitos':
+      return 'Essa data não existe no calendário. Pode conferir e me mandar de novo? Ex.: 15/03.';
+    case 'hora_fora_do_dominio':
+    case 'minuto_fora_do_dominio':
+    case 'horario_24_00':
+      return 'Esse horário não é válido. Pode me mandar de novo? Ex.: 14h ou 14:30.';
+    case 'atomo_invalido':
+    case 'quantidade_atomica_excedida':
+      return 'Não consegui entender a data ou horário. Pode reformular?';
+  }
+}
+
+// "Data no passado" (data_passada; dia_semana_esta_passado e inalcancavel
+// hoje, dia da semana nunca e emitido) pede uma data futura. "Horario de
+// hoje no passado" (horario_passado; inicio/termino_ate_passado sao
+// inalcancaveis hoje, restricao nunca e emitida) pede outro horario -- as
+// duas perguntas de reconducao sao diferentes, nunca compartilham texto.
+function respostaPassado(motivo: MotivoPassadoTemporal): string {
+  switch (motivo) {
+    case 'data_passada':
+    case 'dia_semana_esta_passado':
+      return 'Essa data já passou. Você quer marcar pra uma data futura?';
+    case 'horario_passado':
+    case 'inicio_ate_passado':
+    case 'termino_ate_passado':
+      return 'Esse horário de hoje já passou. Prefere outro horário hoje, ou outro dia?';
+  }
+}
+
+// Erro tecnico, nunca dúvida do paciente (regra do Gabriel). fuso_ausente
+// (alcancavel) e fuso_formato_invalido (inalcancavel hoje) compartilham --
+// mesma causa raiz: configuracao de fuso da clinica. instante_atual_invalido
+// e separado -- falha do proprio transporte, nao da clinica; nenhum dos
+// dois afirma uma acao que nao aconteceu (nunca "equipe avisada").
+function respostaErroConfiguracaoTemporal(motivo: MotivoErroConfiguracaoTemporal): string {
+  switch (motivo) {
+    case 'fuso_ausente':
+    case 'fuso_formato_invalido':
+      return 'Não consegui calcular os horários dessa clínica agora. Pode tentar novamente em instantes?';
+    case 'instante_atual_invalido':
+      return 'Tive um problema técnico agora. Pode tentar de novo em instantes?';
   }
 }
 

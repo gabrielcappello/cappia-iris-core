@@ -81,7 +81,13 @@ export type DecisaoOrquestrador =
   | { tipo: 'erro_catalogo_dentista'; resultado: ResultadoResolucaoDentista }
   | { tipo: 'duracao_nao_configurada' }
   | { tipo: 'erro_configuracao_duracao'; resultado: ResultadoResolucaoDuracao }
-  | { tipo: 'aguardando_data_horario'; resultado: ResultadoResolucaoTemporal }
+  // 'resolvido' e excluido do tipo aqui de proposito (2026-08-05): quando
+  // resultadoTemporal.tipo === 'resolvido', o orquestrador nunca monta esta
+  // decisao (segue para disponibilidade) -- entao 'resolvido' chegando aqui
+  // seria inconsistencia interna impossivel, nunca uma situacao real do
+  // paciente. O contrato de tipo reflete isso: nenhum gerador de resposta
+  // pode inventar um fallback pra um caso que nao deveria poder existir.
+  | { tipo: 'aguardando_data_horario'; resultado: Exclude<ResultadoResolucaoTemporal, { tipo: 'resolvido' }> }
   | {
       tipo: 'horarios_disponiveis';
       procedimento_id: string;

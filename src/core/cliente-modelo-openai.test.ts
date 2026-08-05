@@ -248,8 +248,19 @@ function entradaValida(overrides: Record<string, unknown> = {}) {
   } as never;
 }
 
+// timeoutPorTentativaMs era 60 e causava falha intermitente na suite
+// completa (nao isolada): ~40 testes deste arquivo usam este default sem
+// nenhum controle de Date.now/timers (diferente dos testes de precisao de
+// timeout, que sempre sobrescrevem timeoutPorTentativaMs explicitamente e/ou
+// controlam o relogio) -- um AbortController real de 60ms competindo com
+// promises reais sob carga da suite inteira (varios arquivos de teste
+// concorrentes) e uma corrida genuina, nao um bug de logica. Investigado em
+// 2026-08-05: arquivo isolado sempre passa (90/90); 3 execucoes seguidas da
+// suite completa depois do ajuste passaram com 0 falhas. Valor elevado para
+// dar margem real contra jitter de agendamento do SO, sem afetar os testes
+// que ja controlam o relogio ou que sobrescrevem este campo por conta propria.
 const TEMPOS_RAPIDOS = {
-  timeoutPorTentativaMs: 60,
+  timeoutPorTentativaMs: 2000,
   prazoTotalMs: 5000,
   esperaEntreTentativasMs: 5,
 };

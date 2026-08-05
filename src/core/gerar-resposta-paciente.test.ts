@@ -247,6 +247,163 @@ for (const motivo of ['texto_ausente', 'sem_correspondencia', 'alias_inativo', '
   });
 }
 
+// --- aguardando_data_horario ---
+//
+// 6 tipos de topo (ResultadoResolucaoTemporal exceto 'resolvido'), 31
+// motivos ao todo. So 8 sao alcancaveis hoje pelo adaptador atual
+// (montar-fatos-temporais.ts) -- os demais sao testados so por
+// exaustividade de contrato, nunca null (aprovado por Gabriel em
+// 2026-08-05).
+
+function decisaoAguardando(
+  resultado: Exclude<import('./temporal-tipos.ts').ResultadoResolucaoTemporal, { tipo: 'resolvido' }>
+): DecisaoCaminhoFeliz {
+  return { tipo: 'aguardando_data_horario', resultado };
+}
+
+// -- incompleto: alcancaveis --
+
+test('aguardando_data_horario/incompleto (intencao_ausente, alcancavel): pede a data', () => {
+  const decisao = decisaoAguardando({ tipo: 'incompleto', motivo: 'intencao_ausente' });
+  assert.equal(
+    gerarRespostaPaciente(decisao),
+    'Para qual data você gostaria de agendar? Pode ser hoje, amanhã ou uma data específica.'
+  );
+});
+
+test('aguardando_data_horario/incompleto (data_ausente, inalcancavel hoje): compartilha texto com intencao_ausente', () => {
+  const decisao = decisaoAguardando({ tipo: 'incompleto', motivo: 'data_ausente' });
+  assert.equal(
+    gerarRespostaPaciente(decisao),
+    'Para qual data você gostaria de agendar? Pode ser hoje, amanhã ou uma data específica.'
+  );
+});
+
+test('aguardando_data_horario/incompleto (horario_recorrente_nao_suportado, inalcancavel hoje): texto separado, nao compartilha', () => {
+  const decisao = decisaoAguardando({ tipo: 'incompleto', motivo: 'horario_recorrente_nao_suportado' });
+  const texto = gerarRespostaPaciente(decisao);
+  assert.equal(texto, 'No momento só consigo buscar horário pra uma data específica. Qual data você prefere?');
+  assert.notEqual(texto, 'Para qual data você gostaria de agendar? Pode ser hoje, amanhã ou uma data específica.');
+});
+
+// -- ambiguo: nenhum motivo alcancavel hoje, texto generico unico --
+
+for (const motivo of [
+  'dia_semana_sem_qualificador',
+  'horario_sem_parte_dia',
+  'horario_nao_classificado',
+  'hora_12_com_parte_dia_ambigua',
+  'expressao_temporal_nao_classificada',
+] as const) {
+  test(`aguardando_data_horario/ambiguo (motivo ${motivo}, inalcancavel hoje): texto generico, nunca null`, () => {
+    const decisao = decisaoAguardando({ tipo: 'ambiguo', motivo });
+    const texto = gerarRespostaPaciente(decisao);
+    assert.equal(
+      texto,
+      'Não consegui entender exatamente a data ou horário. Pode me dizer de um jeito mais direto, tipo "15/03" ou "14h"?'
+    );
+    assert.notEqual(texto, null);
+  });
+}
+
+// -- invalido: 3 grupos --
+
+for (const motivo of ['data_impossivel', 'ano_fora_do_dominio', 'ano_dois_digitos'] as const) {
+  test(`aguardando_data_horario/invalido (motivo ${motivo}): grupo "data invalida"`, () => {
+    const decisao = decisaoAguardando({ tipo: 'invalido', motivo });
+    assert.equal(gerarRespostaPaciente(decisao), 'Essa data não existe no calendário. Pode conferir e me mandar de novo? Ex.: 15/03.');
+  });
+}
+
+for (const motivo of ['hora_fora_do_dominio', 'minuto_fora_do_dominio', 'horario_24_00'] as const) {
+  test(`aguardando_data_horario/invalido (motivo ${motivo}): grupo "horario invalido"`, () => {
+    const decisao = decisaoAguardando({ tipo: 'invalido', motivo });
+    assert.equal(gerarRespostaPaciente(decisao), 'Esse horário não é válido. Pode me mandar de novo? Ex.: 14h ou 14:30.');
+  });
+}
+
+for (const motivo of ['atomo_invalido', 'quantidade_atomica_excedida'] as const) {
+  test(`aguardando_data_horario/invalido (motivo ${motivo}, inalcancavel hoje): grupo generico`, () => {
+    const decisao = decisaoAguardando({ tipo: 'invalido', motivo });
+    assert.equal(gerarRespostaPaciente(decisao), 'Não consegui entender a data ou horário. Pode reformular?');
+  });
+}
+
+// -- passado: 2 grupos, nunca compartilham entre si --
+
+for (const motivo of ['data_passada', 'dia_semana_esta_passado'] as const) {
+  test(`aguardando_data_horario/passado (motivo ${motivo}): grupo "data no passado"`, () => {
+    const decisao = decisaoAguardando({ tipo: 'passado', motivo });
+    assert.equal(gerarRespostaPaciente(decisao), 'Essa data já passou. Você quer marcar pra uma data futura?');
+  });
+}
+
+for (const motivo of ['horario_passado', 'inicio_ate_passado', 'termino_ate_passado'] as const) {
+  test(`aguardando_data_horario/passado (motivo ${motivo}): grupo "horario de hoje no passado"`, () => {
+    const decisao = decisaoAguardando({ tipo: 'passado', motivo });
+    assert.equal(gerarRespostaPaciente(decisao), 'Esse horário de hoje já passou. Prefere outro horário hoje, ou outro dia?');
+  });
+}
+
+test('aguardando_data_horario/passado: os dois grupos nunca compartilham texto entre si', () => {
+  const textoData = gerarRespostaPaciente(decisaoAguardando({ tipo: 'passado', motivo: 'data_passada' }));
+  const textoHorario = gerarRespostaPaciente(decisaoAguardando({ tipo: 'passado', motivo: 'horario_passado' }));
+  assert.notEqual(textoData, textoHorario);
+});
+
+// -- conflito: nenhum motivo alcancavel hoje, texto generico unico --
+
+for (const motivo of [
+  'multiplas_datas',
+  'data_especifica_com_proxima_disponibilidade',
+  'multiplas_intencoes',
+  'multiplos_horarios_exatos',
+  'restricoes_conflitantes',
+  'periodo_incompativel_com_horario',
+  'horario_viola_inicio_ate',
+] as const) {
+  test(`aguardando_data_horario/conflito (motivo ${motivo}, inalcancavel hoje): texto generico, nunca null`, () => {
+    const decisao = decisaoAguardando({ tipo: 'conflito', motivo });
+    const texto = gerarRespostaPaciente(decisao);
+    assert.equal(texto, 'Percebi mais de uma data ou horário na sua mensagem e fiquei em dúvida. Pode confirmar só uma?');
+    assert.notEqual(texto, null);
+  });
+}
+
+// -- erro_configuracao: erro tecnico, nunca soa como duvida do paciente --
+
+for (const motivo of ['fuso_ausente', 'fuso_formato_invalido'] as const) {
+  test(`aguardando_data_horario/erro_configuracao (motivo ${motivo}): nao afirma acao que nao aconteceu`, () => {
+    const decisao = decisaoAguardando({ tipo: 'erro_configuracao', motivo });
+    const texto = gerarRespostaPaciente(decisao);
+    assert.equal(texto, 'Não consegui calcular os horários dessa clínica agora. Pode tentar novamente em instantes?');
+    assert.ok(!texto.toLowerCase().includes('equipe'));
+    assert.ok(!texto.toLowerCase().includes('avis'));
+  });
+}
+
+test('aguardando_data_horario/erro_configuracao (instante_atual_invalido, inalcancavel hoje): texto separado, nao soa como duvida do paciente', () => {
+  const decisao = decisaoAguardando({ tipo: 'erro_configuracao', motivo: 'instante_atual_invalido' });
+  const texto = gerarRespostaPaciente(decisao);
+  assert.equal(texto, 'Tive um problema técnico agora. Pode tentar de novo em instantes?');
+  assert.notEqual(texto, 'Não consegui calcular os horários dessa clínica agora. Pode tentar novamente em instantes?');
+});
+
+test('aguardando_data_horario: nenhum motivo, em nenhum tipo, expoe o codigo bruto do motivo', () => {
+  const casos = [
+    { tipo: 'incompleto', motivo: 'intencao_ausente' },
+    { tipo: 'ambiguo', motivo: 'dia_semana_sem_qualificador' },
+    { tipo: 'invalido', motivo: 'data_impossivel' },
+    { tipo: 'passado', motivo: 'data_passada' },
+    { tipo: 'conflito', motivo: 'multiplas_datas' },
+    { tipo: 'erro_configuracao', motivo: 'fuso_ausente' },
+  ] as const;
+  for (const resultado of casos) {
+    const texto = gerarRespostaPaciente(decisaoAguardando(resultado));
+    assert.ok(!texto.includes(resultado.motivo));
+  }
+});
+
 // --- determinismo ---
 
 test('determinismo: mesma decisao produz sempre o mesmo texto', () => {
