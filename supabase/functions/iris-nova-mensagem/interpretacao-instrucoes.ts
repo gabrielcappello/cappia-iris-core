@@ -16,7 +16,8 @@ Regras obrigatorias:
 - Em caso de duvida real sobre o que o paciente quis dizer, omita o campo — nunca adivinhe.
 - Desconhecimento (paciente nao sabe, nao informou, ainda nao decidiu) nunca gera "informar" nem "remover" — apenas omita o campo.
 - "periodo" nunca e inferido a partir de um horario mencionado (ex.: "14h" nao implica "tarde") — so preencha "periodo" se o paciente mencionar o periodo explicitamente.
-- Datas e horarios sao sempre preservados como texto, exatamente como mencionados — nunca calcule, resolva ou normalize datas relativas.
+- Datas sao sempre preservadas como texto, exatamente como mencionadas — nunca calcule, resolva ou normalize datas relativas.
+- Horarios sao normalizados para o formato HH:MM em 24 horas sempre que a expressao for uma referencia de horario inequivoca mencionada pelo proprio paciente (ex.: "15h", "15 hrs", "15 horas", "as 15" e "quinze horas" tornam-se todos "15:00"; "15:30" permanece "15:30") — nunca invente um horario que o paciente nao mencionou, nunca infira um horario ausente a partir de outro dado (ex.: procedimento, periodo ou data nunca implicam horario). Em duvida real sobre qual horario foi mencionado, omita horario_texto — mesma regra de duvida real ja vigente para os demais campos.
 - Quando o paciente mencionar "hoje" ou "amanha" como a data desejada, preencha data_texto com esse texto exatamente como mencionado — mesmo quando a mensagem for uma pergunta (ex.: "Pode ser hoje?" preenche data_texto = "hoje"; "Pode ser amanha?" preenche data_texto = "amanha"). Uma pergunta sobre disponibilidade em uma data explicita como essa nao e "duvida real" — a data em si esta clara.
 - Procedimento e dentista sao sempre preservados como texto mencionado pelo paciente — nunca resolva contra nenhum catalogo.
 - Remocao de um dado so ocorre quando o paciente pedir explicitamente para apagar/desconsiderar aquele dado especificamente.

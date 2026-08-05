@@ -51,3 +51,28 @@ test('instrucoes: "hoje"/"amanha" preenchem data_texto mesmo em forma de pergunt
   assert.match(INSTRUCOES_EXTRATOR, /Pode ser amanha\?" preenche data_texto = "amanha"/);
   assert.match(INSTRUCOES_EXTRATOR, /nao e "duvida real"/);
 });
+
+// --- normalizacao de horario (regressao: achado real via WhatsApp,
+// "15 hrs" preservado verbatim nunca batia no regex HH:MM/HHh[MM] de
+// montar-fatos-temporais.ts, e o horario pedido pelo paciente era
+// silenciosamente perdido) ---
+
+test('instrucoes: data continua preservada literalmente, nunca calculada (regra inalterada)', () => {
+  assert.match(INSTRUCOES_EXTRATOR, /Datas sao sempre preservadas como texto, exatamente como mencionadas — nunca calcule, resolva ou normalize datas relativas\./);
+});
+
+test('instrucoes: horario e normalizado para HH:MM em 24h quando inequivoco', () => {
+  assert.match(INSTRUCOES_EXTRATOR, /Horarios sao normalizados para o formato HH:MM em 24 horas/);
+  assert.match(INSTRUCOES_EXTRATOR, /"15h", "15 hrs", "15 horas", "as 15" e "quinze horas" tornam-se todos "15:00"/);
+  assert.match(INSTRUCOES_EXTRATOR, /"15:30" permanece "15:30"/);
+});
+
+test('instrucoes: normalizacao de horario nunca autoriza inventar ou inferir horario ausente', () => {
+  assert.match(INSTRUCOES_EXTRATOR, /nunca invente um horario que o paciente nao mencionou/);
+  assert.match(INSTRUCOES_EXTRATOR, /nunca infira um horario ausente a partir de outro dado/);
+});
+
+test('instrucoes: duvida real sobre horario continua omitindo o campo (mesma regra geral, reafirmada pra horario)', () => {
+  const trechoHorario = INSTRUCOES_EXTRATOR.slice(INSTRUCOES_EXTRATOR.indexOf('Horarios sao normalizados'));
+  assert.match(trechoHorario, /Em duvida real sobre qual horario foi mencionado, omita horario_texto/);
+});
