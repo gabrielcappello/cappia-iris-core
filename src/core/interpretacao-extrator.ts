@@ -4,6 +4,7 @@ import { INSTRUCOES_EXTRATOR, SCHEMA_SAIDA_INTERPRETACAO } from './interpretacao
 import {
   CAMPOS_CADASTRAIS_INTERPRETACAO,
   CAMPOS_OPERACIONAIS_INTERPRETACAO,
+  NATUREZAS_MENSAGEM_PERMITIDAS,
 } from './interpretacao-tipos.ts';
 import type { AcaoAlteracaoDados, CampoDadosConversa } from './tipos.ts';
 import type {
@@ -11,6 +12,7 @@ import type {
   CampoOperacionalInterpretacao,
   ClienteModeloEstruturado,
   EntradaInterpretacao,
+  NaturezaMensagem,
   SaidaInterpretacao,
   SnapshotOficialConversa,
 } from './interpretacao-tipos.ts';
@@ -237,11 +239,17 @@ export function validarSaidaInterpretacao(saida: unknown): asserts saida is Said
   }
 
   const chavesNivelPrincipal = Object.keys(saida as Record<string, unknown>);
-  if (chavesNivelPrincipal.length !== 1 || chavesNivelPrincipal[0] !== 'alteracoes') {
+  if (!mesmasChaves(chavesNivelPrincipal, ['natureza_mensagem', 'alteracoes'])) {
     throw new InterpretacaoInvalidaError('propriedade_extra', 'saida');
   }
 
-  const { alteracoes } = saida as { alteracoes: unknown };
+  const { natureza_mensagem, alteracoes } = saida as { natureza_mensagem: unknown; alteracoes: unknown };
+  if (
+    typeof natureza_mensagem !== 'string' ||
+    !NATUREZAS_MENSAGEM_PERMITIDAS.includes(natureza_mensagem as NaturezaMensagem)
+  ) {
+    throw new InterpretacaoInvalidaError('natureza_mensagem_invalida', 'saida.natureza_mensagem');
+  }
   if (alteracoes === null || typeof alteracoes !== 'object' || Array.isArray(alteracoes)) {
     throw new InterpretacaoInvalidaError('alteracoes_invalida', 'saida.alteracoes');
   }

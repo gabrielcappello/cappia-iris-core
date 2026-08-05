@@ -8,7 +8,8 @@
 // Este arquivo NAO e chamado por nenhum fluxo de producao ainda -- nao ha
 // integracao com interpretarEAplicar nem com a Edge Function nesta etapa.
 import { ACOES_PERMITIDAS, CAMPOS_PERMITIDOS } from './aplicar-dados.ts';
-import type { ClienteModeloEstruturado, EntradaInterpretacao } from './interpretacao-tipos.ts';
+import { NATUREZAS_MENSAGEM_PERMITIDAS } from './interpretacao-tipos.ts';
+import type { ClienteModeloEstruturado, EntradaInterpretacao, NaturezaMensagem } from './interpretacao-tipos.ts';
 import type { AcaoAlteracaoDados, AlteracoesDados, CampoDadosConversa } from './tipos.ts';
 
 export const MODELO_GPT_4_1_MINI = 'gpt-4.1-mini-2025-04-14';
@@ -29,6 +30,10 @@ export const ESPERA_ENTRE_TENTATIVAS_MS_APROVADO = 500;
 const SCHEMA_PORTATIL_APROVADO = {
   type: 'object',
   properties: {
+    natureza_mensagem: {
+      type: 'string',
+      enum: [...NATUREZAS_MENSAGEM_PERMITIDAS],
+    },
     alteracoes: {
       type: 'array',
       items: {
@@ -63,7 +68,7 @@ const SCHEMA_PORTATIL_APROVADO = {
       },
     },
   },
-  required: ['alteracoes'],
+  required: ['natureza_mensagem', 'alteracoes'],
   additionalProperties: false,
 } as const;
 
@@ -486,7 +491,7 @@ function classificarEConverter(
   tentativa: number,
   duracao: () => number,
   modelo: string
-): { alteracoes: AlteracoesDados } {
+): { natureza_mensagem: NaturezaMensagem; alteracoes: AlteracoesDados } {
   if (textoCorpo === '') {
     // Corpo HTTP com zero bytes: unico caso, junto com output_text vazio
     // mais abaixo, classificado como resposta_vazia (repetivel).
@@ -592,15 +597,28 @@ function classificarEConverter(
     throw new ErroClienteModeloOpenAI('resposta_invalida', 'output_text_json_invalido', tentativa, duracao(), modelo, statusHttpResposta);
   }
 
+  let naturezaMensagem: NaturezaMensagem;
   let alteracoesInternas: AlteracoesDados;
   try {
-    alteracoesInternas = converterParaContratoInterno(objetoPortatil);
+    if (objetoPortatil === null || typeof objetoPortatil !== 'object' || Array.isArray(objetoPortatil)) {
+      throw new ErroConversaoPortatil('raiz_invalida');
+    }
+    const chavesRaizPortatil = Object.keys(objetoPortatil as Record<string, unknown>).sort();
+    if (JSON.stringify(chavesRaizPortatil) !== JSON.stringify(['alteracoes', 'natureza_mensagem'])) {
+      throw new ErroConversaoPortatil('propriedade_extra');
+    }
+    const { natureza_mensagem, alteracoes } = objetoPortatil as { natureza_mensagem: unknown; alteracoes: unknown };
+    if (typeof natureza_mensagem !== 'string' || !NATUREZAS_MENSAGEM_PERMITIDAS.includes(natureza_mensagem as NaturezaMensagem)) {
+      throw new ErroConversaoPortatil('natureza_mensagem_invalida');
+    }
+    naturezaMensagem = natureza_mensagem as NaturezaMensagem;
+    alteracoesInternas = converterParaContratoInterno({ alteracoes });
   } catch (erroConversao) {
     const codigo = erroConversao instanceof ErroConversaoPortatil ? erroConversao.codigo : 'objeto_portatil_invalido';
     throw new ErroClienteModeloOpenAI('resposta_invalida', codigo, tentativa, duracao(), modelo, statusHttpResposta);
   }
 
-  return { alteracoes: alteracoesInternas };
+  return { natureza_mensagem: naturezaMensagem, alteracoes: alteracoesInternas };
 }
 
 // AbortController so cancela I/O pendente (fetch/leitura do corpo) -- nao
@@ -779,10 +797,10 @@ export function converterParaContratoInterno(objetoPortatil: unknown): Alteracoe
 // Nao importa nem duplica INSTRUCOES_EXTRATOR -- opera sobre o que foi
 // efetivamente recebido em `entrada.instrucoes`.
 const FRASE_ESTRUTURAL_FORMATO_INTERNO_ANTIGO =
-  'Responda estritamente no formato do schema fornecido — nenhuma propriedade alem de "alteracoes" no nivel principal, nenhuma propriedade alem de "acao"/"valor" (ou somente "acao" para remover) dentro de cada alteracao.';
+  'Responda estritamente no formato do schema fornecido — nenhuma propriedade alem de "natureza_mensagem" e "alteracoes" no nivel principal, nenhuma propriedade alem de "acao"/"valor" (ou somente "acao" para remover) dentro de cada alteracao.';
 
 const FRASE_ESTRUTURAL_TRANSPORTE_PORTATIL =
-  'Responda estritamente no formato do schema fornecido — a raiz contem somente "alteracoes"; "alteracoes" e uma lista; cada item da lista contem exatamente "campo", "acao" e "valor"; informar e corrigir usam "valor" como string; remover usa "valor": null; nenhuma propriedade adicional e permitida.';
+  'Responda estritamente no formato do schema fornecido — a raiz contem somente "natureza_mensagem" e "alteracoes"; "alteracoes" e uma lista; cada item da lista contem exatamente "campo", "acao" e "valor"; informar e corrigir usam "valor" como string; remover usa "valor": null; nenhuma propriedade adicional e permitida.';
 
 function construirInstrucoesPortatil(instrucoesBase: string): string {
   const ocorrencias = instrucoesBase.split(FRASE_ESTRUTURAL_FORMATO_INTERNO_ANTIGO).length - 1;

@@ -1,6 +1,5 @@
 import { identificarConversa } from './identificacao.ts';
 import { interpretarEAplicar } from './interpretar-e-aplicar.ts';
-import { ehSaudacaoPura } from './detectar-saudacao.ts';
 import { textoAusenteParaResolucao } from './normalizacao-texto.ts';
 import { resolverProcedimento } from './resolver-procedimento.ts';
 import { resolverDentista } from './resolver-dentista.ts';
@@ -11,7 +10,7 @@ import { carregarEntradaDisponibilidade } from './carregar-disponibilidade.ts';
 import { carregarCatalogo } from './carregar-catalogo.ts';
 import { reservarAgendamento } from './reservar-agendamento.ts';
 import type { ClienteBancoDados } from './tipos.ts';
-import type { ClienteModeloEstruturado } from './interpretacao-tipos.ts';
+import type { ClienteModeloEstruturado, NaturezaMensagem } from './interpretacao-tipos.ts';
 import type { ClienteRpc } from './mensagens-recebidas-tipos.ts';
 import type { InstanteAtual, ModoConsulta, OpcaoHorario } from './disponibilidade-tipos.ts';
 import type { ResolucaoTemporalOficial } from './temporal-tipos.ts';
@@ -42,25 +41,6 @@ export async function processarMensagem(
     telefone_normalizado: entrada.telefone_normalizado,
   });
 
-  // Saudacao pura ("oi", "boa tarde"...) e ainda sem nenhum procedimento
-  // conhecido nesta conversa: cumprimenta e pergunta como ajudar, sem gastar
-  // uma chamada de IA nem tocar a cadeia deterministica de resolucao abaixo.
-  // Deteccao por texto bruto da mensagem, nunca pela IA (detectar-
-  // saudacao.ts) -- comportamento conversacional-v1 (Gabriel, 2026-08-05).
-  // Uma vez que a conversa ja tem procedimento_texto (de qualquer mensagem
-  // anterior), uma nova saudacao no meio nunca interrompe o fluxo em
-  // andamento -- essa mesma mensagem simplesmente segue para interpretacao
-  // normal, como ja acontecia antes desta mudanca.
-  const dadosConhecidos = identificacao.conversa.dados as Record<string, string | undefined>;
-  if (textoAusenteParaResolucao(dadosConhecidos.procedimento_texto) && ehSaudacaoPura(entrada.mensagens_atuais)) {
-    return {
-      clinica_id: identificacao.clinica_id,
-      conversa_id: identificacao.conversa.id,
-      conflitos: [],
-      decisao: { tipo: 'saudacao' },
-    };
-  }
-
   const interpretacao = await interpretarEAplicar(clienteModelo, clienteBanco, {
     conversa_id: identificacao.conversa.id,
     clinica_id: identificacao.clinica_id,
@@ -72,6 +52,23 @@ export async function processarMensagem(
   // aplicavel (interpretar-e-aplicar.ts); sem isso, o snapshot ja
   // identificado continua sendo o oficial.
   const dados = (interpretacao.aplicacao?.dados ?? identificacao.conversa.dados) as Record<string, string | undefined>;
+
+  // natureza_mensagem (specs/interpretacao-natureza-mensagem-v1.md) so
+  // decide a acao comunicativa quando esta mensagem nao produziu nenhuma
+  // alteracao -- `alteracoes` sempre tem precedencia sobre
+  // `natureza_mensagem` para a evolucao do fluxo (mesma spec, secao 3).
+  // Nao consulta catalogo, nao muda `dados`: puramente conversacional.
+  if (Object.keys(interpretacao.alteracoes_interpretadas).length === 0) {
+    const decisaoConversacional = decidirPorNatureza(interpretacao.natureza_mensagem, dados);
+    if (decisaoConversacional !== null) {
+      return {
+        clinica_id: identificacao.clinica_id,
+        conversa_id: identificacao.conversa.id,
+        conflitos: interpretacao.conflitos,
+        decisao: decisaoConversacional,
+      };
+    }
+  }
 
   const catalogoCarregado = await carregarCatalogo(clienteBanco, { clinica_id: identificacao.clinica_id });
   if (catalogoCarregado.tipo !== 'carregado') {
@@ -98,6 +95,44 @@ export async function processarMensagem(
       entrada.instante_atual
     ),
   };
+}
+
+/**
+ * Traduz `natureza_mensagem` (specs/interpretacao-natureza-mensagem-v1.md)
+ * numa decisao conversacional, ou `null` quando a mensagem deve seguir
+ * pelo caminho normal de resolucao (nenhuma acao conversacional
+ * autorizada para este caso). So chamada quando `alteracoes` desta
+ * mensagem ja esta vazio (processarMensagem) -- nunca decide nada sobre
+ * procedimento, dentista, duracao, disponibilidade ou reserva.
+ */
+function decidirPorNatureza(
+  natureza: NaturezaMensagem,
+  dados: Record<string, string | undefined>
+): DecisaoOrquestrador | null {
+  switch (natureza) {
+    case 'saudacao':
+      // So cumprimenta se ainda nao ha procedimento conhecido nesta
+      // conversa (de qualquer mensagem anterior) -- uma saudacao no meio
+      // de um fluxo em andamento nunca o reabre.
+      return textoAusenteParaResolucao(dados.procedimento_texto) ? { tipo: 'saudacao' } : null;
+    case 'duvida':
+      // So acolhe como duvida livre se ainda nao ha procedimento conhecido
+      // nesta conversa -- com procedimento ja conhecido, a duvida nao pode
+      // interromper o fluxo em andamento: segue pelo caminho normal, que
+      // retoma exatamente a pergunta pendente (data/horario/confirmacao).
+      return textoAusenteParaResolucao(dados.procedimento_texto) ? { tipo: 'duvida_livre' } : null;
+    case 'negacao':
+      return { tipo: 'desistencia' };
+    case 'nao_compreendida':
+      return { tipo: 'mensagem_nao_compreendida' };
+    case 'pedido':
+    case 'resposta':
+    case 'correcao':
+      // Nao ha decisao conversacional propria para estes tres -- segue
+      // pelo caminho normal (que, com alteracoes vazio, produz o mesmo
+      // desfecho de sempre, ex.: aguardando_procedimento).
+      return null;
+  }
 }
 
 async function decidir(

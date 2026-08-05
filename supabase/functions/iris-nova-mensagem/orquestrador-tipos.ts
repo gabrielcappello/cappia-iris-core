@@ -55,11 +55,25 @@ export type DecisaoOrquestrador =
   // clinica antes do orquestrador chegar aqui) -- tratado explicitamente,
   // nunca uma excecao nao tratada nem um catalogo vazio inventado.
   | { tipo: 'clinica_sem_catalogo' }
-  // Mensagem e uma saudacao pura (oi/ola/bom dia/boa tarde/boa noite, sem
-  // mais nenhum conteudo) e ainda nao ha procedimento conhecido nesta
-  // conversa -- detectado por texto bruto (detectar-saudacao.ts), nunca
-  // pela IA (comportamento conversacional-v1, Gabriel 2026-08-05).
+  // Os quatro tipos abaixo (saudacao, duvida_livre, mensagem_nao_compreendida,
+  // desistencia) vem da classificacao natureza_mensagem da IA
+  // (specs/interpretacao-natureza-mensagem-v1.md), nunca de deteccao por
+  // texto bruto -- so disparam quando `alteracoes` desta mensagem esta
+  // vazio (a mesma spec: alteracoes sempre tem precedencia sobre
+  // natureza_mensagem para a evolucao do fluxo).
+  //
+  // Mensagem e uma saudacao pura e ainda nao ha procedimento conhecido
+  // nesta conversa.
   | { tipo: 'saudacao' }
+  // Duvida ou comentario fora do vocabulario de agendamento (situacao
+  // "Conversa basica", atendimento-v1.md secao 5).
+  | { tipo: 'duvida_livre' }
+  // Nao foi possivel classificar a mensagem com seguranca.
+  | { tipo: 'mensagem_nao_compreendida' }
+  // Recusa ou desistencia explicita, sem outro conteudo acionavel
+  // (situacao "Desistencia", atendimento-v1.md secao 5). Nunca cancela
+  // agendamento existente.
+  | { tipo: 'desistencia' }
   | { tipo: 'aguardando_procedimento'; resultado: ResultadoResolucaoProcedimento }
   | { tipo: 'erro_catalogo_procedimento'; resultado: ResultadoResolucaoProcedimento }
   | { tipo: 'aguardando_escolha_dentista'; dentistas: readonly DentistaApto[] }

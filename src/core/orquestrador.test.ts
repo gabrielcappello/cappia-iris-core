@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { processarMensagem } from './orquestrador.ts';
 import { ClienteFalso, criarTabelasFalsasVazias, type TabelasFalsas } from './teste-cliente-falso.ts';
-import { ClienteModeloFalso, ClienteModeloNuncaDeveSerChamado } from './teste-cliente-modelo-falso.ts';
+import { ClienteModeloFalso } from './teste-cliente-modelo-falso.ts';
 import { ClienteRpcFalso, type RespostaRpc } from './teste-cliente-rpc-falso.ts';
 
 // Dublê sem nenhuma resposta configurada: usado em todos os testes que nao
@@ -97,7 +97,7 @@ test('procedimento nao resolvido: orquestrador para em aguardando_procedimento',
   const clinicaId = semearClinica(tabelas);
   semearConversa(tabelas, clinicaId);
   const clienteBanco = new ClienteFalso(tabelas);
-  const clienteModelo = new ClienteModeloFalso([{ alteracoes: {} }]);
+  const clienteModelo = new ClienteModeloFalso([{ natureza_mensagem: 'pedido', alteracoes: {} }]);
 
   const resultado = await processarMensagem(clienteModelo, clienteBanco, clienteRpcNuncaChamado(), {
     provider: PROVIDER,
@@ -117,14 +117,16 @@ test('procedimento nao resolvido: orquestrador para em aguardando_procedimento',
   }
 });
 
-test('saudacao pura, sem procedimento conhecido: decisao saudacao, nunca chama o modelo de interpretacao', async () => {
+test('saudacao pura, sem procedimento conhecido: decisao saudacao, a partir da classificacao natureza_mensagem da IA', async () => {
   const tabelas = criarTabelasFalsasVazias();
   const clinicaId = semearClinica(tabelas);
   semearConversa(tabelas, clinicaId);
   const clienteBanco = new ClienteFalso(tabelas);
-  // Dublê que lanca erro se executar() for chamado -- prova que a saudacao
-  // e detectada antes de qualquer interpretacao via IA.
-  const clienteModelo = new ClienteModeloNuncaDeveSerChamado();
+  // natureza_mensagem vem sempre da IA (specs/interpretacao-natureza-
+  // mensagem-v1.md) -- ao contrario da etapa anterior (deteccao por texto
+  // bruto, detectar-saudacao.ts, ja removido), o modelo agora e sempre
+  // chamado; e a classificacao que ele devolve que decide a saudacao.
+  const clienteModelo = new ClienteModeloFalso([{ natureza_mensagem: 'saudacao', alteracoes: {} }]);
 
   const resultado = await processarMensagem(clienteModelo, clienteBanco, clienteRpcNuncaChamado(), {
     provider: PROVIDER,
@@ -135,6 +137,7 @@ test('saudacao pura, sem procedimento conhecido: decisao saudacao, nunca chama o
   });
 
   assert.deepEqual(resultado.decisao, { tipo: 'saudacao' });
+  assert.equal(clienteModelo.chamadas.length, 1);
 });
 
 test('saudacao no meio de uma conversa que ja tem procedimento conhecido: nunca interrompe o fluxo em andamento', async () => {
@@ -153,7 +156,7 @@ test('saudacao no meio de uma conversa que ja tem procedimento conhecido: nunca 
     atualizado_em: new Date('2026-08-01T00:00:00.000Z').toISOString(),
   });
   const clienteBanco = new ClienteFalso(tabelas);
-  const clienteModelo = new ClienteModeloFalso([{ alteracoes: {} }]);
+  const clienteModelo = new ClienteModeloFalso([{ natureza_mensagem: 'saudacao', alteracoes: {} }]);
 
   const resultado = await processarMensagem(clienteModelo, clienteBanco, clienteRpcNuncaChamado(), {
     provider: PROVIDER,
@@ -172,13 +175,74 @@ test('saudacao no meio de uma conversa que ja tem procedimento conhecido: nunca 
   }
 });
 
+test('duvida sem alteracoes e sem procedimento conhecido: retorna duvida_livre', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const clinicaId = semearClinica(tabelas);
+  semearConversa(tabelas, clinicaId);
+  const clienteBanco = new ClienteFalso(tabelas);
+  const clienteModelo = new ClienteModeloFalso([{ natureza_mensagem: 'duvida', alteracoes: {} }]);
+
+  const resultado = await processarMensagem(clienteModelo, clienteBanco, clienteRpcNuncaChamado(), {
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA,
+    telefone_normalizado: TELEFONE,
+    mensagens_atuais: ['voces atendem convenio X?'],
+    instante_atual: INSTANTE_ATUAL,
+  });
+
+  assert.deepEqual(resultado.decisao, { tipo: 'duvida_livre' });
+});
+
+test('duvida sem alteracoes, com procedimento ja conhecido: nao retorna duvida_livre, retoma o estado determinístico pendente', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const procedimentoId = crypto.randomUUID();
+  const dentistaId = crypto.randomUUID();
+  const clinicaId = semearClinica(tabelas, [
+    dentistaReal({
+      id: dentistaId,
+      procedimentos: [{ id: procedimentoId, nome: 'Limpeza', ativo: true, tempo: 30 }],
+    }),
+  ]);
+  semearProcedimentoCatalogo(tabelas, procedimentoId);
+  // procedimento_texto ja conhecido de uma mensagem anterior -- a duvida
+  // atual ("voces atendem convenio X?") nao acrescenta nada (alteracoes
+  // vazias), entao `dados` continua sendo o snapshot ja persistido.
+  tabelas.estado_conversa.push({
+    id: crypto.randomUUID(),
+    clinica_id: clinicaId,
+    telefone_normalizado: TELEFONE,
+    estado: 'atendimento',
+    dados: { procedimento_texto: 'Limpeza' },
+    paciente_id: null,
+    atualizado_em: new Date('2026-08-01T00:00:00.000Z').toISOString(),
+  });
+  const clienteBanco = new ClienteFalso(tabelas);
+  const clienteModelo = new ClienteModeloFalso([{ natureza_mensagem: 'duvida', alteracoes: {} }]);
+
+  const resultado = await processarMensagem(clienteModelo, clienteBanco, clienteRpcNuncaChamado(), {
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA,
+    telefone_normalizado: TELEFONE,
+    mensagens_atuais: ['voces atendem convenio X?'],
+    instante_atual: INSTANTE_ATUAL,
+  });
+
+  // nunca duvida_livre -- retoma exatamente a pergunta pendente (aqui,
+  // data/horario, ja que procedimento/dentista/duracao ja resolvidos mas
+  // nenhuma data foi informada ainda).
+  assert.deepEqual(resultado.decisao, {
+    tipo: 'aguardando_data_horario',
+    resultado: { tipo: 'incompleto', motivo: 'intencao_ausente' },
+  });
+});
+
 test('clinica sem linha em clinicas.dentistas ainda carrega (array vazio): aguardando_procedimento, nunca excecao', async () => {
   const tabelas = criarTabelasFalsasVazias();
   // clinica existe mas dentistas fica implicitamente [] (default do helper).
   const clinicaId = semearClinica(tabelas);
   semearConversa(tabelas, clinicaId);
   const clienteBanco = new ClienteFalso(tabelas);
-  const clienteModelo = new ClienteModeloFalso([{ alteracoes: {} }]);
+  const clienteModelo = new ClienteModeloFalso([{ natureza_mensagem: 'pedido', alteracoes: {} }]);
 
   const resultado = await processarMensagem(clienteModelo, clienteBanco, clienteRpcNuncaChamado(), {
     provider: PROVIDER,
@@ -205,7 +269,7 @@ test('procedimento + dentista unico apto + duracao configurada, sem data: aguard
   semearProcedimentoCatalogo(tabelas, procedimentoId);
   const clienteBanco = new ClienteFalso(tabelas);
   const clienteModelo = new ClienteModeloFalso([
-    { alteracoes: { procedimento_texto: { acao: 'informar', valor: 'limpeza' } } },
+    { natureza_mensagem: 'pedido', alteracoes: { procedimento_texto: { acao: 'informar', valor: 'limpeza' } } },
   ]);
 
   const resultado = await processarMensagem(clienteModelo, clienteBanco, clienteRpcNuncaChamado(), {
@@ -243,6 +307,7 @@ test('fluxo completo ate horario real: procedimento -> dentista -> duracao -> "h
   const clienteBanco = new ClienteFalso(tabelas);
   const clienteModelo = new ClienteModeloFalso([
     {
+      natureza_mensagem: 'pedido',
       alteracoes: {
         procedimento_texto: { acao: 'informar', valor: 'limpeza' },
         data_texto: { acao: 'informar', valor: 'hoje' },
@@ -280,7 +345,7 @@ test('alias ambiguo no catalogo: erro_catalogo_procedimento, nunca aguardando_pr
   semearProcedimentoCatalogo(tabelas, crypto.randomUUID(), { nome_pt: 'Limpeza' });
   const clienteBanco = new ClienteFalso(tabelas);
   const clienteModelo = new ClienteModeloFalso([
-    { alteracoes: { procedimento_texto: { acao: 'informar', valor: 'limpeza' } } },
+    { natureza_mensagem: 'pedido', alteracoes: { procedimento_texto: { acao: 'informar', valor: 'limpeza' } } },
   ]);
 
   const resultado = await processarMensagem(clienteModelo, clienteBanco, clienteRpcNuncaChamado(), {
@@ -319,7 +384,7 @@ test('dois dentistas aptos, sem preferencia: aguardando_escolha_dentista', async
   semearProcedimentoCatalogo(tabelas, procedimentoId);
   const clienteBanco = new ClienteFalso(tabelas);
   const clienteModelo = new ClienteModeloFalso([
-    { alteracoes: { procedimento_texto: { acao: 'informar', valor: 'limpeza' } } },
+    { natureza_mensagem: 'pedido', alteracoes: { procedimento_texto: { acao: 'informar', valor: 'limpeza' } } },
   ]);
 
   const resultado = await processarMensagem(clienteModelo, clienteBanco, clienteRpcNuncaChamado(), {
@@ -363,7 +428,8 @@ function clienteModeloEscolha(confirmacao?: string) {
     horario_texto: { acao: 'informar', valor: '10:00' },
   };
   if (confirmacao !== undefined) alteracoes.confirmacao = { acao: 'informar', valor: confirmacao };
-  return new ClienteModeloFalso([{ alteracoes }]);
+  const naturezaMensagem = confirmacao !== undefined ? 'resposta' : 'pedido';
+  return new ClienteModeloFalso([{ natureza_mensagem: naturezaMensagem, alteracoes }]);
 }
 
 test('paciente escolhe horario livre, sem confirmar: aguardando_confirmacao, nunca reserva', async () => {

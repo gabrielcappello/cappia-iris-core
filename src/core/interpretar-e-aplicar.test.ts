@@ -49,7 +49,7 @@ test('teste5: correcoes sucessivas resultam em uma unica alteracao final aplicad
   const clienteBanco = new ClienteFalso(tabelas);
   // simula o modelo ja tendo colapsado "quero limpeza, na verdade clareamento" em uma unica decisao final
   const clienteModelo = new ClienteModeloFalso([
-    { alteracoes: { procedimento_texto: { acao: 'informar', valor: 'clareamento' } } },
+    { natureza_mensagem: 'pedido', alteracoes: { procedimento_texto: { acao: 'informar', valor: 'clareamento' } } },
   ]);
 
   const resultado = await interpretarEAplicar(
@@ -68,7 +68,7 @@ test('teste6: ultima correcao cronologica prevalece (corrigir substitui o valor 
   const conversa = semearEstado(tabelas, { procedimento_texto: 'limpeza' });
   const clienteBanco = new ClienteFalso(tabelas);
   const clienteModelo = new ClienteModeloFalso([
-    { alteracoes: { procedimento_texto: { acao: 'corrigir', valor: 'clareamento' } } },
+    { natureza_mensagem: 'correcao', alteracoes: { procedimento_texto: { acao: 'corrigir', valor: 'clareamento' } } },
   ]);
 
   const resultado = await interpretarEAplicar(
@@ -85,7 +85,9 @@ test('teste7: retorno ao valor original gera informar e e aplicavel (nao conflit
   const tabelas = criarTabelasFalsasVazias();
   const conversa = semearEstado(tabelas, { nome: 'Joao' });
   const clienteBanco = new ClienteFalso(tabelas);
-  const clienteModelo = new ClienteModeloFalso([{ alteracoes: { nome: { acao: 'informar', valor: 'Joao' } } }]);
+  const clienteModelo = new ClienteModeloFalso([
+    { natureza_mensagem: 'resposta', alteracoes: { nome: { acao: 'informar', valor: 'Joao' } } },
+  ]);
 
   const resultado = await interpretarEAplicar(
     clienteModelo,
@@ -102,7 +104,7 @@ test('teste11: campo conflitante nao segue para aplicarDados', async () => {
   const conversa = semearEstado(tabelas, { procedimento_texto: 'limpeza' });
   const clienteBanco = new ClienteFalso(tabelas);
   const clienteModelo = new ClienteModeloFalso([
-    { alteracoes: { procedimento_texto: { acao: 'informar', valor: 'clareamento' } } },
+    { natureza_mensagem: 'pedido', alteracoes: { procedimento_texto: { acao: 'informar', valor: 'clareamento' } } },
   ]);
 
   const resultado = await interpretarEAplicar(clienteModelo, clienteBanco, contexto(conversa.id, ['tambem quero clareamento']));
@@ -134,7 +136,7 @@ test('teste26: alteracoes vazio nao chama aplicarDados', async () => {
   const tabelas = criarTabelasFalsasVazias();
   const conversa = semearEstado(tabelas, { nome: 'Joao' });
   const clienteBanco = new ClienteFalso(tabelas);
-  const clienteModelo = new ClienteModeloFalso([{ alteracoes: {} }]);
+  const clienteModelo = new ClienteModeloFalso([{ natureza_mensagem: 'duvida', alteracoes: {} }]);
 
   const resultado = await interpretarEAplicar(clienteModelo, clienteBanco, contexto(conversa.id, ['nao sei ainda']));
 
@@ -207,7 +209,7 @@ test('correcao4a: o modelo recebe o snapshot oficial lido do banco, nao um dados
   const tabelas = criarTabelasFalsasVazias();
   const conversa = semearEstado(tabelas, { procedimento_texto: 'limpeza' });
   const clienteBanco = new ClienteFalso(tabelas);
-  const clienteModelo = new ClienteModeloFalso([{ alteracoes: {} }]);
+  const clienteModelo = new ClienteModeloFalso([{ natureza_mensagem: 'saudacao', alteracoes: {} }]);
 
   await interpretarEAplicar(clienteModelo, clienteBanco, contexto(conversa.id, ['oi']));
 
@@ -249,6 +251,7 @@ test('correcao4c: divergencia durante a execucao gera conflito, remove o campo d
       linha.dados = { ...(linha.dados as Record<string, unknown>), data_texto: 'sabado' };
       // 2) modelo retorna data_texto informar sexta + nome informar Joao
       return {
+        natureza_mensagem: 'pedido',
         alteracoes: {
           data_texto: { acao: 'informar', valor: 'sexta' },
           nome: { acao: 'informar', valor: 'Joao' },

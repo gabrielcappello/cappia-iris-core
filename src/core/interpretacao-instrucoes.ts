@@ -1,4 +1,5 @@
 import { CAMPOS_PERMITIDOS, CONFIRMACOES_PERMITIDAS, INTENCOES_PERMITIDAS, PERIODOS_PERMITIDOS } from './aplicar-dados.ts';
+import { NATUREZAS_MENSAGEM_PERMITIDAS } from './interpretacao-tipos.ts';
 
 // Unico lugar onde o contrato dado ao modelo (instrucoes + schema) e
 // registrado. Qualquer mudanca de comportamento esperado da IA deve ser
@@ -28,12 +29,14 @@ Regras obrigatorias:
   - se o valor final da janela voltar a ser exatamente igual ao valor em dados_atuais, use "informar".
 - Nunca inclua confidence, justificativa, explicacao, resposta ao paciente ou qualquer texto dirigido ao proprio paciente.
 - Nunca decida o proximo estado da conversa.
-- Responda estritamente no formato do schema fornecido — nenhuma propriedade alem de "alteracoes" no nivel principal, nenhuma propriedade alem de "acao"/"valor" (ou somente "acao" para remover) dentro de cada alteracao.
+- Alem de "alteracoes", classifique tambem "natureza_mensagem": o tipo da mensagem atual, sempre um destes valores, nunca mais de um: "saudacao" (cumprimento puro, sem mais nenhum conteudo), "duvida" (pergunta ou comentario fora do vocabulario de agendamento — nunca responda como se fosse um profissional de saude, so classifique), "pedido" (a mensagem avanca o agendamento: procedimento, dentista, data, periodo ou horario), "resposta" (reage a algo que foi perguntado, ex.: escolha de horario, confirmacao, dado cadastral), "correcao" (corrige um dado ja informado antes), "negacao" (recusa ou desistencia explicita, sem pedir outra coisa no lugar), "nao_compreendida" (nao foi possivel classificar com seguranca em nenhuma das categorias acima). Em duvida real entre duas categorias, classifique como "nao_compreendida" — nunca adivinhe. "natureza_mensagem" e "alteracoes" sao preenchidos sempre juntos, na mesma resposta.
+- Responda estritamente no formato do schema fornecido — nenhuma propriedade alem de "natureza_mensagem" e "alteracoes" no nivel principal, nenhuma propriedade alem de "acao"/"valor" (ou somente "acao" para remover) dentro de cada alteracao.
 
 Campos permitidos: ${CAMPOS_PERMITIDOS.join(', ')}.
 Valores permitidos para periodo: ${PERIODOS_PERMITIDOS.join(', ')}.
 Valores permitidos para intencao: ${INTENCOES_PERMITIDAS.join(', ')}.
 Valores permitidos para confirmacao: ${CONFIRMACOES_PERMITIDAS.join(', ')}.
+Valores permitidos para natureza_mensagem: ${NATUREZAS_MENSAGEM_PERMITIDAS.join(', ')}.
 `.trim();
 
 function schemaValorCampo(campo: string): object {
@@ -54,8 +57,9 @@ function schemaValorCampo(campo: string): object {
 export const SCHEMA_SAIDA_INTERPRETACAO: object = {
   type: 'object',
   additionalProperties: false,
-  required: ['alteracoes'],
+  required: ['natureza_mensagem', 'alteracoes'],
   properties: {
+    natureza_mensagem: { type: 'string', enum: [...NATUREZAS_MENSAGEM_PERMITIDAS] },
     alteracoes: {
       type: 'object',
       additionalProperties: false,

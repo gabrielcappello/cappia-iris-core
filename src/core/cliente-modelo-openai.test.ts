@@ -32,10 +32,21 @@ function criarFetchFalso(geradores: Array<(opcoes: RequestInit) => Response | Pr
   return { fetchFalso, chamadas };
 }
 
-function respostaSucesso(alteracoesPortatil: unknown[], usage: Record<string, number> = { input_tokens: 1, output_tokens: 1 }) {
+function respostaSucesso(
+  alteracoesPortatil: unknown[],
+  usage: Record<string, number> = { input_tokens: 1, output_tokens: 1 },
+  naturezaMensagem: string = 'pedido'
+) {
   const corpo = {
     status: 'completed',
-    output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify({ alteracoes: alteracoesPortatil }) }] }],
+    output: [
+      {
+        type: 'message',
+        content: [
+          { type: 'output_text', text: JSON.stringify({ natureza_mensagem: naturezaMensagem, alteracoes: alteracoesPortatil }) },
+        ],
+      },
+    ],
     usage,
   };
   return new Response(JSON.stringify(corpo), { status: 200, headers: { 'Content-Type': 'application/json' } });
@@ -354,7 +365,7 @@ test('5: corpo HTTP realmente vazio gera resposta_vazia e permite no maximo um r
     const { fetchFalso, chamadas } = criarFetchFalso([() => respostaZeroBytes(), () => respostaSucesso([])]);
     const cliente = criarCliente({ fetch: fetchFalso });
     const resultado = await cliente.executar(entradaValida());
-    assert.deepEqual(resultado, { alteracoes: {} });
+    assert.deepEqual(resultado, { natureza_mensagem: 'pedido', alteracoes: {} });
     assert.equal(chamadas.length, 2);
   }
   // caso B: vazio duas vezes -> falha apos exatamente 2 chamadas
@@ -1067,6 +1078,7 @@ test('extra: executar() bem-sucedido devolve o mapa interno pronto para validarS
   const resultado = await cliente.executar(entradaValida());
 
   assert.deepEqual(resultado, {
+    natureza_mensagem: 'pedido',
     alteracoes: {
       procedimento_texto: { acao: 'informar', valor: 'limpeza' },
       cpf: { acao: 'remover' },
@@ -1192,7 +1204,7 @@ test('correcao1b: com orcamento generoso, a revalidacao apos a espera nao bloque
   const { fetchFalso, chamadas } = criarFetchFalso([() => respostaErroHttp(503, {}), () => respostaSucesso([])]);
   const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs: 40, esperaEntreTentativasMs: 5, prazoTotalMs: 5000 });
   const resultado = await cliente.executar(entradaValida());
-  assert.deepEqual(resultado, { alteracoes: {} });
+  assert.deepEqual(resultado, { natureza_mensagem: 'pedido', alteracoes: {} });
   assert.equal(chamadas.length, 2);
 });
 
@@ -1308,7 +1320,10 @@ test('correcao3c: resposta rapida dentro do prazo continua sendo aceita normalme
   const { fetchFalso } = criarFetchFalso([() => respostaSucesso([{ campo: 'nome', acao: 'informar', valor: 'Joao' }])]);
   const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs: 5000, esperaEntreTentativasMs: 5, prazoTotalMs: 5000 });
   const resultado = await cliente.executar(entradaValida());
-  assert.deepEqual(resultado, { alteracoes: { nome: { acao: 'informar', valor: 'Joao' } } });
+  assert.deepEqual(resultado, {
+    natureza_mensagem: 'pedido',
+    alteracoes: { nome: { acao: 'informar', valor: 'Joao' } },
+  });
 });
 
 // --- Correcao 4: Retry-After em segundos so no formato estrito ^[0-9]+$ ---
@@ -1822,7 +1837,13 @@ describe('testes que substituem globais (Date.now, JSON.parse, Date.parse) -- co
           {
             type: 'message',
             content: [
-              { type: 'output_text', text: JSON.stringify({ alteracoes: [{ campo: 'campo_desconhecido', acao: 'informar', valor: 'x' }] }) },
+              {
+                type: 'output_text',
+                text: JSON.stringify({
+                  natureza_mensagem: 'pedido',
+                  alteracoes: [{ campo: 'campo_desconhecido', acao: 'informar', valor: 'x' }],
+                }),
+              },
             ],
           },
         ],

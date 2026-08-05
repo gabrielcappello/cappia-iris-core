@@ -112,6 +112,7 @@ export async function interpretarEAplicar(
   }
 
   return {
+    natureza_mensagem: saida.natureza_mensagem,
     alteracoes_interpretadas: saida.alteracoes,
     alteracoes_aplicaveis: alteracoesAplicaveis,
     conflitos,

@@ -7,7 +7,7 @@ import { INSTRUCOES_EXTRATOR } from './interpretacao-instrucoes.ts';
 import { ClienteModeloFalso, ClienteModeloNuncaDeveSerChamado } from './teste-cliente-modelo-falso.ts';
 
 test('teste1: entrada com varias mensagens preserva a ordem exata enviada ao modelo', async () => {
-  const cliente = new ClienteModeloFalso([{ alteracoes: {} }]);
+  const cliente = new ClienteModeloFalso([{ natureza_mensagem: 'pedido', alteracoes: {} }]);
   const mensagens = ['quero limpeza', 'na verdade prefiro clareamento', 'pode ser sexta'];
 
   await extrairAlteracoes(cliente, { mensagens_atuais: mensagens, dados_atuais: {}, campos_cadastrais_preenchidos: [] });
@@ -17,6 +17,7 @@ test('teste1: entrada com varias mensagens preserva a ordem exata enviada ao mod
 
 test('teste2: varios campos em uma saida valida sao aceitos', async () => {
   const saida = {
+    natureza_mensagem: 'resposta',
     alteracoes: {
       nome: { acao: 'informar', valor: 'Joao' },
       cpf: { acao: 'informar', valor: '11122233344' },
@@ -31,7 +32,10 @@ test('teste2: varios campos em uma saida valida sao aceitos', async () => {
 });
 
 test('teste3: dois procedimentos coexistentes preservados em uma unica string', async () => {
-  const saida = { alteracoes: { procedimento_texto: { acao: 'informar', valor: 'limpeza e clareamento' } } };
+  const saida = {
+    natureza_mensagem: 'pedido',
+    alteracoes: { procedimento_texto: { acao: 'informar', valor: 'limpeza e clareamento' } },
+  };
   const cliente = new ClienteModeloFalso([saida]);
 
   const resultado = await extrairAlteracoes(cliente, { mensagens_atuais: ['quero limpeza e clareamento'], dados_atuais: {}, campos_cadastrais_preenchidos: [] });
@@ -40,7 +44,10 @@ test('teste3: dois procedimentos coexistentes preservados em uma unica string', 
 });
 
 test('teste4: dois dentistas alternativos preservados em uma unica string', async () => {
-  const saida = { alteracoes: { dentista_texto: { acao: 'informar', valor: 'Ana ou Carla' } } };
+  const saida = {
+    natureza_mensagem: 'pedido',
+    alteracoes: { dentista_texto: { acao: 'informar', valor: 'Ana ou Carla' } },
+  };
   const cliente = new ClienteModeloFalso([saida]);
 
   const resultado = await extrairAlteracoes(cliente, { mensagens_atuais: ['pode ser com Ana ou Carla'], dados_atuais: {}, campos_cadastrais_preenchidos: [] });
@@ -49,7 +56,7 @@ test('teste4: dois dentistas alternativos preservados em uma unica string', asyn
 });
 
 test('teste15: duvida real gera alteracoes vazio, que e uma saida valida', async () => {
-  const cliente = new ClienteModeloFalso([{ alteracoes: {} }]);
+  const cliente = new ClienteModeloFalso([{ natureza_mensagem: 'duvida', alteracoes: {} }]);
 
   const resultado = await extrairAlteracoes(cliente, { mensagens_atuais: ['nao sei ainda'], dados_atuais: {}, campos_cadastrais_preenchidos: [] });
 
@@ -68,7 +75,9 @@ test('teste16: as instrucoes registram explicitamente que periodo nao e inferido
 });
 
 test('teste17: campo nao mencionado fica ausente da saida interpretada', async () => {
-  const cliente = new ClienteModeloFalso([{ alteracoes: { nome: { acao: 'informar', valor: 'Joao' } } }]);
+  const cliente = new ClienteModeloFalso([
+    { natureza_mensagem: 'resposta', alteracoes: { nome: { acao: 'informar', valor: 'Joao' } } },
+  ]);
 
   const resultado = await extrairAlteracoes(cliente, { mensagens_atuais: ['sou o Joao'], dados_atuais: {}, campos_cadastrais_preenchidos: [] });
 
@@ -85,7 +94,9 @@ test('teste18: campo extra no nivel principal invalida tudo', async () => {
 });
 
 test('teste19: campo conversacional desconhecido invalida tudo', async () => {
-  const cliente = new ClienteModeloFalso([{ alteracoes: { telefone: { acao: 'informar', valor: '5511999999999' } } }]);
+  const cliente = new ClienteModeloFalso([
+    { natureza_mensagem: 'resposta', alteracoes: { telefone: { acao: 'informar', valor: '5511999999999' } } },
+  ]);
 
   await assert.rejects(
     () => extrairAlteracoes(cliente, { mensagens_atuais: ['oi'], dados_atuais: {}, campos_cadastrais_preenchidos: [] }),
@@ -94,7 +105,9 @@ test('teste19: campo conversacional desconhecido invalida tudo', async () => {
 });
 
 test('teste20: acao desconhecida invalida tudo', async () => {
-  const cliente = new ClienteModeloFalso([{ alteracoes: { nome: { acao: 'apagar_tudo', valor: 'x' } } }]);
+  const cliente = new ClienteModeloFalso([
+    { natureza_mensagem: 'resposta', alteracoes: { nome: { acao: 'apagar_tudo', valor: 'x' } } },
+  ]);
 
   await assert.rejects(
     () => extrairAlteracoes(cliente, { mensagens_atuais: ['oi'], dados_atuais: {}, campos_cadastrais_preenchidos: [] }),
@@ -104,7 +117,7 @@ test('teste20: acao desconhecida invalida tudo', async () => {
 
 test('teste21: propriedade interna extra invalida tudo', async () => {
   const cliente = new ClienteModeloFalso([
-    { alteracoes: { nome: { acao: 'informar', valor: 'Joao', confidence: 0.9 } } },
+    { natureza_mensagem: 'resposta', alteracoes: { nome: { acao: 'informar', valor: 'Joao', confidence: 0.9 } } },
   ]);
 
   await assert.rejects(
@@ -114,7 +127,9 @@ test('teste21: propriedade interna extra invalida tudo', async () => {
 });
 
 test('teste22: valor de tipo incorreto invalida tudo', async () => {
-  const cliente = new ClienteModeloFalso([{ alteracoes: { nome: { acao: 'informar', valor: 42 } } }]);
+  const cliente = new ClienteModeloFalso([
+    { natureza_mensagem: 'resposta', alteracoes: { nome: { acao: 'informar', valor: 42 } } },
+  ]);
 
   await assert.rejects(
     () => extrairAlteracoes(cliente, { mensagens_atuais: ['oi'], dados_atuais: {}, campos_cadastrais_preenchidos: [] }),
@@ -123,13 +138,17 @@ test('teste22: valor de tipo incorreto invalida tudo', async () => {
 });
 
 test('teste23: remover contendo valor invalida tudo (mesmo string vazia ou null)', async () => {
-  const clienteComValorVazio = new ClienteModeloFalso([{ alteracoes: { cpf: { acao: 'remover', valor: '' } } }]);
+  const clienteComValorVazio = new ClienteModeloFalso([
+    { natureza_mensagem: 'resposta', alteracoes: { cpf: { acao: 'remover', valor: '' } } },
+  ]);
   await assert.rejects(
     () => extrairAlteracoes(clienteComValorVazio, { mensagens_atuais: ['oi'], dados_atuais: {}, campos_cadastrais_preenchidos: [] }),
     InterpretacaoInvalidaError
   );
 
-  const clienteComValorNull = new ClienteModeloFalso([{ alteracoes: { cpf: { acao: 'remover', valor: null } } }]);
+  const clienteComValorNull = new ClienteModeloFalso([
+    { natureza_mensagem: 'resposta', alteracoes: { cpf: { acao: 'remover', valor: null } } },
+  ]);
   await assert.rejects(
     () => extrairAlteracoes(clienteComValorNull, { mensagens_atuais: ['oi'], dados_atuais: {}, campos_cadastrais_preenchidos: [] }),
     InterpretacaoInvalidaError
@@ -166,6 +185,7 @@ test('teste29a: erro de saida invalida nao contem PII nem resposta bruta do mode
 
   const cliente = new ClienteModeloFalso([
     {
+      natureza_mensagem: 'resposta',
       alteracoes: {
         nome: { acao: 'informar', valor: nomeReal },
         cpf: { acao: 'informar', valor: cpfReal },
@@ -228,7 +248,7 @@ test('correcao1: entrada com propriedade extra (telefone) e rejeitada; modelo na
 });
 
 test('correcao1: payload enviado ao modelo contem exatamente as tres chaves do contrato', async () => {
-  const cliente = new ClienteModeloFalso([{ alteracoes: {} }]);
+  const cliente = new ClienteModeloFalso([{ natureza_mensagem: 'pedido', alteracoes: {} }]);
 
   await extrairAlteracoes(cliente, {
     mensagens_atuais: ['oi'],
@@ -247,7 +267,9 @@ test('correcao1: payload enviado ao modelo contem exatamente as tres chaves do c
 
 test('correcao3: chave desconhecida contendo nome, CPF e e-mail no proprio nome nunca aparece no erro', async () => {
   const chavePerigosa = 'nome_Maria_Silva_cpf_12345678900_email_maria.silva@example.com';
-  const cliente = new ClienteModeloFalso([{ alteracoes: { [chavePerigosa]: { acao: 'informar', valor: 'x' } } }]);
+  const cliente = new ClienteModeloFalso([
+    { natureza_mensagem: 'resposta', alteracoes: { [chavePerigosa]: { acao: 'informar', valor: 'x' } } },
+  ]);
 
   let erroCapturado: unknown;
   try {

@@ -86,7 +86,7 @@ test('INT-11: estado oficial com cadastro completo nao vaza nenhum valor para o 
   const tabelas = criarTabelasFalsasVazias();
   const conversa = semearEstado(tabelas, SNAPSHOT_COM_CADASTRO_COMPLETO);
   const clienteBanco = new ClienteFalso(tabelas);
-  const clienteModelo = new ClienteModeloFalso([{ alteracoes: {} }]);
+  const clienteModelo = new ClienteModeloFalso([{ natureza_mensagem: 'pedido', alteracoes: {} }]);
 
   await interpretarEAplicar(clienteModelo, clienteBanco, {
     conversa_id: conversa.id,
@@ -110,7 +110,7 @@ test('INT-11: nenhum objeto cadastral completo e transmitido -- dados_atuais so 
   const tabelas = criarTabelasFalsasVazias();
   const conversa = semearEstado(tabelas, SNAPSHOT_COM_CADASTRO_COMPLETO);
   const clienteBanco = new ClienteFalso(tabelas);
-  const clienteModelo = new ClienteModeloFalso([{ alteracoes: {} }]);
+  const clienteModelo = new ClienteModeloFalso([{ natureza_mensagem: 'pedido', alteracoes: {} }]);
 
   await interpretarEAplicar(clienteModelo, clienteBanco, {
     conversa_id: conversa.id,
@@ -133,7 +133,7 @@ test('INT-11: a mensagem atual permanece presente e intacta no payload', async (
   const tabelas = criarTabelasFalsasVazias();
   const conversa = semearEstado(tabelas, SNAPSHOT_COM_CADASTRO_COMPLETO);
   const clienteBanco = new ClienteFalso(tabelas);
-  const clienteModelo = new ClienteModeloFalso([{ alteracoes: {} }]);
+  const clienteModelo = new ClienteModeloFalso([{ natureza_mensagem: 'pedido', alteracoes: {} }]);
 
   // O paciente pode digitar dados cadastrais no turno atual: isso e a
   // mensagem dele, nao um valor oficial reenviado como contexto.
@@ -153,7 +153,7 @@ test('INT-11: valor informado na mensagem atual nao e recopiado do estado oficia
   const tabelas = criarTabelasFalsasVazias();
   const conversa = semearEstado(tabelas, SNAPSHOT_COM_CADASTRO_COMPLETO);
   const clienteBanco = new ClienteFalso(tabelas);
-  const clienteModelo = new ClienteModeloFalso([{ alteracoes: {} }]);
+  const clienteModelo = new ClienteModeloFalso([{ natureza_mensagem: 'pedido', alteracoes: {} }]);
 
   await interpretarEAplicar(clienteModelo, clienteBanco, {
     conversa_id: conversa.id,
@@ -327,7 +327,7 @@ test('INT-12: indicadores derivados do estado oficial chegam corretos ao modelo'
   const tabelas = criarTabelasFalsasVazias();
   const conversa = semearEstado(tabelas, { nome: NOME_SINTETICO, cpf: CPF_SINTETICO });
   const clienteBanco = new ClienteFalso(tabelas);
-  const clienteModelo = new ClienteModeloFalso([{ alteracoes: {} }]);
+  const clienteModelo = new ClienteModeloFalso([{ natureza_mensagem: 'pedido', alteracoes: {} }]);
 
   await interpretarEAplicar(clienteModelo, clienteBanco, {
     conversa_id: conversa.id,
@@ -355,7 +355,12 @@ function criarFetchCapturador() {
     return new Response(
       JSON.stringify({
         status: 'completed',
-        output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify({ alteracoes: [] }) }] }],
+        output: [
+          {
+            type: 'message',
+            content: [{ type: 'output_text', text: JSON.stringify({ natureza_mensagem: 'pedido', alteracoes: [] }) }],
+          },
+        ],
         usage: { input_tokens: 1, output_tokens: 1 },
       }),
       { status: 200, headers: { 'Content-Type': 'application/json' } }

@@ -8,17 +8,19 @@
 //
 // Escopo (decisao do Gabriel): os quatro estados originais do "caminho
 // feliz" -- horarios_disponiveis, aguardando_confirmacao, reserva_criada,
-// reserva_conflito -- mais dois estados de comportamento conversacional
-// minimo, acrescentados em 2026-08-05: saudacao e aguardando_procedimento
-// (nunca mais retornam resposta:null ao paciente). Os outros nove estados
-// de DecisaoOrquestrador NAO sao aceitos por este modulo -- o parametro so
-// tipa os seis cobertos, entao qualquer outro estado e erro de compilacao
-// no chamador, nunca um fallback generico em tempo de execucao.
+// reserva_conflito -- mais cinco estados de comportamento conversacional
+// minimo (2026-08-05: saudacao, aguardando_procedimento; 2026-08-05,
+// specs/interpretacao-natureza-mensagem-v1.md: duvida_livre,
+// mensagem_nao_compreendida, desistencia) -- nenhum deles retorna
+// resposta:null ao paciente. Os outros seis estados de DecisaoOrquestrador
+// NAO sao aceitos por este modulo -- o parametro so tipa os nove
+// cobertos, entao qualquer outro estado e erro de compilacao no chamador,
+// nunca um fallback generico em tempo de execucao.
 
 import type { DecisaoOrquestrador } from './orquestrador-tipos.ts';
 import type { OpcaoHorario, ResultadoDisponibilidade } from './disponibilidade-tipos.ts';
 
-/** Exatamente os seis estados cobertos -- nenhum outro tipa aqui. */
+/** Exatamente os nove estados cobertos -- nenhum outro tipa aqui. */
 export type DecisaoCaminhoFeliz = Extract<
   DecisaoOrquestrador,
   {
@@ -28,7 +30,10 @@ export type DecisaoCaminhoFeliz = Extract<
       | 'reserva_criada'
       | 'reserva_conflito'
       | 'saudacao'
-      | 'aguardando_procedimento';
+      | 'aguardando_procedimento'
+      | 'duvida_livre'
+      | 'mensagem_nao_compreendida'
+      | 'desistencia';
   }
 >;
 
@@ -50,6 +55,17 @@ export function gerarRespostaPaciente(decisao: DecisaoCaminhoFeliz): string {
       // nunca revelar se um procedimento existe mas esta inativo/desativado
       // -- por isso uma unica pergunta, igual para os quatro.
       return 'Qual procedimento ou atendimento você está buscando?';
+    case 'duvida_livre':
+      // Situacao "Conversa basica" (atendimento-v1.md secao 5): acolhe sem
+      // opinar clinicamente e redireciona pro agendamento -- nunca inventa
+      // fato sobre o que foi perguntado (a decisao nao carrega esse dado).
+      return 'Posso te ajudar a agendar uma consulta. Me conta qual procedimento você precisa.';
+    case 'mensagem_nao_compreendida':
+      return 'Desculpa, não entendi. Pode explicar de outro jeito?';
+    case 'desistencia':
+      // Situacao "Desistencia" (atendimento-v1.md secao 5): encerra com
+      // cordialidade, nunca trata como cancelamento de agendamento existente.
+      return 'Sem problemas! Se precisar, é só chamar.';
   }
 }
 

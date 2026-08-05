@@ -70,11 +70,37 @@ export interface EntradaInterpretacao {
   campos_cadastrais_preenchidos: CampoCadastralInterpretacao[];
 }
 
-// Saida exata esperada do modelo: somente `alteracoes`, no mesmo formato
-// que aplicarDados ja aceita. `alteracoes` continua aceitando os dez
-// campos -- o paciente pode informar nome/cpf/nascimento/email na
-// mensagem ATUAL, e o Core compara contra o valor oficial do servidor.
+// Classificacao fechada do TIPO da mensagem atual (specs/interpretacao-
+// natureza-mensagem-v1.md). Nunca decide nada por si so -- serve somente
+// para o Core escolher a acao comunicativa quando `alteracoes` desta
+// mensagem estiver vazio (mesma spec, secao 3: `alteracoes` sempre tem
+// precedencia sobre `natureza_mensagem` para a evolucao do fluxo).
+export type NaturezaMensagem =
+  | 'saudacao'
+  | 'duvida'
+  | 'pedido'
+  | 'resposta'
+  | 'correcao'
+  | 'negacao'
+  | 'nao_compreendida';
+
+export const NATUREZAS_MENSAGEM_PERMITIDAS: readonly NaturezaMensagem[] = [
+  'saudacao',
+  'duvida',
+  'pedido',
+  'resposta',
+  'correcao',
+  'negacao',
+  'nao_compreendida',
+];
+
+// Saida exata esperada do modelo: `natureza_mensagem` (obrigatorio, sempre
+// presente) e `alteracoes` (mesmo formato que aplicarDados ja aceita, pode
+// vir vazio). `alteracoes` continua aceitando os dez campos -- o paciente
+// pode informar nome/cpf/nascimento/email na mensagem ATUAL, e o Core
+// compara contra o valor oficial do servidor.
 export interface SaidaInterpretacao {
+  natureza_mensagem: NaturezaMensagem;
   alteracoes: AlteracoesDados;
 }
 
@@ -95,6 +121,7 @@ export interface ResultadoPreAplicacao {
 }
 
 export interface ResultadoInterpretacao {
+  natureza_mensagem: NaturezaMensagem;
   alteracoes_interpretadas: AlteracoesDados;
   alteracoes_aplicaveis: AlteracoesDados;
   conflitos: Conflito[];
