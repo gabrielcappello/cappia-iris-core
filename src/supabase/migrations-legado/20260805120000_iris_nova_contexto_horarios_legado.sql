@@ -1,0 +1,55 @@
+-- Iris Nova - contexto de horarios oferecidos em estado_conversa (banco
+-- operacional legado, udizowyfjnhuhgxkeayk).
+--
+-- Projeto-alvo: udizowyfjnhuhgxkeayk (banco operacional real, com painel e
+-- WhatsApp ativo). PROIBIDO aplicar em bcmuqautblvjdqzhjfbw (ambiente
+-- isolado de desenvolvimento e testes da Iris Nova, que tem migration
+-- irma propria em src/supabase/migrations/) ou em qualquer outro projeto.
+-- Pasta separada (migrations-legado/) pelo mesmo motivo das migrations
+-- irmas de 2026-08-04: evitar mistura com a convencao de
+-- src/supabase/migrations/, cujo alvo e bcmuqautblvjdqzhjfbw.
+--
+-- Base normativa: specs/contexto-pendente-interpretacao-v1.md (V1, escopo
+-- estritamente restrito a horario).
+--
+-- Origem: achado real via WhatsApp em 2026-08-05. Com a Iris oferecendo
+-- "13:00, 14:00, 15:00, 16:00" e o paciente respondendo "15 hrs", a IA nao
+-- recebia nenhuma informacao sobre a pergunta pendente nem sobre os
+-- horarios oferecidos -- confirmado por captura do payload real enviado a
+-- OpenAI, nao por suposicao. Sem esse contexto, "15 hrs" isolado e
+-- ambiguo, a IA omite o campo pela regra correta de "em duvida real,
+-- omita", e o Core repete a mesma lista indefinidamente.
+--
+-- ESCOPO -- estritamente aditivo, 1 tabela, 1 coluna, nenhum dado alterado,
+-- nenhuma constraint, nenhuma mudanca de ACL ou RLS:
+--
+--   estado_conversa.contexto_horarios (jsonb, nullable): snapshot minimo
+--   {horarios: string[], criado_em: string} dos horarios que o Core
+--   apresentou ao paciente na ultima pergunta gerada. Server-only: lido e
+--   escrito somente pela Edge Function via service_role, nunca exposto ao
+--   paciente nem enviado a IA em outra forma que nao a lista de horarios.
+--
+-- Nullable e sem default de proposito: "nenhuma lista oferecida ainda" se
+-- representa pela AUSENCIA do snapshot (NULL), nunca por um objeto vazio --
+-- em conversa nova a coluna nasce NULL e so passa a existir depois que uma
+-- lista foi de fato gerada.
+--
+-- FORA DE ESCOPO nesta migration: qualquer coluna de dentista
+-- (dentista_id_resolvido), contador de revisao (contexto_revisao),
+-- pergunta_pendente, etapa_pendente ou generalizacao para outros tipos de
+-- opcao -- todos cortados da V1 por decisao explicita do Gabriel em
+-- 2026-08-05 (spec secao 8) e nao voltam sem spec propria.
+--
+-- RLS: nenhuma alteracao. `estado_conversa` ja tem RLS ativa sem policy e
+-- GRANT explicito para service_role (migrations 20260804205444 e
+-- 20260804220000) -- uma coluna nova herda exatamente esse regime.
+--
+-- PREFLIGHT (executar imediatamente antes de aplicar): confirmar que
+-- `contexto_horarios` ainda nao existe em `estado_conversa`. Nenhum ADD
+-- COLUMN usa IF NOT EXISTS: colisao de nome falha explicitamente em vez de
+-- ser ignorada em silencio.
+--
+-- NAO APLICADA em nenhum projeto no momento desta escrita.
+
+alter table estado_conversa
+  add column contexto_horarios jsonb;

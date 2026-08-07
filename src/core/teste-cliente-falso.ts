@@ -208,7 +208,12 @@ export class ClienteFalso implements ClienteBancoDados {
           }
           return new ConsultaFalsa(linhas, [], { message: 'conflito de unicidade' });
         }
-        const nova = { id: crypto.randomUUID(), ...valores };
+        // `estado_conversa.atualizado_em` e `not null default now()` no
+        // schema real -- o dublê precisa aplicar o mesmo default no insert,
+        // senao a linha volta sem o campo e a validacao de identificacao
+        // (que exige atualizado_em) falharia so aqui, nunca em producao.
+        const padroes = nome === 'estado_conversa' ? { atualizado_em: new Date().toISOString() } : {};
+        const nova = { id: crypto.randomUUID(), ...padroes, ...valores };
         linhas.push(nova);
         return new ConsultaFalsa(linhas, [nova], null);
       },

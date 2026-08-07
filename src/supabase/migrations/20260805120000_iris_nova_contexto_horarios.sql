@@ -1,0 +1,38 @@
+-- Iris Nova - contexto de horarios oferecidos em estado_conversa.
+--
+-- Projeto-alvo: cappia-iris-core-dev (bcmuqautblvjdqzhjfbw) -- ambiente
+-- isolado de desenvolvimento e testes da Iris Nova, mantido por decisao
+-- explicita. PROIBIDO aplicar em udizowyfjnhuhgxkeayk, que tem migration
+-- irma propria em src/supabase/migrations-legado/ (mesma coluna, mesmo
+-- efeito, arquivo separado pela convencao ja estabelecida de pastas por
+-- projeto-alvo).
+--
+-- Base normativa: specs/contexto-pendente-interpretacao-v1.md (V1, escopo
+-- estritamente restrito a horario).
+--
+-- ESCOPO -- estritamente aditivo, 1 tabela, 1 coluna, nenhum dado alterado,
+-- nenhuma constraint, nenhuma mudanca de ACL ou RLS:
+--
+--   estado_conversa.contexto_horarios (jsonb, nullable): snapshot minimo
+--   {horarios: string[], criado_em: string} dos horarios que o Core
+--   apresentou ao paciente na ultima pergunta gerada. Server-only.
+--
+-- Nullable e sem default de proposito: "nenhuma lista oferecida ainda" se
+-- representa pela AUSENCIA do snapshot (NULL), nunca por um objeto vazio.
+--
+-- FORA DE ESCOPO: dentista_id_resolvido, contexto_revisao,
+-- pergunta_pendente, etapa_pendente e generalizacao para outros tipos de
+-- opcao -- cortados da V1 por decisao explicita do Gabriel (spec secao 8).
+--
+-- RLS: nenhuma alteracao. `estado_conversa` ja tem RLS ativa sem policy
+-- (20260729_iris_nova_identificacao_v1.sql) -- uma coluna nova herda
+-- exatamente esse regime: so service_role, que ignora RLS, acessa.
+--
+-- PREFLIGHT (executar imediatamente antes de aplicar): confirmar que
+-- `contexto_horarios` ainda nao existe em `estado_conversa`. Nenhum ADD
+-- COLUMN usa IF NOT EXISTS: colisao de nome falha explicitamente.
+--
+-- NAO APLICADA em nenhum projeto no momento desta escrita.
+
+alter table estado_conversa
+  add column contexto_horarios jsonb;

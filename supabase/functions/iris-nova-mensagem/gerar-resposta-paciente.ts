@@ -6,18 +6,26 @@
 // a decisao nao os carrega (so IDs) e este modulo nao busca nada por conta
 // propria (nenhuma nova consulta, nenhuma nova arquitetura).
 //
-// Escopo (decisao do Gabriel): os quatro estados originais do "caminho
-// feliz" -- horarios_disponiveis, aguardando_confirmacao, reserva_criada,
+// Escopo: os quatro estados originais do "caminho feliz" --
+// horarios_disponiveis, aguardando_confirmacao, reserva_criada,
 // reserva_conflito -- mais cinco estados de comportamento conversacional
 // minimo (2026-08-05: saudacao, aguardando_procedimento; 2026-08-05,
 // specs/interpretacao-natureza-mensagem-v1.md: duvida_livre,
 // mensagem_nao_compreendida, desistencia) -- mais aguardando_data_horario
 // (2026-08-05, auditoria dos 6 tipos/31 motivos de ResultadoResolucaoTemporal
-// que chegam aqui) -- nenhum deles retorna resposta:null ao paciente. Os
-// outros cinco estados de DecisaoOrquestrador NAO sao aceitos por este
-// modulo -- o parametro so tipa os dez cobertos, entao qualquer outro
-// estado e erro de compilacao no chamador, nunca um fallback generico em
-// tempo de execucao.
+// que chegam aqui) -- mais, desde 2026-08-06
+// (specs/resposta-conversacional-v1.md secao 6), os NOVE estados restantes:
+// aguardando_escolha_dentista, cadastro_necessario e sem_dentista_disponivel
+// tem texto proprio (situacoes de conversa normal, nunca falha); os outros
+// seis (clinica_sem_catalogo, erro_catalogo_procedimento,
+// erro_catalogo_dentista, duracao_nao_configurada, erro_configuracao_duracao,
+// reserva_falhou) sao falha tecnica real e compartilham uma unica frase
+// honesta. Este modulo agora cobre os 19 tipos de DecisaoOrquestrador por
+// completo -- nenhum deles retorna resposta:null. Desde a mesma data, este
+// e o FALLBACK deterministico (specs/resposta-conversacional-v1.md secao 6):
+// o caminho normal e a IA redatora (gerar-resposta-conversacional.ts); este
+// modulo so e chamado quando ela falha, e reprovada pela guarda, ou nao
+// esta configurada.
 
 import type { DecisaoOrquestrador } from './orquestrador-tipos.ts';
 import type { OpcaoHorario, ResultadoDisponibilidade } from './disponibilidade-tipos.ts';
@@ -29,25 +37,20 @@ import type {
   ResultadoResolucaoTemporal,
 } from './temporal-tipos.ts';
 
-/** Exatamente os dez estados cobertos -- nenhum outro tipa aqui. */
-export type DecisaoCaminhoFeliz = Extract<
-  DecisaoOrquestrador,
-  {
-    tipo:
-      | 'horarios_disponiveis'
-      | 'aguardando_confirmacao'
-      | 'reserva_criada'
-      | 'reserva_conflito'
-      | 'saudacao'
-      | 'aguardando_procedimento'
-      | 'duvida_livre'
-      | 'mensagem_nao_compreendida'
-      | 'desistencia'
-      | 'aguardando_data_horario';
-  }
->;
+/**
+ * Mantido como alias documental (era um subconjunto restrito antes de
+ * 2026-08-06) -- gerarRespostaPaciente agora cobre os 19 tipos por
+ * completo, entao a restricao deixou de existir. O nome permanece porque
+ * chamadores existentes (index.ts) ja o referenciam.
+ */
+export type DecisaoCaminhoFeliz = DecisaoOrquestrador;
 
-export function gerarRespostaPaciente(decisao: DecisaoCaminhoFeliz): string {
+// Os seis estados de falha tecnica REAL (nunca duvida do paciente) --
+// compartilham uma unica frase honesta, nunca expondo o motivo tecnico
+// bruto (specs/resposta-conversacional-v1.md secao 6).
+const RESPOSTA_FALHA_TECNICA_GENERICA = 'Tive um problema técnico agora. Pode tentar de novo em instantes?';
+
+export function gerarRespostaPaciente(decisao: DecisaoOrquestrador): string {
   switch (decisao.tipo) {
     case 'horarios_disponiveis':
       return respostaHorariosDisponiveis(decisao.resultado);
@@ -78,6 +81,25 @@ export function gerarRespostaPaciente(decisao: DecisaoCaminhoFeliz): string {
       return 'Sem problemas! Se precisar, é só chamar.';
     case 'aguardando_data_horario':
       return respostaAguardandoDataHorario(decisao.resultado);
+    // --- Os tres estados de conversa normal (2026-08-06) ---
+    case 'aguardando_escolha_dentista':
+      // dentistas ja vem com nome_exibido (dentista-tipos.ts) -- dado de
+      // catalogo, nunca PII do paciente.
+      return `Encontrei mais de um profissional para esse atendimento: ${decisao.dentistas
+        .map((d) => d.nome_exibido)
+        .join(', ')}. Qual você prefere?`;
+    case 'cadastro_necessario':
+      return 'Para confirmar esse agendamento, preciso completar seu cadastro antes. Pode me passar seu nome completo?';
+    case 'sem_dentista_disponivel':
+      return 'Não encontrei nenhum profissional disponível para esse atendimento. Posso verificar uma Consulta/Avaliação em vez disso?';
+    // --- Os seis estados de falha tecnica real (2026-08-06) ---
+    case 'clinica_sem_catalogo':
+    case 'erro_catalogo_procedimento':
+    case 'erro_catalogo_dentista':
+    case 'duracao_nao_configurada':
+    case 'erro_configuracao_duracao':
+    case 'reserva_falhou':
+      return RESPOSTA_FALHA_TECNICA_GENERICA;
   }
 }
 
@@ -238,7 +260,11 @@ function formatarOpcao(opcao: OpcaoHorario): string {
 // resultado da RPC) -- manipulacao de string pura, sem Date, sem fuso: o
 // mesmo principio ja aplicado em todo o nucleo (nunca le relogio, nunca
 // depende do ambiente).
-function formatarData(dataIso: string): string {
+//
+// Exportada (aditivo, 2026-08-06) para que fatos-autorizados.ts formate
+// datas EXATAMENTE como o paciente ve no texto -- mesmo principio ja usado
+// para formatarMinutos.
+export function formatarData(dataIso: string): string {
   const [, mes, dia] = dataIso.split('-');
   return `${dia}/${mes}`;
 }
@@ -248,7 +274,12 @@ function formatarData(dataIso: string): string {
 // aqui, mesmo principio ja usado em carregar-disponibilidade.ts para
 // diaDaSemanaLocal (nao tocar num arquivo fora de escopo so para reusar uma
 // funcao privada de 3 linhas).
-function formatarMinutos(minutos: number): string {
+//
+// Exportada (aditivo, 2026-08-05) para que contexto-horarios.ts grave o
+// snapshot com EXATAMENTE a mesma formatacao que o paciente viu no texto --
+// a spec exige "mesma funcao", nunca reconstruir a partir do texto nem uma
+// terceira copia destas 4 linhas.
+export function formatarMinutos(minutos: number): string {
   const hora = Math.floor(minutos / 60);
   const minuto = minutos % 60;
   return `${String(hora).padStart(2, '0')}:${String(minuto).padStart(2, '0')}`;

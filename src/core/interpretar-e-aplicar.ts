@@ -17,9 +17,24 @@ import type {
 
 export interface InterpretarEAplicarInput extends ContextoConversa {
   mensagens_atuais: string[];
+  /**
+   * Horarios ja apresentados ao paciente na ultima pergunta gerada
+   * (contexto-horarios.ts). Repassado a IA como contexto de interpretacao;
+   * nunca influencia persistencia, disponibilidade ou reserva.
+   */
+  horarios_oferecidos?: string[];
+  /**
+   * Proposta concreta (data + horario) que o Core apresentou ao paciente na
+   * ultima pergunta gerada, aguardando confirmacao (contexto-horarios.ts,
+   * acao `propor`). Repassado a IA para a regra de confirmacao por
+   * significado (specs/resposta-conversacional-v1.md secao 5); nunca
+   * influencia persistencia, disponibilidade ou reserva.
+   */
+  proposta_pendente?: { data: string; horario: string };
 }
 
 const CHAVES_ENTRADA_INTEGRADA = ['conversa_id', 'clinica_id', 'telefone_normalizado', 'mensagens_atuais'] as const;
+const CHAVES_OPCIONAIS_INTEGRADA = ['horarios_oferecidos', 'proposta_pendente'] as const;
 
 /**
  * Orquestracao minima: valida o contexto (reutilizando a validacao
@@ -63,7 +78,7 @@ export async function interpretarEAplicar(
   // reconciliacao adiante.
   const saida = await extrairAlteracoes(
     clienteModelo,
-    construirEntradaMinimizada(entrada.mensagens_atuais, snapshotOficial)
+    construirEntradaMinimizada(entrada.mensagens_atuais, snapshotOficial, entrada.horarios_oferecidos, entrada.proposta_pendente)
   );
 
   // 6. pre-aplicacao deterministica usando o mesmo snapshot.
@@ -125,12 +140,17 @@ function validarFormaEntradaIntegrada(entrada: unknown): asserts entrada is Inte
     throw new EntradaInvalidaError('entrada', 'entrada deve ser um objeto');
   }
 
-  // Entrada fechada: somente os quatro campos abaixo. `dados_atuais` (ou
-  // qualquer outra chave) e tratado como propriedade extra e rejeitado --
-  // o chamador nunca fornece o snapshot, ele e sempre lido do banco.
+  // Entrada fechada: somente os quatro campos obrigatorios mais
+  // `horarios_oferecidos` (opcional). `dados_atuais` (ou qualquer outra
+  // chave) e tratado como propriedade extra e rejeitado -- o chamador nunca
+  // fornece o snapshot de dados, ele e sempre lido do banco.
   const chaves = Object.keys(entrada as Record<string, unknown>);
-  const chavesEsperadas: readonly string[] = CHAVES_ENTRADA_INTEGRADA;
-  if (chaves.length !== chavesEsperadas.length || !chavesEsperadas.every((chave) => chaves.includes(chave))) {
+  const obrigatorias: readonly string[] = CHAVES_ENTRADA_INTEGRADA;
+  const permitidas: readonly string[] = [...CHAVES_ENTRADA_INTEGRADA, ...CHAVES_OPCIONAIS_INTEGRADA];
+  if (!obrigatorias.every((chave) => chaves.includes(chave))) {
+    throw new EntradaInvalidaError('entrada', 'entrada integrada nao contem todas as chaves obrigatorias');
+  }
+  if (!chaves.every((chave) => permitidas.includes(chave))) {
     throw new EntradaInvalidaError('entrada', 'entrada integrada contem propriedade nao permitida');
   }
 }

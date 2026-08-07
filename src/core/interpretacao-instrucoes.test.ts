@@ -34,9 +34,22 @@ test('schema: confirmacao nao tem minLength solto (nao cai no fallback de string
 });
 
 test('instrucoes: explicam quando emitir confirmacao e quando omitir', () => {
-  assert.match(INSTRUCOES_EXTRATOR, /confirmacao = sim somente quando o paciente confirmar afirmativamente/);
   assert.match(INSTRUCOES_EXTRATOR, /duvida, pergunta, hesitacao ou resposta negativa/);
   assert.match(INSTRUCOES_EXTRATOR, /Valores permitidos para confirmacao: sim\./);
+});
+
+// specs/resposta-conversacional-v1.md secao 5 (2026-08-06): a regra deixou
+// de ser um repertorio fechado de frases -- agora depende de
+// "proposta_pendente" estar presente no payload.
+test('instrucoes: confirmacao por significado depende de proposta_pendente, sem repertorio fechado', () => {
+  assert.match(INSTRUCOES_EXTRATOR, /"proposta_pendente" estiver presente no payload/);
+  assert.match(INSTRUCOES_EXTRATOR, /sem repertorio fechado de frases/);
+  assert.match(INSTRUCOES_EXTRATOR, /"ok", "certo", "fechado", "esse mesmo", "pode ser"/);
+  assert.match(INSTRUCOES_EXTRATOR, /NAO estiver presente no payload.*NUNCA emite confirmacao = sim/s);
+});
+
+test('instrucoes: proposta_pendente nunca e copiado para data_texto/horario_texto por conta propria', () => {
+  assert.match(INSTRUCOES_EXTRATOR, /nunca copie proposta_pendente\.data ou proposta_pendente\.horario/);
 });
 
 test('instrucoes: nunca instruem a emitir confirmacao para negativa', () => {

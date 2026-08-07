@@ -64,10 +64,28 @@ export type SnapshotOficialConversa = Partial<Record<CampoDadosConversa, string>
 //
 // `dados_atuais` e tipado sobre o conjunto fechado dos campos
 // operacionais: um campo cadastral nao tem onde ser transportado aqui.
+//
+// `horarios_oferecidos` (specs/contexto-pendente-interpretacao-v1.md) e a
+// lista de horarios que o Core apresentou ao paciente na ultima pergunta
+// gerada, na ordem exata em que apareceram -- e o que permite a IA
+// interpretar "15", "15 hrs", "quinze horas" ou "o segundo". AUSENTE quando
+// nao ha snapshot. Nunca autoriza reserva e nunca e fonte de
+// disponibilidade: o Core recalcula tudo antes de agir.
+//
+// `proposta_pendente` (specs/resposta-conversacional-v1.md secao 5) e a
+// data/horario que o Core propos ao paciente na ultima pergunta gerada,
+// aguardando confirmacao explicita -- e o que permite a IA reconhecer uma
+// concordancia semanticamente clara ("ok", "pode confirmar", "esse mesmo")
+// como confirmacao = sim para ESSA proposta especifica, mesmo quando a
+// mensagem nao repete data nem horario. AUSENTE quando nao ha proposta em
+// aberto -- nesse caso uma concordancia solta nunca confirma agendamento
+// (regra de confirmacao em interpretacao-instrucoes.ts).
 export interface EntradaInterpretacao {
   mensagens_atuais: string[];
   dados_atuais: Partial<Record<CampoOperacionalInterpretacao, string>>;
   campos_cadastrais_preenchidos: CampoCadastralInterpretacao[];
+  horarios_oferecidos?: string[];
+  proposta_pendente?: { data: string; horario: string };
 }
 
 // Classificacao fechada do TIPO da mensagem atual (specs/interpretacao-

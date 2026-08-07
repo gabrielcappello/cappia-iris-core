@@ -6,10 +6,11 @@
 import type { AliasProcedimento, ProcedimentoOficial, ResultadoResolucaoProcedimento } from './procedimento-tipos.ts';
 import type { DentistaApto, DentistaOficial, ResultadoResolucaoDentista, VinculoDentistaProcedimento } from './dentista-tipos.ts';
 import type { ConfiguracaoDuracao, ResultadoResolucaoDuracao } from './duracao-tipos.ts';
-import type { Conflito } from './interpretacao-tipos.ts';
+import type { Conflito, NaturezaMensagem } from './interpretacao-tipos.ts';
 import type { InstanteAtual, OpcaoHorario, ResultadoDisponibilidade } from './disponibilidade-tipos.ts';
 import type { ResultadoResolucaoTemporal } from './temporal-tipos.ts';
 import type { MotivoErroReserva } from './reservar-agendamento.ts';
+import type { UltimaTroca } from './tipos.ts';
 
 /**
  * Catalogo de UMA clinica. Montado internamente pelo orquestrador, via
@@ -123,4 +124,27 @@ export interface ResultadoOrquestrador {
   conversa_id: string;
   conflitos: readonly Conflito[];
   decisao: DecisaoOrquestrador;
+  /**
+   * `atualizado_em` da linha APOS a gravacao do snapshot de horarios desta
+   * mensagem -- o valor que `gravarContextoHorarios` devolveu (ver seu
+   * comentario para o contrato de 3 casos). Exposto (aditivo,
+   * specs/memoria-conversacional-minima-v1.md) para que a gravacao de
+   * `ultima_troca`, que so acontece depois que a resposta final existe
+   * (fora do orquestrador), encadeie seu CAS sobre este valor exato, sem
+   * reler.
+   */
+  atualizado_em: string;
+  /**
+   * Classificacao da mensagem atual (interpretacao-tipos.ts). Exposta
+   * (aditiva) para a IA redatora -- specs/memoria-conversacional-minima-v1.md
+   * secao 3.
+   */
+  natureza_mensagem: NaturezaMensagem;
+  /**
+   * Par da ultima troca, lido no INICIO deste turno (antes de qualquer
+   * escrita) -- `null` quando nao ha turno anterior. O filtro de validade
+   * (24h) e aplicado no ponto de leitura para a redatora
+   * (gerar-resposta-conversacional.ts), nunca aqui.
+   */
+  ultima_troca: UltimaTroca | null;
 }

@@ -1,0 +1,64 @@
+-- Iris Nova - memoria conversacional minima em estado_conversa (banco
+-- operacional legado, udizowyfjnhuhgxkeayk).
+--
+-- Projeto-alvo: udizowyfjnhuhgxkeayk (banco operacional real, com painel e
+-- WhatsApp ativo). PROIBIDO aplicar em bcmuqautblvjdqzhjfbw (ambiente
+-- isolado de desenvolvimento e testes da Iris Nova, que tem migration irma
+-- propria em src/supabase/migrations/) ou em qualquer outro projeto. Pasta
+-- separada (migrations-legado/) pelo mesmo motivo das migrations irmas
+-- anteriores: evitar mistura com a convencao de src/supabase/migrations/,
+-- cujo alvo e bcmuqautblvjdqzhjfbw.
+--
+-- Base normativa: specs/memoria-conversacional-minima-v1.md (aprovada pelo
+-- Gabriel em 2026-08-06, revisao independente do Segundo Code).
+--
+-- Origem: a IA redatora (specs/resposta-conversacional-v1.md, implementada
+-- em 2026-08-06) recebia so a mensagem atual, sem nenhum turno anterior --
+-- uma piada, um "esse mesmo" ou uma referencia a "o que voce falou" chegava
+-- sem contexto de continuidade. Esta coluna guarda o unico par mais recente
+-- (mensagem do paciente + resposta da Iris) exclusivamente para a redatora
+-- usar nisso.
+--
+-- ESCOPO -- estritamente aditivo, 1 tabela, 1 coluna, nenhum dado alterado,
+-- nenhuma constraint, nenhuma mudanca de ACL ou RLS:
+--
+--   estado_conversa.ultima_troca (jsonb, nullable): par minimo
+--   {mensagem_paciente: string, resposta_iris: string, gerada_em: string}
+--   do ultimo turno. Server-only: lido e escrito somente pela Edge Function
+--   via service_role, nunca exposto ao paciente. NUNCA e fonte de fato
+--   operacional, NUNCA chega a IA interpretadora -- e memoria exclusiva da
+--   camada de redacao. Sempre substitui o par anterior por inteiro; nunca
+--   acumula historico (no maximo um par por vez).
+--
+-- Nullable e sem default de proposito: "nenhum turno anterior ainda" se
+-- representa pela AUSENCIA do par (NULL), nunca por um objeto vazio -- em
+-- conversa nova a coluna nasce NULL e so passa a existir depois que uma
+-- resposta foi de fato enviada.
+--
+-- Expiracao (24h, VALIDADE_ULTIMA_TROCA_MS em ultima-troca.ts) e SOMENTE de
+-- LEITURA -- esta migration nao cria nenhum job, rotina de limpeza nem
+-- trigger de expiracao. A coluna nunca e apagada por tempo; o campo so
+-- deixa de ser enviado a redatora quando expirado.
+--
+-- Nao limpa em nenhuma decisao do orquestrador, inclusive apos
+-- reserva_criada -- decisao explicita do Gabriel em 2026-08-06: se o
+-- paciente responder "obrigado!" logo apos a reserva, a redatora precisa
+-- saber a que ele esta agradecendo.
+--
+-- FORA DE ESCOPO nesta migration: qualquer alteracao em disponibilidade,
+-- reserva, contexto_horarios ou cancelamento -- todos fora desta etapa por
+-- decisao explicita do Gabriel (spec secao 7/9).
+--
+-- RLS: nenhuma alteracao. `estado_conversa` ja tem RLS ativa sem policy e
+-- GRANT explicito para service_role (migrations 20260804205444 e
+-- 20260804220000) -- uma coluna nova herda exatamente esse regime.
+--
+-- PREFLIGHT (executar imediatamente antes de aplicar): confirmar que
+-- `ultima_troca` ainda nao existe em `estado_conversa`. Nenhum ADD COLUMN
+-- usa IF NOT EXISTS: colisao de nome falha explicitamente em vez de ser
+-- ignorada em silencio.
+--
+-- NAO APLICADA em nenhum projeto no momento desta escrita.
+
+alter table estado_conversa
+  add column ultima_troca jsonb;

@@ -37,6 +37,13 @@ export async function extrairAlteracoes(
     mensagens_atuais: [...entradaBruta.mensagens_atuais],
     dados_atuais: selecionarCamposOperacionais(entradaBruta.dados_atuais),
     campos_cadastrais_preenchidos: [...entradaBruta.campos_cadastrais_preenchidos],
+    // Chave OMITIDA (nunca `undefined` explicito) quando nao ha snapshot --
+    // mesma disciplina ja usada nos resultados opcionais do Core, garante
+    // round-trip exato por JSON e um corpo de requisicao sem chave morta.
+    ...(entradaBruta.horarios_oferecidos !== undefined
+      ? { horarios_oferecidos: [...entradaBruta.horarios_oferecidos] }
+      : {}),
+    ...(entradaBruta.proposta_pendente !== undefined ? { proposta_pendente: entradaBruta.proposta_pendente } : {}),
   };
 
   const saidaBruta = await cliente.executar({
@@ -60,12 +67,16 @@ export async function extrairAlteracoes(
  */
 export function construirEntradaMinimizada(
   mensagensAtuais: string[],
-  snapshotOficial: SnapshotOficialConversa
+  snapshotOficial: SnapshotOficialConversa,
+  horariosOferecidos?: string[],
+  propostaPendente?: { data: string; horario: string }
 ): EntradaInterpretacao {
   return {
     mensagens_atuais: [...mensagensAtuais],
     dados_atuais: selecionarCamposOperacionais(snapshotOficial),
     campos_cadastrais_preenchidos: derivarCamposCadastraisPreenchidos(snapshotOficial),
+    ...(horariosOferecidos !== undefined ? { horarios_oferecidos: [...horariosOferecidos] } : {}),
+    ...(propostaPendente !== undefined ? { proposta_pendente: propostaPendente } : {}),
   };
 }
 
@@ -104,6 +115,11 @@ const CHAVES_ENTRADA_INTERPRETACAO = [
   'campos_cadastrais_preenchidos',
 ] as const;
 
+// Chaves opcionais: podem estar ausentes, mas quando presentes precisam ser
+// validadas. A entrada continua FECHADA -- qualquer chave fora da uniao
+// (obrigatorias + opcionais) rejeita a entrada inteira, como sempre.
+const CHAVES_OPCIONAIS_INTERPRETACAO = ['horarios_oferecidos', 'proposta_pendente'] as const;
+
 export function validarEntradaInterpretacao(entrada: unknown): asserts entrada is EntradaInterpretacao {
   if (entrada === null || typeof entrada !== 'object' || Array.isArray(entrada)) {
     throw new EntradaInvalidaError('entrada', 'entrada deve ser um objeto');
@@ -114,15 +130,69 @@ export function validarEntradaInterpretacao(entrada: unknown): asserts entrada i
   // invalida a entrada inteira. O nome da propriedade desconhecida nunca e
   // reproduzido no erro.
   const chaves = Object.keys(entrada as Record<string, unknown>);
-  const chavesEsperadas: readonly string[] = CHAVES_ENTRADA_INTERPRETACAO;
-  if (chaves.length !== chavesEsperadas.length || !chavesEsperadas.every((chave) => chaves.includes(chave))) {
+  const obrigatorias: readonly string[] = CHAVES_ENTRADA_INTERPRETACAO;
+  const permitidas: readonly string[] = [...CHAVES_ENTRADA_INTERPRETACAO, ...CHAVES_OPCIONAIS_INTERPRETACAO];
+  if (!obrigatorias.every((chave) => chaves.includes(chave))) {
+    throw new EntradaInvalidaError('entrada', 'entrada nao contem todas as chaves obrigatorias');
+  }
+  if (!chaves.every((chave) => permitidas.includes(chave))) {
     throw new EntradaInvalidaError('entrada', 'entrada contem propriedade nao permitida');
   }
 
-  const { mensagens_atuais, dados_atuais, campos_cadastrais_preenchidos } = entrada as Record<string, unknown>;
+  const { mensagens_atuais, dados_atuais, campos_cadastrais_preenchidos, horarios_oferecidos, proposta_pendente } =
+    entrada as Record<string, unknown>;
   validarMensagensAtuais(mensagens_atuais);
   validarDadosAtuais(dados_atuais);
   validarCamposCadastraisPreenchidos(campos_cadastrais_preenchidos);
+  if (horarios_oferecidos !== undefined) validarHorariosOferecidos(horarios_oferecidos);
+  if (proposta_pendente !== undefined) validarPropostaPendente(proposta_pendente);
+}
+
+/**
+ * Proposta concreta que o Core apresentou ao paciente, aguardando
+ * confirmacao (contexto-horarios.ts, acao `propor`). Fechada a exatamente
+ * `data` e `horario`, ambas strings nao vazias -- quem produz esses valores
+ * e sempre o proprio Core (mesma formatacao que o texto ja mostrou ao
+ * paciente), nunca a IA nem o paciente.
+ */
+export function validarPropostaPendente(valor: unknown): asserts valor is { data: string; horario: string } {
+  if (valor === null || typeof valor !== 'object' || Array.isArray(valor)) {
+    throw new EntradaInvalidaError('proposta_pendente', 'proposta_pendente deve ser um objeto');
+  }
+  const chaves = Object.keys(valor as Record<string, unknown>).sort();
+  if (JSON.stringify(chaves) !== JSON.stringify(['data', 'horario'])) {
+    throw new EntradaInvalidaError('proposta_pendente', 'proposta_pendente deve conter exatamente data e horario');
+  }
+  const { data, horario } = valor as Record<string, unknown>;
+  if (typeof data !== 'string' || data.trim() === '') {
+    throw new EntradaInvalidaError('proposta_pendente', 'proposta_pendente.data deve ser uma string nao vazia');
+  }
+  if (typeof horario !== 'string' || horario.trim() === '') {
+    throw new EntradaInvalidaError('proposta_pendente', 'proposta_pendente.horario deve ser uma string nao vazia');
+  }
+}
+
+/**
+ * Lista de horarios ja apresentados ao paciente (contexto-horarios.ts).
+ * Fechada a strings nao vazias; lista vazia e rejeitada porque "nenhum
+ * horario oferecido" se representa pela AUSENCIA da chave, nunca por `[]`
+ * -- um array vazio no payload sugeriria ao modelo que houve uma oferta sem
+ * opcoes. Nao valida o formato `HH:MM`: quem produz esses valores e o
+ * proprio Core (mesma funcao que formata o texto ao paciente), nunca a IA
+ * nem o paciente.
+ */
+export function validarHorariosOferecidos(valor: unknown): asserts valor is string[] {
+  if (!Array.isArray(valor)) {
+    throw new EntradaInvalidaError('horarios_oferecidos', 'horarios_oferecidos deve ser um array');
+  }
+  if (valor.length === 0) {
+    throw new EntradaInvalidaError('horarios_oferecidos', 'horarios_oferecidos nao pode ser um array vazio');
+  }
+  for (const horario of valor) {
+    if (typeof horario !== 'string' || horario.trim() === '') {
+      throw new EntradaInvalidaError('horarios_oferecidos', 'horarios_oferecidos contem item que nao e string nao vazia');
+    }
+  }
 }
 
 export function validarCamposCadastraisPreenchidos(

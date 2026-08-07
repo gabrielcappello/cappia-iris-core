@@ -404,6 +404,94 @@ test('aguardando_data_horario: nenhum motivo, em nenhum tipo, expoe o codigo bru
   }
 });
 
+// --- os tres estados de conversa normal (2026-08-06) ---
+
+test('aguardando_escolha_dentista: pergunta especificamente pelos nomes exibidos, nunca escolhe', () => {
+  const decisao: DecisaoCaminhoFeliz = {
+    tipo: 'aguardando_escolha_dentista',
+    dentistas: [
+      { dentista_id: 'd1', clinica_id: 'clinica-1', nome_exibido: 'Dra. Ana' },
+      { dentista_id: 'd2', clinica_id: 'clinica-1', nome_exibido: 'Dr. Beto' },
+    ],
+  };
+  const texto = gerarRespostaPaciente(decisao);
+  assert.ok(texto.includes('Dra. Ana'));
+  assert.ok(texto.includes('Dr. Beto'));
+  assert.ok(!texto.includes('d1') && !texto.includes('d2'), 'nunca expoe dentista_id bruto');
+});
+
+test('cadastro_necessario: pede dado de cadastro, nunca soa como falha tecnica', () => {
+  const texto = gerarRespostaPaciente({ tipo: 'cadastro_necessario' });
+  assert.ok(!/problema t[eé]cnico/i.test(texto));
+});
+
+test('sem_dentista_disponivel: informa e oferece alternativa, nunca soa como falha tecnica', () => {
+  const texto = gerarRespostaPaciente({ tipo: 'sem_dentista_disponivel' });
+  assert.ok(!/problema t[eé]cnico/i.test(texto));
+});
+
+// --- os seis estados de falha tecnica real (2026-08-06) ---
+
+test('falha tecnica real: os seis estados compartilham a mesma frase honesta, nunca expondo motivo bruto', () => {
+  const decisoes: DecisaoCaminhoFeliz[] = [
+    { tipo: 'clinica_sem_catalogo' },
+    { tipo: 'erro_catalogo_procedimento', resultado: { tipo: 'erro_catalogo', codigo: 'alias_ambiguo', procedimento_ids: ['p1'] } },
+    { tipo: 'erro_catalogo_dentista', resultado: { tipo: 'erro_catalogo', codigo: 'nome_resolucao_ambiguo', dentista_ids: ['d1'] } },
+    { tipo: 'duracao_nao_configurada' },
+    {
+      tipo: 'erro_configuracao_duracao',
+      resultado: { tipo: 'erro_configuracao', codigo: 'duracao_conflitante', procedimento_ids: [], duracoes_conflitantes: [] },
+    },
+    { tipo: 'reserva_falhou', motivo: 'erro_tecnico' },
+  ];
+  const textos = new Set(decisoes.map((d) => gerarRespostaPaciente(d)));
+  assert.equal(textos.size, 1, 'os seis compartilham exatamente a mesma frase');
+  const [texto] = textos;
+  assert.ok(/problema t[eé]cnico/i.test(texto));
+  assert.ok(!texto.includes('alias_ambiguo') && !texto.includes('erro_tecnico'));
+});
+
+// --- exaustividade: nenhum dos 19 tipos retorna null (nunca lanca, sempre string) ---
+
+test('exaustividade: todos os 19 tipos de DecisaoOrquestrador produzem texto nao vazio', () => {
+  const decisoes: DecisaoCaminhoFeliz[] = [
+    { tipo: 'clinica_sem_catalogo' },
+    { tipo: 'saudacao' },
+    { tipo: 'duvida_livre' },
+    { tipo: 'mensagem_nao_compreendida' },
+    { tipo: 'desistencia' },
+    { tipo: 'aguardando_procedimento', resultado: { tipo: 'nao_resolvido', motivo: 'texto_ausente' } },
+    { tipo: 'erro_catalogo_procedimento', resultado: { tipo: 'erro_catalogo', codigo: 'alias_ambiguo', procedimento_ids: [] } },
+    { tipo: 'aguardando_escolha_dentista', dentistas: [{ dentista_id: 'd1', clinica_id: 'c1', nome_exibido: 'Dra. Ana' }] },
+    { tipo: 'sem_dentista_disponivel' },
+    { tipo: 'erro_catalogo_dentista', resultado: { tipo: 'erro_catalogo', codigo: 'vinculo_orfao', dentista_ids: [] } },
+    { tipo: 'duracao_nao_configurada' },
+    {
+      tipo: 'erro_configuracao_duracao',
+      resultado: { tipo: 'erro_configuracao', codigo: 'duracao_conflitante', procedimento_ids: [], duracoes_conflitantes: [] },
+    },
+    { tipo: 'aguardando_data_horario', resultado: { tipo: 'incompleto', motivo: 'intencao_ausente' } },
+    {
+      tipo: 'horarios_disponiveis',
+      procedimento_id: 'p1',
+      dentista_id: 'd1',
+      duracao_min: 40,
+      resultado: { tipo: 'sem_disponibilidade' },
+    },
+    { tipo: 'aguardando_confirmacao', procedimento_id: 'p1', dentista_id: 'd1', opcao: opcao() },
+    { tipo: 'cadastro_necessario' },
+    { tipo: 'reserva_criada', agendamento_id: 'a1', dentista_id: 'd1', procedimento_id: 'p1', duracao_min: 40, data: '2026-08-05', horario: '09:00' },
+    { tipo: 'reserva_conflito' },
+    { tipo: 'reserva_falhou', motivo: 'erro_tecnico' },
+  ];
+  assert.equal(decisoes.length, 19, 'confirma que os 19 tipos estao cobertos neste teste');
+  for (const decisao of decisoes) {
+    const texto = gerarRespostaPaciente(decisao);
+    assert.equal(typeof texto, 'string');
+    assert.ok(texto.trim().length > 0, `decisao ${decisao.tipo} produziu texto vazio`);
+  }
+});
+
 // --- determinismo ---
 
 test('determinismo: mesma decisao produz sempre o mesmo texto', () => {

@@ -17,6 +17,49 @@ export type EstadoConversa =
   | 'executando'
   | 'concluido';
 
+// Snapshot minimo do que o Core ofereceu/propos ao paciente na ultima
+// pergunta gerada (specs/contexto-pendente-interpretacao-v1.md,
+// specs/resposta-conversacional-v1.md secao 5). Serve EXCLUSIVAMENTE para a
+// IA interpretar uma resposta curta ("15", "o segundo", "pode confirmar") no
+// turno seguinte -- nunca e fonte de disponibilidade, nunca autoriza reserva.
+export interface ContextoHorarios {
+  /**
+   * Horarios ja apresentados, na ordem exata em que apareceram -- da
+   * sentido a um ordinal ("o segundo"). AUSENTE quando o snapshot representa
+   * uma `proposta_pendente`: uma proposta concreta ja nao tem mais opcoes em
+   * aberto, entao as duas nunca coexistem no mesmo snapshot (acao `propor`
+   * substitui o snapshot por inteiro, nunca faz merge).
+   */
+  horarios?: string[];
+  /**
+   * Data/horario que o Core esta propondo, aguardando confirmacao explicita
+   * do paciente (decisao `aguardando_confirmacao` -> acao `propor`). E o que
+   * permite a IA reconhecer "pode confirmar"/"esse mesmo" como resposta a
+   * ESSA proposta especifica, mesmo sem repetir data/horario no texto.
+   */
+  proposta_pendente?: { data: string; horario: string };
+  /** ISO, somente auditoria -- nunca usado como versao nem para ordenar escritas. */
+  criado_em: string;
+}
+
+// Par minimo da ultima troca (specs/memoria-conversacional-minima-v1.md).
+// Serve EXCLUSIVAMENTE para a IA redatora manter continuidade conversacional
+// no turno seguinte (piada, referencia a "o que voce falou", retomada apos
+// comentario lateral) -- nunca e fonte de fato operacional, nunca chega a IA
+// interpretadora. Sempre substitui o par anterior por inteiro; nunca acumula
+// historico (no maximo um par por vez).
+export interface UltimaTroca {
+  mensagem_paciente: string;
+  /**
+   * EXATAMENTE a resposta que foi enviada ao paciente -- redacao aprovada
+   * pela guarda OU fallback deterministico efetivamente escolhido. Nunca um
+   * texto reprovado ou descartado (ultima-troca.ts secao de gravacao).
+   */
+  resposta_iris: string;
+  /** ISO -- quando a resposta foi gerada para envio. Nao significa entrega nem leitura pelo paciente. */
+  gerada_em: string;
+}
+
 export interface ResultadoIdentificacao {
   clinica_id: string;
   paciente: {
@@ -27,6 +70,12 @@ export interface ResultadoIdentificacao {
     id: string;
     estado: EstadoConversa;
     dados: Record<string, unknown>;
+    // Exposto (aditivo) para que a gravacao de contexto_horarios use o
+    // `atualizado_em` EXATO do estado sobre o qual a decisao foi calculada,
+    // sem reler antes do UPDATE -- ver contexto-horarios.ts.
+    atualizado_em: string;
+    contexto_horarios: ContextoHorarios | null;
+    ultima_troca: UltimaTroca | null;
   };
 }
 
@@ -117,4 +166,13 @@ export interface ResultadoAplicarDados {
   campos_corrigidos: string[];
   campos_removidos: string[];
   campos_preservados: string[];
+  /**
+   * `atualizado_em` da linha APOS esta aplicacao -- o valor novo quando
+   * houve UPDATE, ou o valor inalterado quando nada mudou (curto-circuito
+   * de `dadosIguais`). Exposto (aditivo) para que a gravacao de
+   * contexto_horarios use o `atualizado_em` exato do estado sobre o qual a
+   * decisao foi calculada, sem reler antes do UPDATE
+   * (specs/contexto-pendente-interpretacao-v1.md secao 5).
+   */
+  atualizado_em: string;
 }

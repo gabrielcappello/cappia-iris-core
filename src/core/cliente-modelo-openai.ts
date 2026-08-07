@@ -360,6 +360,14 @@ async function processarTentativa(
           mensagens_atuais: contexto.entrada.payload.mensagens_atuais,
           dados_atuais: contexto.entrada.payload.dados_atuais,
           campos_cadastrais_preenchidos: contexto.entrada.payload.campos_cadastrais_preenchidos,
+          // Chave OMITIDA quando nao ha snapshot -- nunca `undefined`
+          // explicito, que JSON.stringify descartaria de forma implicita.
+          ...(contexto.entrada.payload.horarios_oferecidos !== undefined
+            ? { horarios_oferecidos: contexto.entrada.payload.horarios_oferecidos }
+            : {}),
+          ...(contexto.entrada.payload.proposta_pendente !== undefined
+            ? { proposta_pendente: contexto.entrada.payload.proposta_pendente }
+            : {}),
         }),
       },
     ],

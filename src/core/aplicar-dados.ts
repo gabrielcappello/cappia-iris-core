@@ -82,8 +82,9 @@ export async function aplicarDados(
       // Nenhuma mudanca real no JSON: nenhum UPDATE e executado, e
       // `atualizado_em` permanece o mesmo (cobre tanto `alteracoes: {}`
       // quanto acoes efetivamente idempotentes, informar repetido ou
-      // remocao de campo inexistente).
-      return montarResultado(atual.id, dadosAtuais, calculo);
+      // remocao de campo inexistente) -- e por isso e ele que viaja no
+      // resultado, nao um valor novo.
+      return montarResultado(atual.id, dadosAtuais, calculo, atual.atualizado_em);
     }
 
     const timestampLido = atual.atualizado_em;
@@ -107,7 +108,7 @@ export async function aplicarDados(
       // aqui para reutilizar o mesmo validador estrutural, sem alterar o
       // select nem criar uma segunda consulta.
       const linha = validarLinhaEstadoConversa({ ...atualizado, atualizado_em: novoTimestamp });
-      return montarResultado(linha.id, (linha.dados as Record<string, unknown>) ?? {}, calculo);
+      return montarResultado(linha.id, (linha.dados as Record<string, unknown>) ?? {}, calculo, linha.atualizado_em);
     }
 
     // Outra chamada alterou a conversa entre a leitura e esta tentativa
@@ -122,7 +123,8 @@ export async function aplicarDados(
 function montarResultado(
   conversaId: string,
   dados: Record<string, unknown>,
-  calculo: CalculoAlteracoes
+  calculo: CalculoAlteracoes,
+  atualizadoEm: string
 ): ResultadoAplicarDados {
   return {
     conversa_id: conversaId,
@@ -131,6 +133,7 @@ function montarResultado(
     campos_corrigidos: calculo.camposCorrigidos,
     campos_removidos: calculo.camposRemovidos,
     campos_preservados: calculo.camposPreservados,
+    atualizado_em: atualizadoEm,
   };
 }
 

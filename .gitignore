@@ -17,3 +17,7 @@ Thumbs.db
 
 # Obsidian (workspace local, não deve ser versionado)
 .obsidian/
+
+# Config local de ferramenta (Claude Code / Supabase CLI) — nunca versionado
+.mcp.json
+supabase/.temp/

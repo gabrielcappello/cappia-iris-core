@@ -1,12 +1,14 @@
 // Entrypoint da Edge Function. Transporte minimo: recebe o payload minimo
 // de n8n, chama o Iris Core (processarMensagem) e devolve so o necessario
 // para n8n relayar de volta ao WhatsApp. Nenhuma logica de dominio vive
-// aqui -- so parsing/validacao de payload e mapeamento de decisao -> texto
-// (via gerarRespostaPaciente, ja pronto) ou -> "nao coberto ainda".
+// aqui -- so parsing/validacao de payload e a chamada a
+// gerarRespostaConversacional (IA redatora + guarda + fallback
+// deterministico, specs/resposta-conversacional-v1.md), ja pronta.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { processarMensagem } from "./orquestrador.ts";
-import { gerarRespostaPaciente } from "./gerar-resposta-paciente.ts";
+import { gerarRespostaConversacional } from "./gerar-resposta-conversacional.ts";
+import { gravarUltimaTroca } from "./ultima-troca.ts";
 import {
   criarClienteModeloOpenAI,
   ESPERA_ENTRE_TENTATIVAS_MS_APROVADO,
@@ -14,6 +16,7 @@ import {
   PRAZO_TOTAL_MS_APROVADO,
   TIMEOUT_POR_TENTATIVA_MS_APROVADO,
 } from "./cliente-modelo-openai.ts";
+import { criarClienteModeloRedatorOpenAI, TIMEOUT_REDATOR_MS_APROVADO } from "./cliente-modelo-redator-openai.ts";
 import { ClinicaNaoEncontradaError, EntradaInvalidaError } from "./erros.ts";
 import type { ClienteBancoDados } from "./tipos.ts";
 import type { ClienteRpc } from "./mensagens-recebidas-tipos.ts";
@@ -120,6 +123,15 @@ Deno.serve(async (req: Request) => {
     esperaEntreTentativasMs: ESPERA_ENTRE_TENTATIVAS_MS_APROVADO,
   });
 
+  // Redator: mesmo modelo da interpretadora (nenhuma decisao de trocar de
+  // modelo foi tomada), sem retry (cliente-modelo-redator-openai.ts
+  // explica o porque). `chaveApi` ja foi validada acima (openaiKey).
+  const clienteRedator = criarClienteModeloRedatorOpenAI({
+    chaveApi: openaiKey,
+    modelo: MODELO_GPT_4_1_MINI,
+    timeoutMs: TIMEOUT_REDATOR_MS_APROVADO,
+  });
+
   try {
     const resultado = await processarMensagem(clienteModelo, clienteBanco, clienteRpc, {
       provider: payload.provider,
@@ -129,25 +141,36 @@ Deno.serve(async (req: Request) => {
       instante_atual: obterInstanteAtual(),
     });
 
-    switch (resultado.decisao.tipo) {
-      case "horarios_disponiveis":
-      case "aguardando_confirmacao":
-      case "reserva_criada":
-      case "reserva_conflito":
-      case "saudacao":
-      case "aguardando_procedimento":
-      case "duvida_livre":
-      case "mensagem_nao_compreendida":
-      case "desistencia":
-      case "aguardando_data_horario": {
-        const resposta = gerarRespostaPaciente(resultado.decisao);
-        return jsonResponse({ resposta }, 200);
-      }
-      default:
-        // Um dos outros cinco estados -- ainda sem texto em portugues
-        // (escopo desta etapa). Nunca inventa texto generico.
-        return jsonResponse({ resposta: null, decisao_tipo: resultado.decisao.tipo }, 200);
+    // specs/resposta-conversacional-v1.md: todo desfecho passa pela IA
+    // redatora, com fallback deterministico em qualquer falha -- a Iris
+    // nunca fica calada (`resposta` nunca e null). `motivo_fallback' e so
+    // telemetria interna, nunca exposto ao paciente.
+    const { resposta, motivo_fallback } = await gerarRespostaConversacional(clienteRedator, {
+      decisao: resultado.decisao,
+      mensagemPaciente: payload.mensagem,
+      naturezaMensagem: resultado.natureza_mensagem,
+      ultimaTroca: resultado.ultima_troca,
+    });
+    if (motivo_fallback !== null) {
+      console.log(`resposta_conversacional_fallback decisao=${resultado.decisao.tipo} motivo=${motivo_fallback}`);
     }
+
+    // specs/memoria-conversacional-minima-v1.md: gravada DEPOIS que a
+    // resposta final ja existe, com `resposta_iris` sendo exatamente o que
+    // vai ao paciente (aprovado pela guarda ou fallback). CAS encadeado
+    // sobre `resultado.atualizado_em` -- o valor que gravarContextoHorarios
+    // devolveu para este turno, nunca relido. Auxiliar/best-effort: nunca
+    // lanca, nunca altera a resposta ja decidida.
+    await gravarUltimaTroca(clienteBanco, {
+      conversa_id: resultado.conversa_id,
+      clinica_id: resultado.clinica_id,
+      telefone_normalizado: payload.telefone_normalizado,
+      atualizado_em_da_resposta: resultado.atualizado_em,
+      mensagem_paciente: payload.mensagem,
+      resposta_iris: resposta,
+    });
+
+    return jsonResponse({ resposta }, 200);
   } catch (erro) {
     if (erro instanceof ClinicaNaoEncontradaError) {
       return jsonResponse({ erro: "clinica_nao_encontrada" }, 404);

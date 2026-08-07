@@ -1,12 +1,33 @@
 import { ClinicaNaoEncontradaError, EntradaInvalidaError } from './erros.ts';
 import { telefoneNormalizadoValido } from './telefone.ts';
-import type { ClienteBancoDados, EstadoConversa, IdentificarConversaInput, ResultadoIdentificacao } from './tipos.ts';
+import { validarContextoHorarios } from './contexto-horarios.ts';
+import { validarUltimaTroca } from './ultima-troca.ts';
+import type {
+  ClienteBancoDados,
+  ContextoHorarios,
+  EstadoConversa,
+  IdentificarConversaInput,
+  ResultadoIdentificacao,
+  UltimaTroca,
+} from './tipos.ts';
+
+// Colunas lidas de estado_conversa por este modulo. `atualizado_em` e
+// `contexto_horarios` sao aditivas (specs/contexto-pendente-interpretacao-v1.md):
+// a primeira permite gravar o snapshot com CAS sobre o estado EXATO da decisao,
+// sem reler; a segunda alimenta a interpretacao do turno seguinte.
+// `ultima_troca` (specs/memoria-conversacional-minima-v1.md) e a mesma ideia
+// para a camada de redacao: memoria de um unico turno, nunca enviada a IA
+// interpretadora.
+const COLUNAS_ESTADO_CONVERSA = 'id, estado, dados, paciente_id, atualizado_em, contexto_horarios, ultima_troca';
 
 interface LinhaEstadoConversa {
   id: string;
   estado: string;
   dados: unknown;
   paciente_id: string | null;
+  atualizado_em: string;
+  contexto_horarios: ContextoHorarios | null;
+  ultima_troca: UltimaTroca | null;
 }
 
 // Mesmo vocabulario canonico de EstadoConversa (tipos.ts) -- os seis estados
@@ -37,7 +58,23 @@ function validarLinhaEstadoConversa(valor: Record<string, unknown>): LinhaEstado
   if (valor.paciente_id !== null && typeof valor.paciente_id !== 'string') {
     throw new Error('estado_conversa retornou paciente_id em formato invalido');
   }
-  return { id: valor.id, estado: valor.estado, dados: valor.dados, paciente_id: valor.paciente_id as string | null };
+  if (typeof valor.atualizado_em !== 'string' || Number.isNaN(Date.parse(valor.atualizado_em))) {
+    throw new Error('estado_conversa retornou atualizado_em em formato invalido');
+  }
+  return {
+    id: valor.id,
+    estado: valor.estado,
+    dados: valor.dados,
+    paciente_id: valor.paciente_id as string | null,
+    atualizado_em: valor.atualizado_em,
+    // Falha ABERTA de proposito: um snapshot malformado (ou de uma versao
+    // futura do formato) nunca derruba a identificacao -- e so contexto
+    // auxiliar de interpretacao, entao vira `null` e a conversa segue sem
+    // ele. Nada operacional depende deste campo.
+    contexto_horarios: validarContextoHorarios(valor.contexto_horarios),
+    // Mesma falha ABERTA, mesmo motivo -- ver ultima-troca.ts.
+    ultima_troca: validarUltimaTroca(valor.ultima_troca),
+  };
 }
 
 /**
@@ -76,6 +113,9 @@ export async function identificarConversa(
       id: conversa.id,
       estado: conversa.estado as EstadoConversa,
       dados: (conversa.dados as Record<string, unknown>) ?? {},
+      atualizado_em: conversa.atualizado_em,
+      contexto_horarios: conversa.contexto_horarios,
+      ultima_troca: conversa.ultima_troca,
     },
   };
 }
@@ -135,7 +175,7 @@ async function obterOuCriarEstadoConversa(
 ): Promise<LinhaEstadoConversa> {
   const { data: existente, error: erroSelect } = await cliente
     .from('estado_conversa')
-    .select('id, estado, dados, paciente_id')
+    .select(COLUNAS_ESTADO_CONVERSA)
     .eq('clinica_id', clinicaId)
     .eq('telefone_normalizado', telefoneNormalizado)
     .maybeSingle();
@@ -172,7 +212,7 @@ async function obterOuCriarEstadoConversa(
       },
       { onConflict: 'clinica_id,telefone_normalizado', ignoreDuplicates: true }
     )
-    .select('id, estado, dados, paciente_id')
+    .select(COLUNAS_ESTADO_CONVERSA)
     .maybeSingle();
 
   if (erroInsert) throw new Error(`falha ao criar estado da conversa: ${erroInsert.message}`);
@@ -180,7 +220,7 @@ async function obterOuCriarEstadoConversa(
 
   const { data: concorrente, error: erroReconsulta } = await cliente
     .from('estado_conversa')
-    .select('id, estado, dados, paciente_id')
+    .select(COLUNAS_ESTADO_CONVERSA)
     .eq('clinica_id', clinicaId)
     .eq('telefone_normalizado', telefoneNormalizado)
     .maybeSingle();
@@ -208,7 +248,7 @@ async function vincularPacienteAoEstado(
     .eq('clinica_id', clinicaId)
     .eq('telefone_normalizado', telefoneNormalizado)
     .is('paciente_id', null)
-    .select('id, estado, dados, paciente_id')
+    .select(COLUNAS_ESTADO_CONVERSA)
     .maybeSingle();
 
   if (erroUpdate) throw new Error(`falha ao vincular paciente ao estado da conversa: ${erroUpdate.message}`);
@@ -216,7 +256,7 @@ async function vincularPacienteAoEstado(
 
   const { data: reconsultada, error: erroReconsulta } = await cliente
     .from('estado_conversa')
-    .select('id, estado, dados, paciente_id')
+    .select(COLUNAS_ESTADO_CONVERSA)
     .eq('clinica_id', clinicaId)
     .eq('telefone_normalizado', telefoneNormalizado)
     .maybeSingle();

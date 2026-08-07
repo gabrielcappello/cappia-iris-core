@@ -9,6 +9,7 @@ import { resolverTemporal } from './resolver-temporal.ts';
 import { carregarEntradaDisponibilidade } from './carregar-disponibilidade.ts';
 import { carregarCatalogo } from './carregar-catalogo.ts';
 import { reservarAgendamento } from './reservar-agendamento.ts';
+import { derivarAcaoContextoHorarios, gravarContextoHorarios } from './contexto-horarios.ts';
 import type { ClienteBancoDados } from './tipos.ts';
 import type { ClienteModeloEstruturado, NaturezaMensagem } from './interpretacao-tipos.ts';
 import type { ClienteRpc } from './mensagens-recebidas-tipos.ts';
@@ -46,7 +47,28 @@ export async function processarMensagem(
     clinica_id: identificacao.clinica_id,
     telefone_normalizado: entrada.telefone_normalizado,
     mensagens_atuais: entrada.mensagens_atuais,
+    // Horarios ja oferecidos na ultima pergunta gerada, quando houver --
+    // contexto de interpretacao, nunca fonte de disponibilidade
+    // (specs/contexto-pendente-interpretacao-v1.md). `horarios` e opcional
+    // no snapshot desde specs/resposta-conversacional-v1.md secao 5 --
+    // ausente quando o snapshot representa so uma `proposta_pendente`.
+    ...(identificacao.conversa.contexto_horarios?.horarios !== undefined
+      ? { horarios_oferecidos: identificacao.conversa.contexto_horarios.horarios }
+      : {}),
+    // Proposta concreta aguardando confirmacao, quando houver -- e o que
+    // permite a IA reconhecer "pode confirmar"/"esse mesmo" como resposta a
+    // ELA especificamente (specs/resposta-conversacional-v1.md secao 5).
+    ...(identificacao.conversa.contexto_horarios?.proposta_pendente !== undefined
+      ? { proposta_pendente: identificacao.conversa.contexto_horarios.proposta_pendente }
+      : {}),
   });
+
+  // `atualizado_em` EXATO do estado sobre o qual a decisao desta mensagem
+  // sera calculada: o valor apos aplicarDados quando houve aplicacao, ou o
+  // lido na identificacao quando nada foi aplicado. Nunca relido antes do
+  // UPDATE do snapshot -- reler rebasearia uma operacao obsoleta sobre um
+  // estado novo (spec secao 5).
+  const atualizadoEmDaDecisao = interpretacao.aplicacao?.atualizado_em ?? identificacao.conversa.atualizado_em;
 
   // aplicacao.dados so vem preenchido quando houve pelo menos uma alteracao
   // aplicavel (interpretar-e-aplicar.ts); sem isso, o snapshot ja
@@ -58,33 +80,44 @@ export async function processarMensagem(
   // alteracao -- `alteracoes` sempre tem precedencia sobre
   // `natureza_mensagem` para a evolucao do fluxo (mesma spec, secao 3).
   // Nao consulta catalogo, nao muda `dados`: puramente conversacional.
+  // Todo desfecho passa por aqui: grava o snapshot de horarios derivado da
+  // decisao final e so entao devolve o resultado. A gravacao e auxiliar e
+  // best-effort por contrato -- nunca lanca, nunca altera a decisao ja
+  // tomada, nunca afeta a resposta ao paciente.
+  const finalizar = async (decisao: DecisaoOrquestrador): Promise<ResultadoOrquestrador> => {
+    const atualizadoEmFinal = await gravarContextoHorarios(clienteBanco, {
+      conversa_id: identificacao.conversa.id,
+      clinica_id: identificacao.clinica_id,
+      telefone_normalizado: entrada.telefone_normalizado,
+      atualizado_em_da_decisao: atualizadoEmDaDecisao,
+      acao: derivarAcaoContextoHorarios(decisao),
+    });
+
+    return {
+      clinica_id: identificacao.clinica_id,
+      conversa_id: identificacao.conversa.id,
+      conflitos: interpretacao.conflitos,
+      decisao,
+      atualizado_em: atualizadoEmFinal,
+      natureza_mensagem: interpretacao.natureza_mensagem,
+      ultima_troca: identificacao.conversa.ultima_troca,
+    };
+  };
+
   if (Object.keys(interpretacao.alteracoes_interpretadas).length === 0) {
     const decisaoConversacional = decidirPorNatureza(interpretacao.natureza_mensagem, dados);
     if (decisaoConversacional !== null) {
-      return {
-        clinica_id: identificacao.clinica_id,
-        conversa_id: identificacao.conversa.id,
-        conflitos: interpretacao.conflitos,
-        decisao: decisaoConversacional,
-      };
+      return await finalizar(decisaoConversacional);
     }
   }
 
   const catalogoCarregado = await carregarCatalogo(clienteBanco, { clinica_id: identificacao.clinica_id });
   if (catalogoCarregado.tipo !== 'carregado') {
-    return {
-      clinica_id: identificacao.clinica_id,
-      conversa_id: identificacao.conversa.id,
-      conflitos: interpretacao.conflitos,
-      decisao: { tipo: 'clinica_sem_catalogo' },
-    };
+    return await finalizar({ tipo: 'clinica_sem_catalogo' });
   }
 
-  return {
-    clinica_id: identificacao.clinica_id,
-    conversa_id: identificacao.conversa.id,
-    conflitos: interpretacao.conflitos,
-    decisao: await decidir(
+  return await finalizar(
+    await decidir(
       clienteBanco,
       clienteRpc,
       identificacao.clinica_id,
@@ -93,8 +126,8 @@ export async function processarMensagem(
       dados,
       catalogoCarregado.catalogo,
       entrada.instante_atual
-    ),
-  };
+    )
+  );
 }
 
 /**

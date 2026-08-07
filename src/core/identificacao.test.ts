@@ -40,6 +40,9 @@ function semearEstadoConversa(
     estado,
     dados: {},
     paciente_id: pacienteId,
+    // `not null default now()` no schema real -- toda linha semeada precisa
+    // te-lo, como teria vindo do banco.
+    atualizado_em: new Date().toISOString(),
   };
   tabelas.estado_conversa.push(conversa);
   return conversa;

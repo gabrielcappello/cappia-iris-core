@@ -1,0 +1,45 @@
+-- Iris Nova - memoria conversacional minima em estado_conversa.
+--
+-- Projeto-alvo: cappia-iris-core-dev (bcmuqautblvjdqzhjfbw) -- ambiente
+-- isolado de desenvolvimento e testes da Iris Nova, mantido por decisao
+-- explicita. PROIBIDO aplicar em udizowyfjnhuhgxkeayk, que tem migration
+-- irma propria em src/supabase/migrations-legado/ (mesma coluna, mesmo
+-- efeito, arquivo separado pela convencao ja estabelecida de pastas por
+-- projeto-alvo).
+--
+-- Base normativa: specs/memoria-conversacional-minima-v1.md (aprovada pelo
+-- Gabriel em 2026-08-06, revisao independente do Segundo Code).
+--
+-- ESCOPO -- estritamente aditivo, 1 tabela, 1 coluna, nenhum dado alterado,
+-- nenhuma constraint, nenhuma mudanca de ACL ou RLS:
+--
+--   estado_conversa.ultima_troca (jsonb, nullable): par minimo
+--   {mensagem_paciente: string, resposta_iris: string, gerada_em: string}
+--   do ultimo turno -- serve exclusivamente para a IA REDATORA manter
+--   continuidade conversacional (piada, "aquele que voce falou",
+--   retomada apos comentario lateral) no turno seguinte. NUNCA e fonte
+--   de fato operacional, NUNCA chega a IA interpretadora. Sempre
+--   substitui o par anterior por inteiro -- nunca acumula historico.
+--
+-- Nullable e sem default de proposito: "nenhum turno anterior ainda" se
+-- representa pela AUSENCIA do par (NULL), nunca por um objeto vazio -- em
+-- conversa nova a coluna nasce NULL e so passa a existir depois que uma
+-- resposta foi de fato enviada.
+--
+-- Expiracao (24h, VALIDADE_ULTIMA_TROCA_MS em ultima-troca.ts) e SOMENTE de
+-- LEITURA -- esta migration nao cria nenhum job, rotina de limpeza nem
+-- trigger de expiracao. A coluna nunca e apagada por tempo.
+--
+-- RLS: nenhuma alteracao. `estado_conversa` ja tem RLS ativa sem policy
+-- (20260729_iris_nova_identificacao_v1.sql) -- uma coluna nova herda
+-- exatamente esse regime: so service_role, que ignora RLS, acessa.
+--
+-- PREFLIGHT (executar imediatamente antes de aplicar): confirmar que
+-- `ultima_troca` ainda nao existe em `estado_conversa`. Nenhum ADD COLUMN
+-- usa IF NOT EXISTS: colisao de nome falha explicitamente em vez de ser
+-- ignorada em silencio.
+--
+-- NAO APLICADA em nenhum projeto no momento desta escrita.
+
+alter table estado_conversa
+  add column ultima_troca jsonb;
