@@ -1,8 +1,8 @@
 // Runner ISOLADO, avulso, chamado manualmente: prova contra a OpenAI REAL
 // que a IA REDATORA (specs/resposta-conversacional-v1.md secao 3 +
-// specs/memoria-conversacional-minima-v1.md) escreve natural, calorosa,
+// specs/historico-conversacional-v1.md) escreve natural, calorosa,
 // pergunta especificamente quando ha ambiguidade, mantem continuidade com
-// "ultima_troca", e -- o mais importante -- NUNCA inventa horario nem
+// "historico_recente", e -- o mais importante -- NUNCA inventa horario nem
 // afirma reserva sem fato autorizado. Os casos negativos sao verificados
 // pela GUARDA de verdade (guarda-resposta-redatora.ts), nao por leitura
 // visual: e exatamente o mecanismo que roda em producao.
@@ -24,20 +24,20 @@ import { verificarRespostaRedatora } from '../core/guarda-resposta-redatora.ts';
 import { MODELO_GPT_4_1_MINI } from '../core/cliente-modelo-openai.ts';
 import type { FatosAutorizados } from '../core/fatos-autorizados.ts';
 import type { NaturezaMensagem } from '../core/interpretacao-tipos.ts';
-import type { UltimaTroca } from '../core/tipos.ts';
+import type { ParConversa } from '../core/tipos.ts';
 
 interface Caso {
   titulo: string;
   mensagemPaciente: string;
   naturezaMensagem: NaturezaMensagem;
   fatos: FatosAutorizados;
-  ultimaTroca?: UltimaTroca;
+  historicoRecente?: ParConversa[];
   /** Verificacao adicional sobre o TEXTO (nunca substitui a guarda -- soma a ela). */
   verificarTexto?: (texto: string) => { ok: boolean; motivo?: string };
 }
 
-function trocaRecente(mensagemPaciente: string, respostaIris: string): UltimaTroca {
-  return { mensagem_paciente: mensagemPaciente, resposta_iris: respostaIris, gerada_em: new Date().toISOString() };
+function historicoDeUmTurno(mensagemPaciente: string, respostaIris: string): ParConversa[] {
+  return [{ mensagem_paciente: mensagemPaciente, resposta_iris: respostaIris, gerada_em: new Date().toISOString() }];
 }
 
 const CASOS: readonly Caso[] = Object.freeze([
@@ -81,17 +81,24 @@ const CASOS: readonly Caso[] = Object.freeze([
     },
   },
   {
-    titulo: 'referencia a ultima fala da Iris: continuidade com "ultima_troca", sem escolher horario sozinha',
+    titulo: 'referencia a ultima fala da Iris: continuidade com "historico_recente", sem escolher horario sozinha',
     mensagemPaciente: 'esse mesmo que voce falou',
     naturezaMensagem: 'resposta',
     fatos: { objetivo: 'pedir_confirmacao', proposta_pendente: { data: '05/08', horario: '14:00' } },
-    ultimaTroca: trocaRecente('quero limpeza amanha de tarde', 'Tenho 14:00 disponível amanhã, posso confirmar?'),
+    historicoRecente: historicoDeUmTurno('quero limpeza amanha de tarde', 'Tenho 14:00 disponível amanhã, posso confirmar?'),
   },
   {
     titulo: 'NEGATIVO: horarios_disponiveis=[14:00] -- nunca cita 15:00',
     mensagemPaciente: 'quero as 15h entao',
     naturezaMensagem: 'resposta',
     fatos: { objetivo: 'apresentar_horarios', data_referencia: '05/08', horarios_disponiveis: ['14:00'] },
+  },
+  {
+    titulo: 'NEGATIVO: historico com horario ja citado antes -- a guarda nao afrouxa so por causa do contexto',
+    mensagemPaciente: 'e as 15h, ainda da?',
+    naturezaMensagem: 'resposta',
+    fatos: { objetivo: 'apresentar_horarios', data_referencia: '05/08', horarios_disponiveis: ['14:00'] },
+    historicoRecente: historicoDeUmTurno('quero limpeza dia 5', 'Tenho 15:00 disponível nesse dia, quer confirmar?'),
   },
   {
     titulo: 'NEGATIVO: sem agendamento_confirmado -- nunca diz que esta marcado',
@@ -132,7 +139,7 @@ async function executarCaso(cliente: ReturnType<typeof criarClienteModeloRedator
       mensagemPaciente: caso.mensagemPaciente,
       naturezaMensagem: caso.naturezaMensagem,
       fatos: caso.fatos,
-      ...(caso.ultimaTroca !== undefined ? { ultimaTroca: caso.ultimaTroca } : {}),
+      ...(caso.historicoRecente !== undefined ? { historicoRecente: caso.historicoRecente } : {}),
     });
     const resultadoGuarda = verificarRespostaRedatora(texto, caso.fatos);
     const verificacao = caso.verificarTexto?.(texto);

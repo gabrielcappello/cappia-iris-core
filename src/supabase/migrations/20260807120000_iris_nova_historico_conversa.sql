@@ -1,0 +1,61 @@
+-- Iris Nova - historico conversacional recente em estado_conversa.
+--
+-- Projeto-alvo: cappia-iris-core-dev (bcmuqautblvjdqzhjfbw) -- ambiente
+-- isolado de desenvolvimento e testes da Iris Nova, mantido por decisao
+-- explicita. PROIBIDO aplicar em udizowyfjnhuhgxkeayk, que tem migration
+-- irma propria em src/supabase/migrations-legado/ (mesma coluna, mesmo
+-- efeito, arquivo separado pela convencao ja estabelecida de pastas por
+-- projeto-alvo).
+--
+-- Base normativa: specs/historico-conversacional-v1.md (aprovada pelo
+-- Gabriel em 2026-08-07).
+--
+-- Primeira etapa da estrategia de migracao (spec secao 0.2 / 9): esta
+-- migration APENAS ADICIONA a coluna nova. A coluna legada `ultima_troca`
+-- (specs/memoria-conversacional-minima-v1.md) NAO e tocada nem removida
+-- aqui -- a remocao e uma migration SEPARADA, aplicada somente depois de
+-- deploy e validacao real em producao com a coluna nova (o que garante uma
+-- janela de rollback sem perda: reverter o codigo entre as duas migrations
+-- volta a ler `ultima_troca`, que continua intacta).
+--
+-- ESCOPO -- estritamente aditivo, 1 tabela, 1 coluna, nenhum dado alterado,
+-- nenhuma constraint, nenhuma mudanca de ACL ou RLS:
+--
+--   estado_conversa.historico_conversa (jsonb, nullable): array de ate 10
+--   pares {mensagem_paciente: string, resposta_iris: string, gerada_em:
+--   string}, do mais antigo para o mais recente -- serve para a IA
+--   INTERPRETADORA e a IA REDATORA entenderem a mensagem atual em relacao ao
+--   que veio antes. NUNCA e fonte de fato operacional -- o estado
+--   operacional (procedimento, dentista, data, horario, confirmacao,
+--   cadastro) continua estruturado em `dados`, nunca no historico. Ao entrar
+--   um par novo alem de 10, o mais antigo sai (corte feito em codigo, nunca
+--   em SQL).
+--
+-- SEM SANITIZACAO nesta V1 (spec secao 0.1, decisao de produto do Gabriel
+-- 2026-08-07): o texto do paciente e gravado exatamente como chegou. A Iris
+-- hoje so pede "nome" no fluxo de cadastro (nunca cpf/email/data_nascimento),
+-- e nenhum desses tres jamais foi preenchido em producao -- revisar quando o
+-- fluxo de cadastro completo existir.
+--
+-- Nullable e sem default de proposito: "nenhum turno anterior ainda" se
+-- representa pela AUSENCIA do array (NULL), nunca por um array vazio -- em
+-- conversa nova a coluna nasce NULL e so passa a existir depois que uma
+-- resposta foi de fato enviada.
+--
+-- Expiracao (24h, VALIDADE_HISTORICO_MS em historico-conversa.ts) e SOMENTE
+-- de LEITURA -- esta migration nao cria nenhum job, rotina de limpeza nem
+-- trigger de expiracao. A coluna nunca e apagada por tempo.
+--
+-- RLS: nenhuma alteracao. `estado_conversa` ja tem RLS ativa sem policy
+-- (20260729_iris_nova_identificacao_v1.sql) -- uma coluna nova herda
+-- exatamente esse regime: so service_role, que ignora RLS, acessa.
+--
+-- PREFLIGHT (executar imediatamente antes de aplicar): confirmar que
+-- `historico_conversa` ainda nao existe em `estado_conversa`. Nenhum ADD
+-- COLUMN usa IF NOT EXISTS: colisao de nome falha explicitamente em vez de
+-- ser ignorada em silencio.
+--
+-- NAO APLICADA em nenhum projeto no momento desta escrita.
+
+alter table estado_conversa
+  add column historico_conversa jsonb;

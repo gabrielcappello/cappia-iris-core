@@ -199,8 +199,8 @@ test('gravacao: preservar nao emite NENHUMA instrucao (nem select, nem update)',
 });
 
 // --- Retorno de 3 casos (specs/memoria-conversacional-minima-v1.md, ajuste
-// do Segundo Code 2026-08-06): ultima-troca.ts encadeia seu CAS sobre este
-// valor, entao ele precisa refletir exatamente o que aconteceu na linha. ---
+// do Segundo Code 2026-08-06): historico-conversa.ts encadeia seu CAS sobre
+// este valor, entao ele precisa refletir exatamente o que aconteceu na linha. ---
 
 test('retorno: preservar devolve atualizado_em_da_decisao recebido, inalterado', async () => {
   const { cliente } = criarClienteRegistrador(1);

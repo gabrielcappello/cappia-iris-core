@@ -1,4 +1,4 @@
-import type { AlteracoesDados, CampoDadosConversa, ResultadoAplicarDados } from './tipos.ts';
+import type { AlteracoesDados, CampoDadosConversa, ParConversa, ResultadoAplicarDados } from './tipos.ts';
 
 // --- Classificacao canonica dos campos (specs/interpretacao-ia.md,
 // "Entrada e PII") ---
@@ -86,6 +86,19 @@ export interface EntradaInterpretacao {
   campos_cadastrais_preenchidos: CampoCadastralInterpretacao[];
   horarios_oferecidos?: string[];
   proposta_pendente?: { data: string; horario: string };
+  /**
+   * Ultimos turnos da conversa (specs/historico-conversacional-v1.md secao
+   * 6), do mais antigo para o mais recente, ja filtrados por validade (24h)
+   * -- permite entender mensagens curtas ou dependentes de contexto ("sim",
+   * "esse mesmo", "aquele que voce falou") exatamente como uma pessoa
+   * entenderia numa conversa real. AUSENTE quando nao ha nenhum par valido.
+   * Reversao declarada de memoria-conversacional-minima-v1.md ("a
+   * interpretadora nunca muda"): a evidencia real do WhatsApp (2026-08-07,
+   * "Sim" isolado virando nao_compreendida) mudou esse contexto. Nunca
+   * autoriza um dado novo por si so -- todo campo emitido continua sujeito
+   * ao mesmo vocabulario fechado.
+   */
+  historico_recente?: ParConversa[];
 }
 
 // Classificacao fechada do TIPO da mensagem atual (specs/interpretacao-

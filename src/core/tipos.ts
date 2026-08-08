@@ -42,23 +42,28 @@ export interface ContextoHorarios {
   criado_em: string;
 }
 
-// Par minimo da ultima troca (specs/memoria-conversacional-minima-v1.md).
-// Serve EXCLUSIVAMENTE para a IA redatora manter continuidade conversacional
-// no turno seguinte (piada, referencia a "o que voce falou", retomada apos
-// comentario lateral) -- nunca e fonte de fato operacional, nunca chega a IA
-// interpretadora. Sempre substitui o par anterior por inteiro; nunca acumula
-// historico (no maximo um par por vez).
-export interface UltimaTroca {
+// Um par completo de turno (specs/historico-conversacional-v1.md). Serve
+// para a IA interpretadora e a IA redatora entenderem a mensagem atual em
+// relacao ao que veio antes -- nunca e fonte de fato operacional. Sem
+// sanitizacao nesta V1 (spec secao 0.1, decisao de produto do Gabriel
+// 2026-08-07): o texto do paciente e gravado exatamente como chegou.
+export interface ParConversa {
   mensagem_paciente: string;
   /**
    * EXATAMENTE a resposta que foi enviada ao paciente -- redacao aprovada
    * pela guarda OU fallback deterministico efetivamente escolhido. Nunca um
-   * texto reprovado ou descartado (ultima-troca.ts secao de gravacao).
+   * texto reprovado ou descartado (historico-conversa.ts secao de gravacao).
    */
   resposta_iris: string;
   /** ISO -- quando a resposta foi gerada para envio. Nao significa entrega nem leitura pelo paciente. */
   gerada_em: string;
 }
+
+// Os ultimos MAX_PARES_HISTORICO pares (historico-conversa.ts), do mais
+// ANTIGO para o mais RECENTE. Ao entrar um par novo alem do limite, o mais
+// antigo sai (specs/historico-conversacional-v1.md secao 2). Nunca `[]` --
+// "nenhum turno anterior" e sempre `null`.
+export type HistoricoConversa = ParConversa[];
 
 export interface ResultadoIdentificacao {
   clinica_id: string;
@@ -75,7 +80,7 @@ export interface ResultadoIdentificacao {
     // sem reler antes do UPDATE -- ver contexto-horarios.ts.
     atualizado_em: string;
     contexto_horarios: ContextoHorarios | null;
-    ultima_troca: UltimaTroca | null;
+    historico_conversa: HistoricoConversa | null;
   };
 }
 

@@ -10,6 +10,7 @@ import { carregarEntradaDisponibilidade } from './carregar-disponibilidade.ts';
 import { carregarCatalogo } from './carregar-catalogo.ts';
 import { reservarAgendamento } from './reservar-agendamento.ts';
 import { derivarAcaoContextoHorarios, gravarContextoHorarios } from './contexto-horarios.ts';
+import { historicoValidoParaEnvio } from './historico-conversa.ts';
 import type { ClienteBancoDados } from './tipos.ts';
 import type { ClienteModeloEstruturado, NaturezaMensagem } from './interpretacao-tipos.ts';
 import type { ClienteRpc } from './mensagens-recebidas-tipos.ts';
@@ -42,6 +43,12 @@ export async function processarMensagem(
     telefone_normalizado: entrada.telefone_normalizado,
   });
 
+  // Filtro de validade (24h) aplicado AQUI, no ponto de leitura para a
+  // interpretadora (specs/historico-conversacional-v1.md secao 6) -- o
+  // valor cru (sem filtro) e o que segue para ResultadoOrquestrador.historico_conversa,
+  // usado depois na gravacao (seção 3 da mesma spec).
+  const historicoParaInterpretacao = historicoValidoParaEnvio(identificacao.conversa.historico_conversa, Date.now());
+
   const interpretacao = await interpretarEAplicar(clienteModelo, clienteBanco, {
     conversa_id: identificacao.conversa.id,
     clinica_id: identificacao.clinica_id,
@@ -61,6 +68,11 @@ export async function processarMensagem(
     ...(identificacao.conversa.contexto_horarios?.proposta_pendente !== undefined
       ? { proposta_pendente: identificacao.conversa.contexto_horarios.proposta_pendente }
       : {}),
+    // Ultimos turnos da conversa, quando houver algum dentro da janela de
+    // validade -- reversao declarada de memoria-conversacional-minima-v1.md
+    // (specs/historico-conversacional-v1.md secao 6): a interpretadora
+    // passa a receber contexto, nunca so a mensagem atual isolada.
+    ...(historicoParaInterpretacao !== undefined ? { historico_recente: historicoParaInterpretacao } : {}),
   });
 
   // `atualizado_em` EXATO do estado sobre o qual a decisao desta mensagem
@@ -100,7 +112,7 @@ export async function processarMensagem(
       decisao,
       atualizado_em: atualizadoEmFinal,
       natureza_mensagem: interpretacao.natureza_mensagem,
-      ultima_troca: identificacao.conversa.ultima_troca,
+      historico_conversa: identificacao.conversa.historico_conversa,
     };
   };
 

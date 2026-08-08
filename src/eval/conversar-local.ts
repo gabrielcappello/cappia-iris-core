@@ -4,7 +4,7 @@
 // (teste-cliente-falso.ts) -- some quando o processo termina.
 //
 // Objetivo: sentir como a Iris esta respondendo hoje (specs/resposta-
-// conversacional-v1.md + specs/memoria-conversacional-minima-v1.md), sem
+// conversacional-v1.md + specs/historico-conversacional-v1.md), sem
 // depender de aplicar migration, dar commit, nem esperar deploy.
 //
 // Cenario fixo, semeado no início (ver `semearClinicaDemo` abaixo):
@@ -16,8 +16,8 @@
 //
 // A cada mensagem, o fluxo e EXATAMENTE o mesmo do index.ts real: interpreta
 // -> decide -> grava contexto_horarios -> redige (guarda incluida) -> grava
-// ultima_troca. So o transporte (WhatsApp/Supabase) e trocado por um loop de
-// terminal e um dublê em memoria.
+// historico_conversa. So o transporte (WhatsApp/Supabase) e trocado por um
+// loop de terminal e um dublê em memoria.
 //
 // Chave: somente via variavel de ambiente OPENAI_API_KEY (a mesma ja
 // validada no cofre canonico, .iris-secrets/openai.env), carregada
@@ -32,7 +32,7 @@
 import { createInterface } from 'node:readline/promises';
 import { processarMensagem } from '../core/orquestrador.ts';
 import { gerarRespostaConversacional } from '../core/gerar-resposta-conversacional.ts';
-import { gravarUltimaTroca } from '../core/ultima-troca.ts';
+import { gravarHistoricoConversa } from '../core/historico-conversa.ts';
 import { ClienteFalso, criarTabelasFalsasVazias, type TabelasFalsas } from '../core/teste-cliente-falso.ts';
 import {
   criarClienteModeloOpenAI,
@@ -220,14 +220,15 @@ async function main(): Promise<void> {
           decisao: resultado.decisao,
           mensagemPaciente: mensagem,
           naturezaMensagem: resultado.natureza_mensagem,
-          ultimaTroca: resultado.ultima_troca,
+          historicoConversa: resultado.historico_conversa,
         });
 
-        await gravarUltimaTroca(clienteBanco, {
+        await gravarHistoricoConversa(clienteBanco, {
           conversa_id: resultado.conversa_id,
           clinica_id: resultado.clinica_id,
           telefone_normalizado: TELEFONE,
           atualizado_em_da_resposta: resultado.atualizado_em,
+          historico_anterior: resultado.historico_conversa,
           mensagem_paciente: mensagem,
           resposta_iris: resposta,
         });

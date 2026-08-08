@@ -384,8 +384,12 @@ async function processarTentativa(
     stream: false,
     background: false,
   };
-  // nenhuma chave 'tools' incluida em nenhuma hipotese; nenhum dado alem
-  // de mensagens_atuais/dados_atuais chega no corpo.
+  // nenhuma chave 'tools' incluida em nenhuma hipotese. Desde
+  // specs/historico-conversacional-v1.md (2026-08-07), o corpo tambem pode
+  // levar "historico_recente" (texto de conversa dos ultimos turnos, sem
+  // sanitizacao -- ver spec secao 0.1); nenhum valor cadastral estruturado
+  // (nome/cpf/data_nascimento/email) atravessa por fora de
+  // mensagens_atuais/dados_atuais/historico_recente.
 
   const resposta = await contexto.fetchInjetado(URL_RESPONSES, {
     method: 'POST',

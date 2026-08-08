@@ -7,7 +7,7 @@ import {
   validarSnapshotOficial,
 } from './interpretacao-extrator.ts';
 import { preAplicar } from './pre-aplicacao.ts';
-import type { ClienteBancoDados, ContextoConversa, ResultadoAplicarDados } from './tipos.ts';
+import type { ClienteBancoDados, ContextoConversa, ParConversa, ResultadoAplicarDados } from './tipos.ts';
 import type {
   ClienteModeloEstruturado,
   Conflito,
@@ -31,10 +31,17 @@ export interface InterpretarEAplicarInput extends ContextoConversa {
    * influencia persistencia, disponibilidade ou reserva.
    */
   proposta_pendente?: { data: string; horario: string };
+  /**
+   * Ultimos turnos da conversa (contexto-horarios.ts padrao, historico-
+   * conversa.ts), ja filtrados por validade. Repassado a IA como contexto de
+   * interpretacao (specs/historico-conversacional-v1.md secao 6); nunca
+   * influencia persistencia, disponibilidade ou reserva.
+   */
+  historico_recente?: ParConversa[];
 }
 
 const CHAVES_ENTRADA_INTEGRADA = ['conversa_id', 'clinica_id', 'telefone_normalizado', 'mensagens_atuais'] as const;
-const CHAVES_OPCIONAIS_INTEGRADA = ['horarios_oferecidos', 'proposta_pendente'] as const;
+const CHAVES_OPCIONAIS_INTEGRADA = ['horarios_oferecidos', 'proposta_pendente', 'historico_recente'] as const;
 
 /**
  * Orquestracao minima: valida o contexto (reutilizando a validacao
@@ -78,7 +85,13 @@ export async function interpretarEAplicar(
   // reconciliacao adiante.
   const saida = await extrairAlteracoes(
     clienteModelo,
-    construirEntradaMinimizada(entrada.mensagens_atuais, snapshotOficial, entrada.horarios_oferecidos, entrada.proposta_pendente)
+    construirEntradaMinimizada(
+      entrada.mensagens_atuais,
+      snapshotOficial,
+      entrada.horarios_oferecidos,
+      entrada.proposta_pendente,
+      entrada.historico_recente
+    )
   );
 
   // 6. pre-aplicacao deterministica usando o mesmo snapshot.

@@ -149,9 +149,9 @@ export interface GravarContextoHorariosEntrada {
  *
  * Retorno (specs/memoria-conversacional-minima-v1.md, ajuste do Segundo
  * Code 2026-08-06): exatamente um destes tres, nunca um quarto caso --
- * `ultima-troca.ts` encadeia seu proprio CAS sobre este valor, entao ele
- * precisa refletir o que REALMENTE aconteceu na linha, nao apenas "terminou
- * sem lancar":
+ * `historico-conversa.ts` encadeia seu proprio CAS sobre este valor, entao
+ * ele precisa refletir o que REALMENTE aconteceu na linha, nao apenas
+ * "terminou sem lancar":
  *
  * - `preservar` (nenhum UPDATE emitido): devolve `atualizado_em_da_decisao`
  *   recebido, inalterado.
@@ -161,7 +161,7 @@ export interface GravarContextoHorariosEntrada {
  * - CAS falho (`.maybeSingle()` devolveu `null`, zero linhas afetadas) OU
  *   excecao do cliente: devolve `atualizado_em_da_decisao` recebido,
  *   inalterado -- DELIBERADAMENTE obsoleto. Nao e um vazamento de erro: e o
- *   mecanismo pelo qual o CAS seguinte de ultima_troca falha por conta
+ *   mecanismo pelo qual o CAS seguinte de historico_conversa falha por conta
  *   propria e abandona, exatamente como uma operacao obsoleta deve se
  *   comportar. Nenhuma releitura para "descobrir" o valor novo.
  */

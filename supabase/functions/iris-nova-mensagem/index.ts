@@ -8,7 +8,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { processarMensagem } from "./orquestrador.ts";
 import { gerarRespostaConversacional } from "./gerar-resposta-conversacional.ts";
-import { gravarUltimaTroca } from "./ultima-troca.ts";
+import { gravarHistoricoConversa } from "./historico-conversa.ts";
 import {
   criarClienteModeloOpenAI,
   ESPERA_ENTRE_TENTATIVAS_MS_APROVADO,
@@ -149,23 +149,25 @@ Deno.serve(async (req: Request) => {
       decisao: resultado.decisao,
       mensagemPaciente: payload.mensagem,
       naturezaMensagem: resultado.natureza_mensagem,
-      ultimaTroca: resultado.ultima_troca,
+      historicoConversa: resultado.historico_conversa,
     });
     if (motivo_fallback !== null) {
       console.log(`resposta_conversacional_fallback decisao=${resultado.decisao.tipo} motivo=${motivo_fallback}`);
     }
 
-    // specs/memoria-conversacional-minima-v1.md: gravada DEPOIS que a
-    // resposta final ja existe, com `resposta_iris` sendo exatamente o que
-    // vai ao paciente (aprovado pela guarda ou fallback). CAS encadeado
-    // sobre `resultado.atualizado_em` -- o valor que gravarContextoHorarios
+    // specs/historico-conversacional-v1.md: gravada DEPOIS que a resposta
+    // final ja existe, com `resposta_iris` sendo exatamente o que vai ao
+    // paciente (aprovado pela guarda ou fallback). CAS encadeado sobre
+    // `resultado.atualizado_em` -- o valor que gravarContextoHorarios
     // devolveu para este turno, nunca relido. Auxiliar/best-effort: nunca
-    // lanca, nunca altera a resposta ja decidida.
-    await gravarUltimaTroca(clienteBanco, {
+    // lanca, nunca altera a resposta ja decidida. Sem sanitizacao nesta V1
+    // (spec secao 0.1) -- o texto e gravado exatamente como chegou.
+    await gravarHistoricoConversa(clienteBanco, {
       conversa_id: resultado.conversa_id,
       clinica_id: resultado.clinica_id,
       telefone_normalizado: payload.telefone_normalizado,
       atualizado_em_da_resposta: resultado.atualizado_em,
+      historico_anterior: resultado.historico_conversa,
       mensagem_paciente: payload.mensagem,
       resposta_iris: resposta,
     });

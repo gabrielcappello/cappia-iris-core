@@ -10,7 +10,7 @@ import type { Conflito, NaturezaMensagem } from './interpretacao-tipos.ts';
 import type { InstanteAtual, OpcaoHorario, ResultadoDisponibilidade } from './disponibilidade-tipos.ts';
 import type { ResultadoResolucaoTemporal } from './temporal-tipos.ts';
 import type { MotivoErroReserva } from './reservar-agendamento.ts';
-import type { UltimaTroca } from './tipos.ts';
+import type { HistoricoConversa } from './tipos.ts';
 
 /**
  * Catalogo de UMA clinica. Montado internamente pelo orquestrador, via
@@ -128,10 +128,9 @@ export interface ResultadoOrquestrador {
    * `atualizado_em` da linha APOS a gravacao do snapshot de horarios desta
    * mensagem -- o valor que `gravarContextoHorarios` devolveu (ver seu
    * comentario para o contrato de 3 casos). Exposto (aditivo,
-   * specs/memoria-conversacional-minima-v1.md) para que a gravacao de
-   * `ultima_troca`, que so acontece depois que a resposta final existe
-   * (fora do orquestrador), encadeie seu CAS sobre este valor exato, sem
-   * reler.
+   * specs/memoria-conversacional-minima-v1.md) para que a gravacao do
+   * historico, que so acontece depois que a resposta final existe (fora do
+   * orquestrador), encadeie seu CAS sobre este valor exato, sem reler.
    */
   atualizado_em: string;
   /**
@@ -141,10 +140,13 @@ export interface ResultadoOrquestrador {
    */
   natureza_mensagem: NaturezaMensagem;
   /**
-   * Par da ultima troca, lido no INICIO deste turno (antes de qualquer
-   * escrita) -- `null` quando nao ha turno anterior. O filtro de validade
-   * (24h) e aplicado no ponto de leitura para a redatora
-   * (gerar-resposta-conversacional.ts), nunca aqui.
+   * Historico conversacional (ate 10 pares), lido no INICIO deste turno
+   * (antes de qualquer escrita) -- `null` quando nao ha nenhum turno
+   * anterior. SEM filtro de validade aqui: e sobre este valor cru que a
+   * gravacao anexa o par novo (specs/historico-conversacional-v1.md secao
+   * 3). O filtro de idade (24h) e aplicado no ponto de leitura para os dois
+   * modelos (orquestrador.ts, para a interpretadora; gerar-resposta-
+   * conversacional.ts, para a redatora), nunca aqui.
    */
-  ultima_troca: UltimaTroca | null;
+  historico_conversa: HistoricoConversa | null;
 }

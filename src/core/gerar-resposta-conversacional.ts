@@ -16,11 +16,11 @@ import { derivarFatosAutorizados } from './fatos-autorizados.ts';
 import { verificarRespostaRedatora } from './guarda-resposta-redatora.ts';
 import { gerarRespostaPaciente } from './gerar-resposta-paciente.ts';
 import { INSTRUCOES_REDATOR } from './redator-instrucoes.ts';
-import { ultimaTrocaValidaParaEnvio } from './ultima-troca.ts';
+import { historicoValidoParaEnvio } from './historico-conversa.ts';
 import type { ClienteModeloRedator } from './cliente-modelo-redator-openai.ts';
 import type { DecisaoOrquestrador } from './orquestrador-tipos.ts';
 import type { NaturezaMensagem } from './interpretacao-tipos.ts';
-import type { UltimaTroca } from './tipos.ts';
+import type { HistoricoConversa } from './tipos.ts';
 
 export type MotivoFallbackResposta = 'redator_nao_configurado' | 'falha_redatora' | 'texto_vazio' | 'horario_nao_autorizado';
 
@@ -36,12 +36,12 @@ export interface GerarRespostaConversacionalEntrada {
   naturezaMensagem: NaturezaMensagem;
   nomeClinica?: string;
   /**
-   * Valor CRU lido no inicio do turno (ResultadoOrquestrador.ultima_troca) --
-   * `null` quando nao ha turno anterior. O filtro de validade (24h) e
-   * aplicado AQUI, no ponto de leitura para a redatora
-   * (specs/memoria-conversacional-minima-v1.md secao 3), nunca antes.
+   * Valor CRU lido no inicio do turno (ResultadoOrquestrador.historico_conversa)
+   * -- `null` quando nao ha nenhum turno anterior. O filtro de validade (24h)
+   * e aplicado AQUI, no ponto de leitura para a redatora
+   * (specs/historico-conversacional-v1.md secao 6), nunca antes.
    */
-  ultimaTroca: UltimaTroca | null;
+  historicoConversa: HistoricoConversa | null;
 }
 
 /**
@@ -55,7 +55,7 @@ export async function gerarRespostaConversacional(
   entrada: GerarRespostaConversacionalEntrada
 ): Promise<ResultadoRespostaConversacional> {
   const fatos = derivarFatosAutorizados(entrada.decisao);
-  const ultimaTrocaParaEnvio = ultimaTrocaValidaParaEnvio(entrada.ultimaTroca, Date.now());
+  const historicoParaEnvio = historicoValidoParaEnvio(entrada.historicoConversa, Date.now());
 
   if (clienteRedator === null) {
     return { resposta: gerarRespostaPaciente(entrada.decisao), motivo_fallback: 'redator_nao_configurado' };
@@ -68,7 +68,7 @@ export async function gerarRespostaConversacional(
       mensagemPaciente: entrada.mensagemPaciente,
       naturezaMensagem: entrada.naturezaMensagem,
       fatos,
-      ...(ultimaTrocaParaEnvio !== undefined ? { ultimaTroca: ultimaTrocaParaEnvio } : {}),
+      ...(historicoParaEnvio !== undefined ? { historicoRecente: historicoParaEnvio } : {}),
       ...(entrada.nomeClinica !== undefined ? { nomeClinica: entrada.nomeClinica } : {}),
     });
   } catch {

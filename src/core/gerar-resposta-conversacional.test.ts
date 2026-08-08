@@ -1,22 +1,22 @@
 // Testes de gerar-resposta-conversacional.ts -- fallback determinístico em
 // qualquer ponto de falha (specs/resposta-conversacional-v1.md secao 6) e
-// memoria conversacional minima (specs/memoria-conversacional-minima-v1.md).
+// historico conversacional recente (specs/historico-conversacional-v1.md).
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { gerarRespostaConversacional } from './gerar-resposta-conversacional.ts';
 import { gerarRespostaPaciente } from './gerar-resposta-paciente.ts';
-import { VALIDADE_ULTIMA_TROCA_MS } from './ultima-troca.ts';
+import { VALIDADE_HISTORICO_MS } from './historico-conversa.ts';
 import type { ClienteModeloRedator, EntradaRedator } from './cliente-modelo-redator-openai.ts';
 import type { DecisaoOrquestrador } from './orquestrador-tipos.ts';
-import type { UltimaTroca } from './tipos.ts';
+import type { HistoricoConversa } from './tipos.ts';
 
 const DECISAO_SAUDACAO: DecisaoOrquestrador = { tipo: 'saudacao' };
 
 // Entrada base para os testes que nao se importam com naturezaMensagem/
-// ultimaTroca -- explicita em vez de omitida, seguindo a mesma regra que a
-// propria redatora segue ("ausencia de fato nao e fato").
-const BASE = { naturezaMensagem: 'saudacao' as const, ultimaTroca: null };
+// historicoConversa -- explicita em vez de omitida, seguindo a mesma regra
+// que a propria redatora segue ("ausencia de fato nao e fato").
+const BASE = { naturezaMensagem: 'saudacao' as const, historicoConversa: null };
 
 function clienteQueRetorna(texto: string): ClienteModeloRedator {
   return { redigir: async () => texto };
@@ -150,7 +150,7 @@ test('a redatora recebe natureza_mensagem repassada sem alteracao', async () => 
     decisao: DECISAO_SAUDACAO,
     mensagemPaciente: 'oi',
     naturezaMensagem: 'duvida',
-    ultimaTroca: null,
+    historicoConversa: null,
   });
   assert.equal(capturada[0].naturezaMensagem, 'duvida');
 });
@@ -164,54 +164,73 @@ test('motivo_fallback nunca aparece dentro do texto da resposta (e so telemetria
   assert.ok(!resultado.resposta.includes('falha_redatora'));
 });
 
-// --- memoria conversacional minima (specs/memoria-conversacional-minima-v1.md) ---
+// --- historico conversacional recente (specs/historico-conversacional-v1.md) ---
 
-function trocaComIdade(idadeMs: number): UltimaTroca {
-  return {
-    mensagem_paciente: 'quero limpeza amanha',
-    resposta_iris: 'Perfeito! Tenho 14:00 amanhã, confirmo?',
-    gerada_em: new Date(Date.now() - idadeMs).toISOString(),
-  };
+function historicoComIdade(idadeMs: number): HistoricoConversa {
+  return [
+    {
+      mensagem_paciente: 'quero limpeza amanha',
+      resposta_iris: 'Perfeito! Tenho 14:00 amanhã, confirmo?',
+      gerada_em: new Date(Date.now() - idadeMs).toISOString(),
+    },
+  ];
 }
 
-test('ultima_troca null: nunca chega a EntradaRedator (campo ausente, nunca null)', async () => {
+test('historicoConversa null: nunca chega a EntradaRedator (campo ausente, nunca null)', async () => {
   const { cliente, capturada } = clienteQueCaptura();
-  await gerarRespostaConversacional(cliente, { decisao: DECISAO_SAUDACAO, mensagemPaciente: 'oi', naturezaMensagem: 'saudacao', ultimaTroca: null });
-  assert.equal('ultimaTroca' in capturada[0], false);
+  await gerarRespostaConversacional(cliente, { decisao: DECISAO_SAUDACAO, mensagemPaciente: 'oi', naturezaMensagem: 'saudacao', historicoConversa: null });
+  assert.equal('historicoRecente' in capturada[0], false);
 });
 
-test('ultima_troca dentro da janela de 24h: chega intacta a EntradaRedator', async () => {
+test('historicoConversa dentro da janela de 24h: chega intacta a EntradaRedator', async () => {
   const { cliente, capturada } = clienteQueCaptura();
-  const troca = trocaComIdade(60 * 60 * 1000); // 1h atras
+  const historico = historicoComIdade(60 * 60 * 1000); // 1h atras
   await gerarRespostaConversacional(cliente, {
     decisao: DECISAO_SAUDACAO,
     mensagemPaciente: 'esse mesmo',
     naturezaMensagem: 'resposta',
-    ultimaTroca: troca,
+    historicoConversa: historico,
   });
-  assert.deepEqual(capturada[0].ultimaTroca, troca);
+  assert.deepEqual(capturada[0].historicoRecente, historico);
 });
 
-test('ultima_troca expirada (> 24h): omitida do payload, nunca enviada', async () => {
+test('historicoConversa totalmente expirado (> 24h): omitido do payload, nunca enviado', async () => {
   const { cliente, capturada } = clienteQueCaptura();
-  const troca = trocaComIdade(VALIDADE_ULTIMA_TROCA_MS + 1000);
+  const historico = historicoComIdade(VALIDADE_HISTORICO_MS + 1000);
   await gerarRespostaConversacional(cliente, {
     decisao: DECISAO_SAUDACAO,
     mensagemPaciente: 'esse mesmo',
     naturezaMensagem: 'resposta',
-    ultimaTroca: troca,
+    historicoConversa: historico,
   });
-  assert.equal('ultimaTroca' in capturada[0], false);
+  assert.equal('historicoRecente' in capturada[0], false);
 });
 
-test('ultima_troca exatamente no limite da janela ainda e enviada (fronteira inclusiva)', async () => {
+test('historicoConversa exatamente no limite da janela ainda e enviado (fronteira inclusiva)', async () => {
   const { cliente, capturada } = clienteQueCaptura();
-  const troca = trocaComIdade(VALIDADE_ULTIMA_TROCA_MS);
+  const historico = historicoComIdade(VALIDADE_HISTORICO_MS);
   await gerarRespostaConversacional(cliente, {
     decisao: DECISAO_SAUDACAO,
     mensagemPaciente: 'esse mesmo',
     naturezaMensagem: 'resposta',
-    ultimaTroca: troca,
+    historicoConversa: historico,
   });
-  assert.deepEqual(capturada[0].ultimaTroca, troca);
+  assert.deepEqual(capturada[0].historicoRecente, historico);
+});
+
+test('historicoConversa com 3 pares dentro da janela e 2 expirados: so os 3 chegam a EntradaRedator, ordem preservada', async () => {
+  const { cliente, capturada } = clienteQueCaptura();
+  const antigos = [historicoComIdade(VALIDADE_HISTORICO_MS + 1000)[0], historicoComIdade(VALIDADE_HISTORICO_MS + 2000)[0]];
+  const recentes = [
+    { mensagem_paciente: 'a', resposta_iris: 'resp a', gerada_em: new Date(Date.now() - 3000).toISOString() },
+    { mensagem_paciente: 'b', resposta_iris: 'resp b', gerada_em: new Date(Date.now() - 2000).toISOString() },
+    { mensagem_paciente: 'c', resposta_iris: 'resp c', gerada_em: new Date(Date.now() - 1000).toISOString() },
+  ];
+  await gerarRespostaConversacional(cliente, {
+    decisao: DECISAO_SAUDACAO,
+    mensagemPaciente: 'oi',
+    naturezaMensagem: 'resposta',
+    historicoConversa: [...antigos, ...recentes],
+  });
+  assert.deepEqual(capturada[0].historicoRecente, recentes);
 });

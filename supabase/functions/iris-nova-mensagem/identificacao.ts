@@ -1,24 +1,26 @@
 import { ClinicaNaoEncontradaError, EntradaInvalidaError } from './erros.ts';
 import { telefoneNormalizadoValido } from './telefone.ts';
 import { validarContextoHorarios } from './contexto-horarios.ts';
-import { validarUltimaTroca } from './ultima-troca.ts';
+import { validarHistoricoConversa } from './historico-conversa.ts';
 import type {
   ClienteBancoDados,
   ContextoHorarios,
   EstadoConversa,
+  HistoricoConversa,
   IdentificarConversaInput,
   ResultadoIdentificacao,
-  UltimaTroca,
 } from './tipos.ts';
 
 // Colunas lidas de estado_conversa por este modulo. `atualizado_em` e
 // `contexto_horarios` sao aditivas (specs/contexto-pendente-interpretacao-v1.md):
 // a primeira permite gravar o snapshot com CAS sobre o estado EXATO da decisao,
 // sem reler; a segunda alimenta a interpretacao do turno seguinte.
-// `ultima_troca` (specs/memoria-conversacional-minima-v1.md) e a mesma ideia
-// para a camada de redacao: memoria de um unico turno, nunca enviada a IA
-// interpretadora.
-const COLUNAS_ESTADO_CONVERSA = 'id, estado, dados, paciente_id, atualizado_em, contexto_horarios, ultima_troca';
+// `historico_conversa` (specs/historico-conversacional-v1.md) e os ultimos 10
+// pares da conversa, enviados tanto a IA interpretadora quanto a redatora.
+// `ultima_troca` (coluna legada, specs/memoria-conversacional-minima-v1.md)
+// deixa de ser lida por este modulo -- permanece no banco ate a migration de
+// remocao (spec secao 0.2), mas nenhum codigo novo a consulta.
+const COLUNAS_ESTADO_CONVERSA = 'id, estado, dados, paciente_id, atualizado_em, contexto_horarios, historico_conversa';
 
 interface LinhaEstadoConversa {
   id: string;
@@ -27,7 +29,7 @@ interface LinhaEstadoConversa {
   paciente_id: string | null;
   atualizado_em: string;
   contexto_horarios: ContextoHorarios | null;
-  ultima_troca: UltimaTroca | null;
+  historico_conversa: HistoricoConversa | null;
 }
 
 // Mesmo vocabulario canonico de EstadoConversa (tipos.ts) -- os seis estados
@@ -72,8 +74,8 @@ function validarLinhaEstadoConversa(valor: Record<string, unknown>): LinhaEstado
     // auxiliar de interpretacao, entao vira `null` e a conversa segue sem
     // ele. Nada operacional depende deste campo.
     contexto_horarios: validarContextoHorarios(valor.contexto_horarios),
-    // Mesma falha ABERTA, mesmo motivo -- ver ultima-troca.ts.
-    ultima_troca: validarUltimaTroca(valor.ultima_troca),
+    // Mesma falha ABERTA, mesmo motivo -- ver historico-conversa.ts.
+    historico_conversa: validarHistoricoConversa(valor.historico_conversa),
   };
 }
 
@@ -115,7 +117,7 @@ export async function identificarConversa(
       dados: (conversa.dados as Record<string, unknown>) ?? {},
       atualizado_em: conversa.atualizado_em,
       contexto_horarios: conversa.contexto_horarios,
-      ultima_troca: conversa.ultima_troca,
+      historico_conversa: conversa.historico_conversa,
     },
   };
 }

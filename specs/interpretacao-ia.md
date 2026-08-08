@@ -1070,7 +1070,14 @@ Regras:
 - `mensagens_atuais` contém somente a mensagem atual ou mensagens agrupadas na mesma
   janela de debounce do transporte;
 - preservar ordem cronológica;
-- nunca enviar histórico textual de turnos anteriores;
+- ~~nunca enviar histórico textual de turnos anteriores~~ — **SUPERADO em 2026-08-07**
+  por `specs/historico-conversacional-v1.md`: o campo opcional `historico_recente`
+  (até 10 pares `{mensagem_paciente, resposta_iris, gerada_em}`, texto de conversa **sem
+  sanitização** — ver spec seção 0.1) passa a atravessar para a interpretadora, separado
+  de `mensagens_atuais`. Motivo: evidência real do WhatsApp mostrou um "Sim" isolado
+  classificado como `nao_compreendida` por falta de contexto. Item de agenda: revisar
+  minimização desses dados quando o fluxo de cadastro completo existir (mesma spec,
+  seção 11) — não é pré-condição de funcionamento hoje;
 - não enviar ao modelo valores cadastrais antigos — enviar somente **quais** campos
   cadastrais já estão preenchidos (`campos_cadastrais_preenchidos`), nunca os valores em
   si;

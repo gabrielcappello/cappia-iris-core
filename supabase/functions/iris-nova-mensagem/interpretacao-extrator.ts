@@ -6,7 +6,7 @@ import {
   CAMPOS_OPERACIONAIS_INTERPRETACAO,
   NATUREZAS_MENSAGEM_PERMITIDAS,
 } from './interpretacao-tipos.ts';
-import type { AcaoAlteracaoDados, CampoDadosConversa } from './tipos.ts';
+import type { AcaoAlteracaoDados, CampoDadosConversa, ParConversa } from './tipos.ts';
 import type {
   CampoCadastralInterpretacao,
   CampoOperacionalInterpretacao,
@@ -44,6 +44,7 @@ export async function extrairAlteracoes(
       ? { horarios_oferecidos: [...entradaBruta.horarios_oferecidos] }
       : {}),
     ...(entradaBruta.proposta_pendente !== undefined ? { proposta_pendente: entradaBruta.proposta_pendente } : {}),
+    ...(entradaBruta.historico_recente !== undefined ? { historico_recente: [...entradaBruta.historico_recente] } : {}),
   };
 
   const saidaBruta = await cliente.executar({
@@ -69,7 +70,8 @@ export function construirEntradaMinimizada(
   mensagensAtuais: string[],
   snapshotOficial: SnapshotOficialConversa,
   horariosOferecidos?: string[],
-  propostaPendente?: { data: string; horario: string }
+  propostaPendente?: { data: string; horario: string },
+  historicoRecente?: ParConversa[]
 ): EntradaInterpretacao {
   return {
     mensagens_atuais: [...mensagensAtuais],
@@ -77,6 +79,7 @@ export function construirEntradaMinimizada(
     campos_cadastrais_preenchidos: derivarCamposCadastraisPreenchidos(snapshotOficial),
     ...(horariosOferecidos !== undefined ? { horarios_oferecidos: [...horariosOferecidos] } : {}),
     ...(propostaPendente !== undefined ? { proposta_pendente: propostaPendente } : {}),
+    ...(historicoRecente !== undefined ? { historico_recente: [...historicoRecente] } : {}),
   };
 }
 
@@ -118,7 +121,7 @@ const CHAVES_ENTRADA_INTERPRETACAO = [
 // Chaves opcionais: podem estar ausentes, mas quando presentes precisam ser
 // validadas. A entrada continua FECHADA -- qualquer chave fora da uniao
 // (obrigatorias + opcionais) rejeita a entrada inteira, como sempre.
-const CHAVES_OPCIONAIS_INTERPRETACAO = ['horarios_oferecidos', 'proposta_pendente'] as const;
+const CHAVES_OPCIONAIS_INTERPRETACAO = ['horarios_oferecidos', 'proposta_pendente', 'historico_recente'] as const;
 
 export function validarEntradaInterpretacao(entrada: unknown): asserts entrada is EntradaInterpretacao {
   if (entrada === null || typeof entrada !== 'object' || Array.isArray(entrada)) {
@@ -139,13 +142,14 @@ export function validarEntradaInterpretacao(entrada: unknown): asserts entrada i
     throw new EntradaInvalidaError('entrada', 'entrada contem propriedade nao permitida');
   }
 
-  const { mensagens_atuais, dados_atuais, campos_cadastrais_preenchidos, horarios_oferecidos, proposta_pendente } =
+  const { mensagens_atuais, dados_atuais, campos_cadastrais_preenchidos, horarios_oferecidos, proposta_pendente, historico_recente } =
     entrada as Record<string, unknown>;
   validarMensagensAtuais(mensagens_atuais);
   validarDadosAtuais(dados_atuais);
   validarCamposCadastraisPreenchidos(campos_cadastrais_preenchidos);
   if (horarios_oferecidos !== undefined) validarHorariosOferecidos(horarios_oferecidos);
   if (proposta_pendente !== undefined) validarPropostaPendente(proposta_pendente);
+  if (historico_recente !== undefined) validarHistoricoRecente(historico_recente);
 }
 
 /**
@@ -191,6 +195,42 @@ export function validarHorariosOferecidos(valor: unknown): asserts valor is stri
   for (const horario of valor) {
     if (typeof horario !== 'string' || horario.trim() === '') {
       throw new EntradaInvalidaError('horarios_oferecidos', 'horarios_oferecidos contem item que nao e string nao vazia');
+    }
+  }
+}
+
+/**
+ * Ultimos turnos da conversa (historico-conversa.ts). Fechada a arrays nao
+ * vazios de pares {mensagem_paciente, resposta_iris, gerada_em}, todos
+ * strings nao vazias -- "nenhum turno anterior" se representa pela AUSENCIA
+ * da chave, nunca por `[]`, pelo mesmo motivo de horarios_oferecidos. Nao
+ * valida ordem cronologica nem janela de validade: quem produz este valor e
+ * sempre o proprio Core (historicoValidoParaEnvio), nunca a IA nem o paciente.
+ */
+export function validarHistoricoRecente(valor: unknown): asserts valor is { mensagem_paciente: string; resposta_iris: string; gerada_em: string }[] {
+  if (!Array.isArray(valor)) {
+    throw new EntradaInvalidaError('historico_recente', 'historico_recente deve ser um array');
+  }
+  if (valor.length === 0) {
+    throw new EntradaInvalidaError('historico_recente', 'historico_recente nao pode ser um array vazio');
+  }
+  for (const par of valor) {
+    if (par === null || typeof par !== 'object' || Array.isArray(par)) {
+      throw new EntradaInvalidaError('historico_recente', 'historico_recente contem item que nao e objeto');
+    }
+    const chaves = Object.keys(par as Record<string, unknown>).sort();
+    if (JSON.stringify(chaves) !== JSON.stringify(['gerada_em', 'mensagem_paciente', 'resposta_iris'])) {
+      throw new EntradaInvalidaError('historico_recente', 'historico_recente contem par com chaves diferentes de mensagem_paciente/resposta_iris/gerada_em');
+    }
+    const { mensagem_paciente, resposta_iris, gerada_em } = par as Record<string, unknown>;
+    if (typeof mensagem_paciente !== 'string' || mensagem_paciente.trim() === '') {
+      throw new EntradaInvalidaError('historico_recente', 'historico_recente contem mensagem_paciente invalida');
+    }
+    if (typeof resposta_iris !== 'string' || resposta_iris.trim() === '') {
+      throw new EntradaInvalidaError('historico_recente', 'historico_recente contem resposta_iris invalida');
+    }
+    if (typeof gerada_em !== 'string' || Number.isNaN(Date.parse(gerada_em))) {
+      throw new EntradaInvalidaError('historico_recente', 'historico_recente contem gerada_em invalida');
     }
   }
 }

@@ -15,7 +15,7 @@
 
 import type { FatosAutorizados } from './fatos-autorizados.ts';
 import type { NaturezaMensagem } from './interpretacao-tipos.ts';
-import type { UltimaTroca } from './tipos.ts';
+import type { ParConversa } from './tipos.ts';
 
 const URL_RESPONSES = 'https://api.openai.com/v1/responses';
 const MAX_OUTPUT_TOKENS = 300;
@@ -32,8 +32,8 @@ export interface EntradaRedator {
   naturezaMensagem: NaturezaMensagem;
   fatos: FatosAutorizados;
   nomeClinica?: string;
-  /** Par do turno anterior, quando dentro da janela de validade -- AUSENTE (nunca `null`) quando nao ha ou expirou. Ver ultima-troca.ts. */
-  ultimaTroca?: UltimaTroca;
+  /** Ultimos turnos da conversa, quando dentro da janela de validade -- AUSENTE (nunca `null`) quando nao ha nenhum. Ver historico-conversa.ts. */
+  historicoRecente?: ParConversa[];
 }
 
 export interface ClienteModeloRedator {
@@ -85,7 +85,7 @@ export function criarClienteModeloRedatorOpenAI(configuracao: ConfiguracaoClient
                 mensagem_paciente: entrada.mensagemPaciente,
                 natureza_mensagem: entrada.naturezaMensagem,
                 fatos_autorizados: entrada.fatos,
-                ...(entrada.ultimaTroca !== undefined ? { ultima_troca: entrada.ultimaTroca } : {}),
+                ...(entrada.historicoRecente !== undefined ? { historico_recente: entrada.historicoRecente } : {}),
                 ...(entrada.nomeClinica !== undefined ? { nome_clinica: entrada.nomeClinica } : {}),
               }),
             },

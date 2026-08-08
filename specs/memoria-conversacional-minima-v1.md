@@ -1,5 +1,15 @@
 # Memória conversacional mínima — V1
 
+> **SUPERADA em 2026-08-07 por `specs/historico-conversacional-v1.md`** (implementada e
+> em produção). O mecanismo de 1 par (`ultima_troca`) foi substituído por um histórico de
+> até 10 pares (`historico_conversa`), usado pela IA interpretadora **e** pela redatora —
+> nunca só pela redatora, como esta spec estabelecia. Nunca apagada: seções 2 (momento da
+> gravação, nunca gravar texto reprovado) e a "consequência estrutural" (retorno de
+> `gravarContextoHorarios`, `ResultadoOrquestrador.atualizado_em`/`natureza_mensagem`)
+> continuam valendo integralmente e foram pré-requisito da spec nova. Ver
+> `historico-conversacional-v1.md` seção 9 para o mapeamento completo do que morreu e do
+> que sobreviveu.
+
 **Status:** aprovada conceitualmente pelo Gabriel em 2026-08-06 (seis decisões
 incorporadas abaixo). Enviada para revisão independente do Segundo Code — **somente
 leitura**. Não implementada. Não autoriza código, migration, alteração de banco, painel
@@ -109,6 +119,12 @@ A IA redatora passa a receber:
 janela de conversa, nenhum turno anterior. A memória conversacional é exclusivamente da
 camada de redação; a interpretação segue sendo um classificador de mão única.
 
+> **SUPERADO em 2026-08-07** (`specs/contexto-conversacional-interpretadora-v1.md`):
+> teste real no WhatsApp mostrou que "Sim", sem nenhum contexto, é classificado como
+> `nao_compreendida` — a interpretadora também precisa saber o que a Iris acabou de
+> dizer. Este parágrafo e a linha correspondente na seção 5 (abaixo) não valem mais;
+> ver a spec nova para o contrato atual.
+
 ### Omissão por idade — 24h, constante explícita
 
 `ultima_troca` só é enviada à redatora quando `gerada_em` estiver dentro da janela de
@@ -213,7 +229,8 @@ Nenhuma decisão, nenhum estado e nenhum relógio a apaga.
 - `ultima_troca` com `gerada_em` dentro de `VALIDADE_ULTIMA_TROCA_MS` é enviada; fora
   dela é **omitida** do payload (nunca `null`, nunca objeto vazio);
 - expiração **não** apaga a coluna — depois de expirada, o valor continua na linha;
-- `ultima_troca` **nunca** chega à IA interpretadora;
+- `ultima_troca` **nunca** chega à IA interpretadora — **SUPERADO em 2026-08-07**, ver
+  `specs/contexto-conversacional-interpretadora-v1.md`;
 - `reserva_criada` **não** limpa `ultima_troca`;
 - falha da gravação **não** altera a resposta devolvida ao paciente;
 - **encadeamento dos dois CAS, no mesmo turno:** `contexto_horarios` é gravado com

@@ -1,0 +1,78 @@
+-- Iris Nova - historico conversacional recente em estado_conversa (banco
+-- operacional legado, udizowyfjnhuhgxkeayk).
+--
+-- Projeto-alvo: udizowyfjnhuhgxkeayk (banco operacional real, com painel e
+-- WhatsApp ativo). PROIBIDO aplicar em bcmuqautblvjdqzhjfbw (ambiente
+-- isolado de desenvolvimento e testes da Iris Nova, que tem migration irma
+-- propria em src/supabase/migrations/) ou em qualquer outro projeto. Pasta
+-- separada (migrations-legado/) pelo mesmo motivo das migrations irmas
+-- anteriores: evitar mistura com a convencao de src/supabase/migrations/,
+-- cujo alvo e bcmuqautblvjdqzhjfbw.
+--
+-- Base normativa: specs/historico-conversacional-v1.md (aprovada pelo
+-- Gabriel em 2026-08-07).
+--
+-- Origem: a memoria de 1 turno (`ultima_troca`, specs/memoria-conversacional-
+-- minima-v1.md, ja em producao) so alimentava a IA REDATORA. Teste real no
+-- WhatsApp em 2026-08-07 mostrou que a IA INTERPRETADORA tambem precisa de
+-- contexto -- um "Sim" isolado, sem saber a que pergunta ele respondia, foi
+-- classificado como nao_compreendida. Esta coluna substitui `ultima_troca`
+-- por um historico de ate 10 pares, usado pelos DOIS modelos.
+--
+-- Primeira etapa da estrategia de migracao (spec secao 0.2 / 9): esta
+-- migration APENAS ADICIONA a coluna nova. A coluna legada `ultima_troca`
+-- NAO e tocada nem removida aqui -- a remocao e uma migration SEPARADA,
+-- aplicada somente depois de deploy e validacao real em producao com a
+-- coluna nova.
+--
+-- ESCOPO -- estritamente aditivo, 1 tabela, 1 coluna, nenhum dado alterado,
+-- nenhuma constraint, nenhuma mudanca de ACL ou RLS:
+--
+--   estado_conversa.historico_conversa (jsonb, nullable): array de ate 10
+--   pares {mensagem_paciente: string, resposta_iris: string, gerada_em:
+--   string}, do mais antigo para o mais recente. Server-only: lido e
+--   escrito somente pela Edge Function via service_role, nunca exposto ao
+--   paciente. NUNCA e fonte de fato operacional -- o estado operacional
+--   continua estruturado em `dados`. Ao entrar um par novo alem de 10, o
+--   mais antigo sai (corte feito em codigo, nunca em SQL).
+--
+-- SEM SANITIZACAO nesta V1 (spec secao 0.1, decisao de produto do Gabriel
+-- 2026-08-07): "nao adicionar complexidade para um problema que o fluxo
+-- atual praticamente nao produz" -- a Iris hoje so pede "nome" no fluxo de
+-- cadastro, nunca cpf/email/data_nascimento, e nenhum desses tres jamais foi
+-- preenchido em producao (verificado nesta mesma clinica em 2026-08-07). O
+-- texto do paciente e gravado exatamente como chegou. Revisar quando o
+-- fluxo de cadastro completo existir.
+--
+-- Nullable e sem default de proposito: "nenhum turno anterior ainda" se
+-- representa pela AUSENCIA do array (NULL), nunca por um array vazio -- em
+-- conversa nova a coluna nasce NULL e so passa a existir depois que uma
+-- resposta foi de fato enviada.
+--
+-- Expiracao (24h, VALIDADE_HISTORICO_MS em historico-conversa.ts) e SOMENTE
+-- de LEITURA -- esta migration nao cria nenhum job, rotina de limpeza nem
+-- trigger de expiracao. A coluna nunca e apagada por tempo; o campo so
+-- deixa de ser enviado aos modelos quando expirado.
+--
+-- Nao limpa em nenhuma decisao do orquestrador, inclusive apos
+-- reserva_criada -- decisao explicita do Gabriel em 2026-08-06, mantida: se
+-- o paciente responder "obrigado!" logo apos a reserva, a Iris precisa
+-- saber a que ele esta agradecendo.
+--
+-- FORA DE ESCOPO nesta migration: remocao de `ultima_troca` (migration
+-- separada, so apos validacao real), qualquer alteracao em disponibilidade,
+-- reserva, contexto_horarios ou cancelamento.
+--
+-- RLS: nenhuma alteracao. `estado_conversa` ja tem RLS ativa sem policy e
+-- GRANT explicito para service_role (migrations 20260804205444 e
+-- 20260804220000) -- uma coluna nova herda exatamente esse regime.
+--
+-- PREFLIGHT (executar imediatamente antes de aplicar): confirmar que
+-- `historico_conversa` ainda nao existe em `estado_conversa`. Nenhum ADD
+-- COLUMN usa IF NOT EXISTS: colisao de nome falha explicitamente em vez de
+-- ser ignorada em silencio.
+--
+-- NAO APLICADA em nenhum projeto no momento desta escrita.
+
+alter table estado_conversa
+  add column historico_conversa jsonb;
