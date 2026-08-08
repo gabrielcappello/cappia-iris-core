@@ -8,9 +8,11 @@ para histórico, não como fonte técnica deste repositório).
 
 1. `00-INICIO.md`
 2. `README.md`
-3. `docs/01-visao-geral.md` → `docs/06-roadmap.md`, nesta ordem
-4. A spec relevante em `specs/`, quando existir
-5. `tests/cenarios-obrigatorios.md`, quando existir
+3. **`docs/00-principios.md`** — princípios fundamentais, canônicos. Vêm antes de
+   qualquer regra específica e orientam toda decisão de arquitetura.
+4. `docs/01-visao-geral.md` → `docs/06-roadmap.md`, nesta ordem
+5. A spec relevante em `specs/`, quando existir
+6. `tests/cenarios-obrigatorios.md`, quando existir
 
 ## Processo obrigatório (não pular etapas)
 
