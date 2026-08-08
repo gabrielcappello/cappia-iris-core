@@ -1964,3 +1964,88 @@ describe('testes que substituem globais (Date.now, JSON.parse, Date.parse) -- co
     assertCategoria(erro, 'autenticacao');
   });
 });
+
+// --- FRONTEIRA DE SAIDA: o que realmente vai no corpo HTTP ---
+//
+// Criados em 2026-08-08 depois de um bug REAL que chegou a producao:
+// `historico_recente` foi adicionado a EntradaInterpretacao, ao extrator e ao
+// orquestrador, mas NUNCA foi copiado para o corpo da requisicao -- este
+// objeto e montado campo a campo, e a chave foi esquecida. O historico
+// chegava ate o payload e morria na porta de saida.
+//
+// Nenhum teste existente pegou isso porque todos inspecionavam o OBJETO DE
+// ENTRADA, nunca o JSON que sai no fetch. Estes testes fecham essa lacuna: o
+// alvo e sempre `opcoes.body`, o que o servidor de fato recebe.
+
+function corpoEnviado(chamadas: ChamadaRegistrada[]): Record<string, unknown> {
+  assert.ok(chamadas.length > 0, 'esperava ao menos uma chamada a fetch');
+  const corpo = JSON.parse(String(chamadas[0].opcoes.body)) as { input: Array<{ role: string; content: string }> };
+  const mensagemUsuario = corpo.input.find((i) => i.role === 'user');
+  assert.ok(mensagemUsuario, 'corpo deve conter a mensagem de role=user');
+  return JSON.parse(mensagemUsuario.content) as Record<string, unknown>;
+}
+
+const HISTORICO_EXEMPLO = [
+  { mensagem_paciente: 'quero marcar', resposta_iris: 'Você prefere manhã ou tarde?', gerada_em: '2026-08-08T12:00:00.000Z' },
+];
+
+test('fronteira: historico_recente presente no payload chega LITERALMENTE ao corpo HTTP enviado', async () => {
+  const { fetchFalso, chamadas } = criarFetchFalso([() => respostaSucesso([])]);
+  const cliente = criarCliente({ fetch: fetchFalso });
+
+  await cliente.executar(
+    entradaValida({
+      payload: {
+        mensagens_atuais: ['Tarde.'],
+        dados_atuais: {},
+        campos_cadastrais_preenchidos: [],
+        historico_recente: HISTORICO_EXEMPLO,
+      },
+    })
+  );
+
+  const enviado = corpoEnviado(chamadas);
+  // Este assert e o que FALHA se alguem remover a chave do corpo em
+  // cliente-modelo-openai.ts -- e exatamente o bug de 2026-08-08.
+  assert.deepEqual(
+    enviado.historico_recente,
+    HISTORICO_EXEMPLO,
+    'historico_recente deve chegar byte a byte ao corpo HTTP -- se falhar aqui, a interpretadora esta cega por turno em producao'
+  );
+});
+
+test('fronteira: historico_recente ausente no payload nao cria chave morta no corpo HTTP', async () => {
+  const { fetchFalso, chamadas } = criarFetchFalso([() => respostaSucesso([])]);
+  const cliente = criarCliente({ fetch: fetchFalso });
+
+  await cliente.executar(entradaValida());
+
+  assert.equal('historico_recente' in corpoEnviado(chamadas), false);
+});
+
+test('fronteira: GUARDA GERAL -- toda chave opcional do payload precisa aparecer no corpo HTTP', async () => {
+  // Guarda contra a CLASSE do bug, nao contra a instancia: qualquer campo
+  // opcional novo em EntradaInterpretacao que alguem esquecer de copiar para
+  // o corpo faz este teste falhar, sem precisar escrever um teste dedicado.
+  const payloadCompleto = {
+    mensagens_atuais: ['Tarde.'],
+    dados_atuais: { procedimento_texto: 'limpeza' },
+    campos_cadastrais_preenchidos: [],
+    horarios_oferecidos: ['08:00', '09:00'],
+    proposta_pendente: { data: '08/08', horario: '14:00' },
+    historico_recente: HISTORICO_EXEMPLO,
+  };
+
+  const { fetchFalso, chamadas } = criarFetchFalso([() => respostaSucesso([])]);
+  const cliente = criarCliente({ fetch: fetchFalso });
+  await cliente.executar(entradaValida({ payload: payloadCompleto }));
+
+  const enviado = corpoEnviado(chamadas);
+  for (const chave of Object.keys(payloadCompleto)) {
+    assert.ok(
+      chave in enviado,
+      `chave "${chave}" existe no payload mas NAO chegou ao corpo HTTP -- o corpo e montado campo a campo em cliente-modelo-openai.ts e essa chave foi esquecida la`
+    );
+  }
+  assert.deepEqual(enviado, payloadCompleto, 'o corpo enviado deve ser exatamente o payload, sem perder nem inventar chave');
+});

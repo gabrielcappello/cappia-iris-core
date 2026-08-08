@@ -368,6 +368,17 @@ async function processarTentativa(
           ...(contexto.entrada.payload.proposta_pendente !== undefined
             ? { proposta_pendente: contexto.entrada.payload.proposta_pendente }
             : {}),
+          // CORRECAO 2026-08-08: `historico_recente` existia em
+          // EntradaInterpretacao desde specs/historico-conversacional-v1.md,
+          // mas NUNCA era copiado para o corpo HTTP -- este objeto e montado
+          // campo a campo, e a chave foi esquecida aqui. Resultado: o
+          // historico chegava ate o payload e morria na porta de saida; a
+          // interpretadora nunca o recebeu em producao. O teste que deveria
+          // ter pego isso passava porque todos os casos positivos tambem
+          // tinham `proposta_pendente`, suficiente sozinha para o resultado.
+          ...(contexto.entrada.payload.historico_recente !== undefined
+            ? { historico_recente: contexto.entrada.payload.historico_recente }
+            : {}),
         }),
       },
     ],
