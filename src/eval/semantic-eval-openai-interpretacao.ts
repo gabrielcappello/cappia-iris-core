@@ -101,7 +101,7 @@ const SCHEMA_PORTATIL_APROVADO = {
             enum: [
               'intencao',
               'procedimento_id',
-              'dentista_texto',
+              'dentista_id',
               'data_texto',
               'periodo',
               'horario_texto',
@@ -134,7 +134,7 @@ const SCHEMA_PORTATIL_APROVADO = {
 const CAMPOS_PERMITIDOS = [
   'intencao',
   'procedimento_id',
-  'dentista_texto',
+  'dentista_id',
   'data_texto',
   'periodo',
   'horario_texto',
@@ -206,10 +206,15 @@ const CENARIOS: readonly CenarioSemantico[] = [
   },
   {
     id: 'multiplos_dentistas_coexistentes',
-    descricao: 'Dois dentistas alternativos preservados em uma unica string',
+    // REVISADO em 2026-08-09 (specs/dentista-semantico-v1.md): antes esperava
+    // `dentista_texto: "Ana ou Carla"`, o contrato antigo em que a IA
+    // devolvia texto cru e o Core casava o nome depois. Hoje `dentista_id` so
+    // pode receber um id copiado de `dentistas_disponiveis` -- que este caso
+    // nao envia. O esperado passa a ser NENHUMA alteracao de dentista.
+    descricao: 'Sem dentistas_disponiveis no payload, nenhum dentista e emitido',
     mensagens_atuais: ['Pode ser com Ana ou Carla.'],
     dados_atuais: {},
-    resultado_esperado: [{ campo: 'dentista_texto', acao: 'informar', valor: 'Ana ou Carla' }],
+    resultado_esperado: [],
     origem: 'src/core/interpretacao-extrator.test.ts teste4',
   },
   {

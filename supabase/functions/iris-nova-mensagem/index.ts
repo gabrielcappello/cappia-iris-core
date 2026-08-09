@@ -150,6 +150,13 @@ Deno.serve(async (req: Request) => {
       mensagemPaciente: payload.mensagem,
       naturezaMensagem: resultado.natureza_mensagem,
       historicoConversa: resultado.historico_conversa,
+      // Quando o procedimento cedeu lugar a Consulta/Avaliacao para preservar
+      // o dentista escolhido (specs/dentista-semantico-v1.md), a redatora
+      // PRECISA informar a troca -- ela dispensa nova aceitacao, nunca a
+      // comunicacao.
+      ...(resultado.substituicao_por_avaliacao !== undefined
+        ? { substituicaoPorAvaliacao: resultado.substituicao_por_avaliacao }
+        : {}),
     });
     if (motivo_fallback !== null) {
       console.log(`resposta_conversacional_fallback decisao=${resultado.decisao.tipo} motivo=${motivo_fallback}`);

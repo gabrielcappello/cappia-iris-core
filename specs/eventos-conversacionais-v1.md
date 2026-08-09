@@ -4,6 +4,38 @@
 Este documento define contrato e comportamento; não autoriza implementação, alteração de
 banco ou criação de tabelas.
 
+> ## Revisão 2026-08-09 — o que desta spec foi superado, e o que passa a ser implementado
+>
+> Esta spec foi escrita antes de `procedimento-semantico-v1.md`,
+> `dentista-semantico-v1.md` e `historico-conversacional-v1.md`. Partes do contrato de
+> **entrada** descrito na §4 já não correspondem à arquitetura publicada. Registrado aqui
+> para não haver contradição silenciosa entre duas specs canônicas.
+>
+> **Superado — o payload do modelo HOJE contém coisas que a §4 e a §9 proíbem:**
+>
+> | Afirmação original | Estado real |
+> |---|---|
+> | `dados_atuais` com `procedimento_texto` / `dentista_texto` | São `procedimento_id` / `dentista_id` desde 08-08 e 08-09 |
+> | *"Não entram no payload: … catálogo de procedimentos"* | `procedimentos_disponiveis` e `dentistas_disponiveis` **entram** — é o que permite a resolução semântica |
+> | *"…nem histórico textual anterior"* | `historico_recente` (até 10 pares) **entra** desde 08-07 |
+> | §9: *"A IA não recebe catálogo de procedimentos, IDs, versões ou estado interno completo"* | **Revogada quanto a catálogo e IDs.** Continua valendo para versões internas, `clinica_id`, telefone, agenda, credenciais e registros clínicos |
+> | `pendente: 'nenhum' \| 'opcao' \| 'confirmacao_resumo'` | **Nunca implementado.** O projeto usa marcadores por variante (`horarios_oferecidos`, `proposta_pendente`, `oferta_procedimento_pendente`), decisão registrada em `contexto-pendente-interpretacao-v1.md` §11 |
+> | Saída *"contém exatamente `alteracoes` e `eventos_candidatos`"* | São **três** campos raiz: `natureza_mensagem` (de `interpretacao-natureza-mensagem-v1.md`, posterior a esta spec), `alteracoes` e — a partir desta revisão — `eventos_candidatos` |
+>
+> **Passa a ser implementado, e somente isto:** o evento **`aceitar_opcao`** (§2), na forma
+> canônica com `referencia_textual: string \| null`. É o contrato correto para a aceitação
+> da proposta de substituição por Consulta/Avaliação, como esta própria spec já previa.
+>
+> **Continuam não implementados**, sem mudança: `solicitar_nova_opcao`, `desistir`,
+> `aceitar_qualquer_profissional`, `confirmar_resumo`, `DecisaoControlador`,
+> `MotivoDecisaoControlador` e toda a §5. Verificado que nenhum deles é necessário para
+> `aceitar_opcao` funcionar — a recusa é a **ausência** do evento, e um pedido explícito
+> por outro procedimento já é coberto pela regra normal de `procedimento_id`.
+>
+> **Invariantes desta spec que permanecem intactos e são o motivo de reusá-la:** o evento
+> da IA é sempre *candidato*, nunca decisão; a IA nunca resolve a referência para ID; só o
+> Core, consultando o estado oficial, aplica qualquer efeito.
+
 Esta especificação complementa `interpretacao-ia.md` e `novo-agendamento.md`. Em caso de
 dúvida, permanecem fixas as decisões de `../docs/02-arquitetura.md`: a IA interpreta a
 mensagem atual; o Core determinístico decide estado, validade e ação; Supabase/Postgres é
@@ -291,7 +323,7 @@ candidato `confirmar_resumo`.
 
 | Candidato | Estados em que pode ser válido | Estados em que é ignorado | Decisão/transição possível |
 |---|---|---|---|
-| `aceitar_opcao` | `atendimento`, somente para proposta vigente de Consulta/Avaliação; `aguardando_escolha`, para uma opção vigente inequívoca | `coletando_cadastro`, `aguardando_confirmacao`, `executando`, `concluido` | Em `atendimento`, aceita a substituição e permanece no fluxo; em `aguardando_escolha`, vai para `coletando_cadastro` ou `aguardando_confirmacao` |
+| `aceitar_opcao` | `atendimento`, somente para proposta vigente de Consulta/Avaliação **— este é o caso implementado em 2026-08-09**; `aguardando_escolha`, para uma opção vigente inequívoca (não implementado) | `coletando_cadastro`, `aguardando_confirmacao`, `executando`, `concluido` | Em `atendimento`, aceita a substituição e permanece no fluxo; em `aguardando_escolha`, vai para `coletando_cadastro` ou `aguardando_confirmacao` |
 | `solicitar_nova_opcao` | `aguardando_escolha`, com opções vigentes | `atendimento`, `coletando_cadastro`, `aguardando_confirmacao`, `executando`, `concluido` | Permanece em `aguardando_escolha` após o Core recalcular/apresentar opção válida |
 | `desistir` | `atendimento` com ação corrente, `aguardando_escolha`, `coletando_cadastro`, `aguardando_confirmacao` | `executando`, `concluido` | Encerra a ação e retorna a `atendimento`; não interrompe operação crítica já iniciada |
 | `aceitar_qualquer_profissional` | `atendimento`, somente com pergunta de preferência pendente | `aguardando_escolha`, `coletando_cadastro`, `aguardando_confirmacao`, `executando`, `concluido` | Registra a preferência conversacional e permanece em `atendimento` até o Core poder consultar disponibilidade |

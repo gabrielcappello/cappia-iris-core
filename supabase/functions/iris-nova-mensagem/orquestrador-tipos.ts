@@ -82,7 +82,29 @@ export type DecisaoOrquestrador =
   // aliases, nao existe alias ambiguo/orfao/de outra clinica a reportar.
   | { tipo: 'aguardando_procedimento' }
   | { tipo: 'aguardando_escolha_dentista'; dentistas: readonly DentistaApto[] }
-  | { tipo: 'sem_dentista_disponivel' }
+  // `procedimento_oferecido` presente = a Iris esta de fato oferecendo esse
+  // procedimento como alternativa, e a resposta pode fazer essa pergunta
+  // (specs/contexto-pendente-interpretacao-v1.md secao 11). So vem preenchido
+  // quando a oferta e POSSIVEL: o pedido nao e a propria avaliacao, ela existe
+  // e esta ativa, e tem ao menos um dentista apto.
+  //
+  // AUSENTE = nao ha alternativa real. A resposta nao faz a pergunta e nada e
+  // gravado no contexto pendente. Sem essa guarda, aceitar uma oferta
+  // impossivel devolveria zero aptos para a propria avaliacao e ofereceria de
+  // novo, em ciclo -- o que `dentistas-vinculos-v1.md` secao 12 regra 1 proibe.
+  | { tipo: 'sem_dentista_disponivel'; procedimento_oferecido?: string }
+  // O paciente escolheu um profissional que nao realiza o procedimento
+  // pedido, e a Consulta/Avaliacao COM ELE tambem nao e possivel -- ou
+  // porque ele nao tem vinculo ativo com ela, ou porque o proprio
+  // procedimento pedido ja era a avaliacao (specs/dentista-semantico-v1.md
+  // secao 5, casos 2.2 e 2.3-falho).
+  //
+  // Terminal e sem pergunta: nunca troca de profissional em silencio, nunca
+  // oferece a avaliacao de novo (o que criaria ciclo). Uma decisao SO para
+  // os dois casos -- nao ha nenhuma diferenca operacional entre eles (nao
+  // consultam disponibilidade, nao reservam, gravam `limpar`), so de frase,
+  // e a redatora adapta pelo fato abaixo mais a mensagem crua do paciente.
+  | { tipo: 'combinacao_indisponivel'; dentista_nome_exibido: string }
   | { tipo: 'erro_catalogo_dentista'; resultado: ResultadoResolucaoDentista }
   | { tipo: 'duracao_nao_configurada' }
   | { tipo: 'erro_configuracao_duracao'; resultado: ResultadoResolucaoDuracao }
@@ -153,4 +175,17 @@ export interface ResultadoOrquestrador {
    * conversacional.ts, para a redatora), nunca aqui.
    */
   historico_conversa: HistoricoConversa | null;
+  /**
+   * Presente SOMENTE quando o procedimento pedido cedeu lugar a
+   * Consulta/Avaliacao para preservar o dentista que o paciente escolheu
+   * (specs/dentista-semantico-v1.md secao 5, caso 2.3). A troca precisa ser
+   * INFORMADA na resposta -- ela dispensa nova pergunta de aceitacao, nunca
+   * o dever de comunicar.
+   *
+   * Nao e estado, nao e decisao: e um fato deste turno, repassado a
+   * `derivarFatosAutorizados` junto com a decisao. A substituicao nao e
+   * persistida -- `dados.procedimento_id` continua com o que o paciente
+   * pediu, e o turno seguinte re-deriva o mesmo resultado.
+   */
+  substituicao_por_avaliacao?: { dentista_nome_exibido: string };
 }

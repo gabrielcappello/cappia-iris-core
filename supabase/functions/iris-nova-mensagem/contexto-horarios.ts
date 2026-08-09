@@ -28,6 +28,7 @@ import type { DecisaoOrquestrador } from './orquestrador-tipos.ts';
 export type AcaoContextoHorarios =
   | { tipo: 'substituir'; horarios: string[] }
   | { tipo: 'propor'; data: string; horario: string }
+  | { tipo: 'oferecer'; procedimento_id: string }
   | { tipo: 'preservar' }
   | { tipo: 'limpar' };
 
@@ -71,6 +72,25 @@ export function derivarAcaoContextoHorarios(decisao: DecisaoOrquestrador): AcaoC
     case 'aguardando_confirmacao':
       return { tipo: 'propor', data: decisao.opcao.data, horario: formatarMinutos(decisao.opcao.inicio_min) };
 
+    // OFERECER (2026-08-09, specs/contexto-pendente-interpretacao-v1.md
+    // secao 11): a Iris acabou de oferecer um procedimento e aguarda
+    // resposta. Sem este snapshot, "pode ser" no turno seguinte chega a
+    // interpretadora sem nenhuma pergunta pendente declarada e vira
+    // `nao_compreendida` -- medido 3/3 contra a IA real.
+    //
+    // `procedimento_oferecido` so vem preenchido quando a oferta e REAL (a
+    // avaliacao existe, esta ativa e tem dentista apto). Ausente = nao houve
+    // oferta, e o comportamento continua sendo `limpar`, como antes.
+    //
+    // Nao ha caso de "preservar" a oferta: ela e RE-DERIVADA a cada turno em
+    // que a situacao nao muda. Uma duvida sobre a oferta ("quanto custa?")
+    // nao altera procedimento nem aptidao, entao o fluxo recalcula
+    // `sem_dentista_disponivel` e regrava a oferta identica.
+    case 'sem_dentista_disponivel':
+      return decisao.procedimento_oferecido !== undefined
+        ? { tipo: 'oferecer', procedimento_id: decisao.procedimento_oferecido }
+        : { tipo: 'limpar' };
+
     case 'saudacao':
     case 'duvida_livre':
     case 'mensagem_nao_compreendida':
@@ -80,7 +100,7 @@ export function derivarAcaoContextoHorarios(decisao: DecisaoOrquestrador): AcaoC
     case 'desistencia':
     case 'aguardando_procedimento':
     case 'aguardando_escolha_dentista':
-    case 'sem_dentista_disponivel':
+    case 'combinacao_indisponivel':
     case 'erro_catalogo_dentista':
     case 'duracao_nao_configurada':
     case 'erro_configuracao_duracao':
@@ -176,7 +196,12 @@ export async function gravarContextoHorarios(
       ? { horarios: entrada.acao.horarios, criado_em: new Date().toISOString() }
       : entrada.acao.tipo === 'propor'
         ? { proposta_pendente: { data: entrada.acao.data, horario: entrada.acao.horario }, criado_em: new Date().toISOString() }
-        : null;
+        : entrada.acao.tipo === 'oferecer'
+          ? {
+              oferta_procedimento_pendente: { procedimento_id: entrada.acao.procedimento_id },
+              criado_em: new Date().toISOString(),
+            }
+          : null;
 
   const proximoValor = proximoTimestamp(entrada.atualizado_em_da_decisao);
 
@@ -236,25 +261,39 @@ export function validarContextoHorarios(valor: unknown): ContextoHorarios | null
   if (valor === null || valor === undefined) return null;
   if (typeof valor !== 'object' || Array.isArray(valor)) return null;
 
-  const { horarios, criado_em, proposta_pendente } = valor as Record<string, unknown>;
+  const { horarios, criado_em, proposta_pendente, oferta_procedimento_pendente } = valor as Record<string, unknown>;
   if (typeof criado_em !== 'string') return null;
 
   // Cada campo, quando PRESENTE, precisa ser valido -- um campo presente
-  // porem malformado invalida o snapshot inteiro (nunca aceita um dos dois
+  // porem malformado invalida o snapshot inteiro (nunca aceita um dos tres
   // parcialmente). Um campo AUSENTE simplesmente nao contribui.
   if (horarios !== undefined && !horariosValidos(horarios)) return null;
   if (proposta_pendente !== undefined && !propostaPendenteValida(proposta_pendente)) return null;
+  if (oferta_procedimento_pendente !== undefined && !ofertaProcedimentoValida(oferta_procedimento_pendente)) return null;
 
-  // Pelo menos um dos dois precisa existir -- um snapshot sem nenhum e
+  // Pelo menos um dos tres precisa existir -- um snapshot sem nenhum e
   // invalido, nunca vira um objeto "vazio" (specs/resposta-conversacional-v1.md
   // secao 5).
-  if (horarios === undefined && proposta_pendente === undefined) return null;
+  if (horarios === undefined && proposta_pendente === undefined && oferta_procedimento_pendente === undefined) {
+    return null;
+  }
 
   return {
     ...(horarios !== undefined ? { horarios: horarios as string[] } : {}),
     ...(proposta_pendente !== undefined ? { proposta_pendente: proposta_pendente as { data: string; horario: string } } : {}),
+    ...(oferta_procedimento_pendente !== undefined
+      ? { oferta_procedimento_pendente: oferta_procedimento_pendente as { procedimento_id: string } }
+      : {}),
     criado_em,
   };
+}
+
+function ofertaProcedimentoValida(valor: unknown): valor is { procedimento_id: string } {
+  if (valor === null || typeof valor !== 'object' || Array.isArray(valor)) return false;
+  const chaves = Object.keys(valor as Record<string, unknown>);
+  if (chaves.length !== 1 || chaves[0] !== 'procedimento_id') return false;
+  const { procedimento_id } = valor as Record<string, unknown>;
+  return typeof procedimento_id === 'string' && procedimento_id.trim() !== '';
 }
 
 function horariosValidos(valor: unknown): valor is string[] {

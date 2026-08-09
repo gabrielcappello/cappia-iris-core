@@ -256,6 +256,9 @@ test('correcao4c: divergencia durante a execucao gera conflito, remove o campo d
           data_texto: { acao: 'informar', valor: 'sexta' },
           nome: { acao: 'informar', valor: 'Joao' },
         },
+        // Dublê inline (nao passa por ClienteModeloFalso): declara o campo
+        // raiz obrigatorio por conta propria.
+        eventos_candidatos: [],
       };
     },
   };

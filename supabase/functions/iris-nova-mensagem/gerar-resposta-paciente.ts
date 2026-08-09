@@ -91,7 +91,20 @@ export function gerarRespostaPaciente(decisao: DecisaoOrquestrador): string {
     case 'cadastro_necessario':
       return 'Para confirmar esse agendamento, preciso completar seu cadastro antes. Pode me passar seu nome completo?';
     case 'sem_dentista_disponivel':
-      return 'Não encontrei nenhum profissional disponível para esse atendimento. Posso verificar uma Consulta/Avaliação em vez disso?';
+      // A pergunta so e feita quando a alternativa EXISTE de verdade
+      // (`procedimento_oferecido` presente). Ate 2026-08-09 ela era feita
+      // sempre -- inclusive quando nao havia avaliacao possivel, o que era
+      // uma promessa que o Core nao tinha como cumprir.
+      return decisao.procedimento_oferecido !== undefined
+        ? 'Não encontrei nenhum profissional disponível para esse atendimento. Posso verificar uma Consulta/Avaliação em vez disso?'
+        : 'Não encontrei nenhum profissional disponível para esse atendimento no momento.';
+    case 'combinacao_indisponivel':
+      // O paciente escolheu um profissional que nao realiza esse atendimento
+      // e para quem a avaliacao tambem nao e possivel. Nunca sugere OUTRO
+      // profissional (specs/dentista-semantico-v1.md secao 5): trocar quem
+      // ele escolheu, mesmo perguntando, e o comportamento que esta spec
+      // existe para eliminar.
+      return `Não consigo agendar esse atendimento com ${decisao.dentista_nome_exibido}. Quer tentar outro procedimento com ${decisao.dentista_nome_exibido}?`;
     // --- Os cinco estados de falha tecnica real ---
     case 'clinica_sem_catalogo':
     case 'erro_catalogo_dentista':

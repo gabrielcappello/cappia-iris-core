@@ -60,6 +60,16 @@ export async function processarMensagem(
           .filter((p) => p.ativo)
           .map((p) => ({ procedimento_id: p.procedimento_id, nome_pt: p.nome_pt }))
       : [];
+  // Dentistas ATIVOS, sem filtro de aptidao (specs/dentista-semantico-v1.md
+  // secao 1): o vinculo depende do `procedimento_id`, que so existe DEPOIS
+  // desta interpretacao. Filtrar faria um dentista sem vinculo sumir da
+  // lista, a IA omitir o campo, e o Core seguir com outro em silencio.
+  const dentistasDisponiveis =
+    catalogoCarregado.tipo === 'carregado'
+      ? catalogoCarregado.catalogo.dentistas
+          .filter((d) => d.ativo)
+          .map((d) => ({ dentista_id: d.dentista_id, nome_exibido: d.nome_exibido }))
+      : [];
 
   const interpretacao = await interpretarEAplicar(clienteModelo, clienteBanco, {
     conversa_id: identificacao.conversa.id,
@@ -89,6 +99,18 @@ export async function processarMensagem(
     // para `procedimento_id` (specs/procedimento-semantico-v1.md). Chave
     // AUSENTE quando a clinica nao tem catalogo carregavel -- nunca `[]`.
     ...(procedimentosDisponiveis.length > 0 ? { procedimentos_disponiveis: procedimentosDisponiveis } : {}),
+    // Dentistas ativos: a IA correlaciona "o Carlos"/"a Dra. Vanesa" com um
+    // `dentista_id` real (specs/dentista-semantico-v1.md). Chave AUSENTE
+    // quando nao ha nenhum ativo -- nunca `[]`.
+    ...(dentistasDisponiveis.length > 0 ? { dentistas_disponiveis: dentistasDisponiveis } : {}),
+    // Oferta de procedimento feita no turno anterior, quando houver. O
+    // `procedimento_id` segue para o Core (que e quem aplica), e NAO para a
+    // IA -- `construirEntradaMinimizada` converte para um simples `true`
+    // antes de montar o payload (specs/contexto-pendente-interpretacao-v1.md
+    // secao 11). A IA so precisa saber que ha uma oferta em aberto.
+    ...(identificacao.conversa.contexto_horarios?.oferta_procedimento_pendente !== undefined
+      ? { oferta_procedimento_pendente: identificacao.conversa.contexto_horarios.oferta_procedimento_pendente }
+      : {}),
   });
 
   // `atualizado_em` EXATO do estado sobre o qual a decisao desta mensagem
@@ -112,7 +134,10 @@ export async function processarMensagem(
   // decisao final e so entao devolve o resultado. A gravacao e auxiliar e
   // best-effort por contrato -- nunca lanca, nunca altera a decisao ja
   // tomada, nunca afeta a resposta ao paciente.
-  const finalizar = async (decisao: DecisaoOrquestrador): Promise<ResultadoOrquestrador> => {
+  const finalizar = async (
+    decisao: DecisaoOrquestrador,
+    substituicao?: { dentista_nome_exibido: string }
+  ): Promise<ResultadoOrquestrador> => {
     const atualizadoEmFinal = await gravarContextoHorarios(clienteBanco, {
       conversa_id: identificacao.conversa.id,
       clinica_id: identificacao.clinica_id,
@@ -129,6 +154,7 @@ export async function processarMensagem(
       atualizado_em: atualizadoEmFinal,
       natureza_mensagem: interpretacao.natureza_mensagem,
       historico_conversa: identificacao.conversa.historico_conversa,
+      ...(substituicao !== undefined ? { substituicao_por_avaliacao: substituicao } : {}),
     };
   };
 
@@ -146,18 +172,18 @@ export async function processarMensagem(
     return await finalizar({ tipo: 'clinica_sem_catalogo' });
   }
 
-  return await finalizar(
-    await decidir(
-      clienteBanco,
-      clienteRpc,
-      identificacao.clinica_id,
-      identificacao.paciente.id,
-      entrada.telefone_normalizado,
-      dados,
-      catalogoCarregado.catalogo,
-      entrada.instante_atual
-    )
+  const resultadoDecisao = await decidir(
+    clienteBanco,
+    clienteRpc,
+    identificacao.clinica_id,
+    identificacao.paciente.id,
+    entrada.telefone_normalizado,
+    dados,
+    catalogoCarregado.catalogo,
+    entrada.instante_atual
   );
+
+  return await finalizar(resultadoDecisao.decisao, resultadoDecisao.substituicao);
 }
 
 /**
@@ -220,7 +246,7 @@ async function decidir(
   dados: Record<string, string | undefined>,
   catalogo: CatalogoClinica,
   instanteAtual: InstanteAtual
-): Promise<DecisaoOrquestrador> {
+): Promise<{ decisao: DecisaoOrquestrador; substituicao?: { dentista_nome_exibido: string } }> {
   // INTEGRIDADE, NUNCA INTERPRETACAO (specs/procedimento-semantico-v1.md
   // secao 4). Quem entendeu o pedido do paciente foi a IA, que devolveu um
   // `procedimento_id` canonico; aqui o Core so confere tres coisas -- o ID
@@ -236,25 +262,37 @@ async function decidir(
     (p) => p.procedimento_id === dados.procedimento_id && p.clinica_id === clinicaId && p.ativo
   );
   if (!procedimento) {
-    return { tipo: 'aguardando_procedimento' };
+    return { decisao: { tipo: 'aguardando_procedimento' } };
   }
 
-  const resolucaoDentista = resolverDentistaComFallback(
+  const resolucaoDentista = resolverDentistaEProcedimento(
     clinicaId,
     procedimento.procedimento_id,
-    dados.dentista_texto ?? null,
+    dados.dentista_id,
     catalogo
   );
-  if ('decisaoAntecipada' in resolucaoDentista) return resolucaoDentista.decisaoAntecipada;
+  if ('decisaoAntecipada' in resolucaoDentista) return { decisao: resolucaoDentista.decisaoAntecipada };
+
+  // Do ponto de vista de duracao, disponibilidade e reserva, o procedimento
+  // oficial deste turno e o EFETIVO -- que difere do pedido somente quando
+  // cedeu lugar a Consulta/Avaliacao para preservar o dentista escolhido.
+  const procedimentoIdEfetivo = resolucaoDentista.procedimentoIdEfetivo;
+  const substituicao = resolucaoDentista.substituicao;
+  const comSubstituicao = (decisao: DecisaoOrquestrador) => ({
+    decisao,
+    ...(substituicao !== undefined ? { substituicao } : {}),
+  });
 
   const resultadoDuracao = resolverDuracao({
     clinica_id: clinicaId,
-    procedimento_id: procedimento.procedimento_id,
+    procedimento_id: procedimentoIdEfetivo,
     configuracoes: catalogo.configuracoesDuracao,
   });
 
-  if (resultadoDuracao.tipo === 'nao_configurada') return { tipo: 'duracao_nao_configurada' };
-  if (resultadoDuracao.tipo !== 'resolvida') return { tipo: 'erro_configuracao_duracao', resultado: resultadoDuracao };
+  if (resultadoDuracao.tipo === 'nao_configurada') return comSubstituicao({ tipo: 'duracao_nao_configurada' });
+  if (resultadoDuracao.tipo !== 'resolvida') {
+    return comSubstituicao({ tipo: 'erro_configuracao_duracao', resultado: resultadoDuracao });
+  }
 
   // fuso ausente (clinica sem configuracao, ou linha nao encontrada) nao e
   // validado aqui por conta propria -- passa direto pra resolverTemporal,
@@ -274,13 +312,13 @@ async function decidir(
   });
 
   if (resultadoTemporal.tipo !== 'resolvido') {
-    return { tipo: 'aguardando_data_horario', resultado: resultadoTemporal };
+    return comSubstituicao({ tipo: 'aguardando_data_horario', resultado: resultadoTemporal });
   }
 
   const carregado = await carregarEntradaDisponibilidade(clienteBanco, {
     clinica_id: clinicaId,
     dentista_id: resolucaoDentista.dentistaId,
-    procedimento_id: procedimento.procedimento_id,
+    procedimento_id: procedimentoIdEfetivo,
     data: resultadoTemporal.data,
     instante_atual: instanteAtual,
     modo: derivarModoConsulta(resultadoTemporal),
@@ -294,36 +332,43 @@ async function decidir(
       // os outros (opcoes/sem_disponibilidade/horario_exato_indisponivel/
       // erros de configuracao) so mostram o que ha, nunca reservam.
       if (carregado.resultado.tipo === 'horario_exato_disponivel') {
-        return await decidirConfirmacaoOuReserva(
-          clienteRpc,
-          clinicaId,
-          pacienteId,
-          telefoneNormalizado,
-          procedimento.procedimento_id,
-          resolucaoDentista.dentistaId,
-          resultadoDuracao.duracao_min,
-          carregado.resultado.opcao,
-          dados.confirmacao
+        return comSubstituicao(
+          await decidirConfirmacaoOuReserva(
+            clienteRpc,
+            clinicaId,
+            pacienteId,
+            telefoneNormalizado,
+            procedimentoIdEfetivo,
+            resolucaoDentista.dentistaId,
+            resultadoDuracao.duracao_min,
+            carregado.resultado.opcao,
+            dados.confirmacao
+          )
         );
       }
-      return {
+      return comSubstituicao({
         tipo: 'horarios_disponiveis',
-        procedimento_id: procedimento.procedimento_id,
+        procedimento_id: procedimentoIdEfetivo,
         dentista_id: resolucaoDentista.dentistaId,
         duracao_min: resultadoDuracao.duracao_min,
         resultado: carregado.resultado,
-      };
+      });
     case 'clinica_nao_encontrada':
       // Nao deveria ocorrer (identificarConversa ja confirmou a clinica
       // antes desta funcao ser chamada) -- tratado como configuracao
       // temporal ausente, nunca uma excecao nao tratada.
-      return { tipo: 'aguardando_data_horario', resultado: { tipo: 'erro_configuracao', motivo: 'fuso_ausente' } };
+      return comSubstituicao({
+        tipo: 'aguardando_data_horario',
+        resultado: { tipo: 'erro_configuracao', motivo: 'fuso_ausente' },
+      });
     case 'dentista_nao_encontrado':
-      return { tipo: 'sem_dentista_disponivel' };
+      return comSubstituicao({ tipo: 'sem_dentista_disponivel' });
     case 'duracao_nao_resolvida':
-      return carregado.resultado.tipo === 'nao_configurada'
-        ? { tipo: 'duracao_nao_configurada' }
-        : { tipo: 'erro_configuracao_duracao', resultado: carregado.resultado };
+      return comSubstituicao(
+        carregado.resultado.tipo === 'nao_configurada'
+          ? { tipo: 'duracao_nao_configurada' }
+          : { tipo: 'erro_configuracao_duracao', resultado: carregado.resultado }
+      );
   }
 }
 
@@ -421,48 +466,173 @@ function derivarModoConsulta(resultado: ResolucaoTemporalOficial): ModoConsulta 
   return { tipo: 'grade' };
 }
 
-type ResolucaoDentistaComFallback = { decisaoAntecipada: DecisaoOrquestrador } | { dentistaId: string };
+/**
+ * Identidade canonica da Consulta/Avaliacao
+ * (specs/dentista-semantico-v1.md secao 5, decisao do Gabriel 2026-08-09).
+ *
+ * `procedimentos_catalogo` e uma tabela GLOBAL (nao tem `clinica_id`), entao
+ * o id e estavel em todas as clinicas. Nao e match textual: e um
+ * identificador opaco fixo, usado SO em operacao deterministica do Core --
+ * no fluxo normal quem chega a este mesmo id e a interpretadora,
+ * semanticamente.
+ *
+ * Por que nao uma coluna `eh_consulta_avaliacao`: ela nunca existiu no
+ * banco; antes de 2026-08-08 era `false` hardcoded para todos os
+ * procedimentos, logo o fallback que dependia dela sempre foi inalcancavel.
+ * Identificar por nome e impossivel -- quatro procedimentos do catalogo
+ * casariam ("Consulta pediatrica", "Consulta / Avaliacao",
+ * "Consulta / Planejamento", "Consulta ortodontia").
+ */
+export const CONSULTA_AVALIACAO_ID = 'consultation_evaluation';
+
+type ResolucaoDentistaProcedimento =
+  | { decisaoAntecipada: DecisaoOrquestrador }
+  | {
+      dentistaId: string;
+      /** Difere do pedido SOMENTE quando cedeu lugar a Consulta/Avaliacao (caso 2.3). */
+      procedimentoIdEfetivo: string;
+      substituicao?: { dentista_nome_exibido: string };
+    };
 
 /**
- * specs/dentistas-vinculos-v1.md secao 4 + dentista-tipos.ts (comentario de
- * ResultadoResolucaoDentista): quando a preferencia do paciente nao resolve
- * para um apto, o controlador reaplica a resolucao sem preferencia para
- * obter o conjunto de aptos -- comportamento ja documentado, nao inventado
- * aqui. A recursao termina em no maximo uma chamada extra (a segunda
- * chamada sempre usa `dentista_texto: null`, entao a condicao de fallback
- * nunca se repete).
+ * Resolve o par (dentista, procedimento efetivo) deste turno
+ * (specs/dentista-semantico-v1.md secao 5).
+ *
+ * INTEGRIDADE, NUNCA INTERPRETACAO. Quem entendeu a quem o paciente se
+ * referia foi a IA, que devolveu um `dentista_id` canonico escolhido de
+ * `dentistas_disponiveis`; aqui o Core so confere existencia, clinica,
+ * `ativo` e vinculo. Nao normaliza texto, nao compara nome, nao rele a
+ * mensagem.
+ *
+ * **A preferencia valida PREVALECE** -- quem cede e o procedimento, nunca o
+ * profissional escolhido (inversao de prioridade aprovada em 2026-08-09,
+ * altera `dentistas-vinculos-v1.md` secao 4). Trocar de dentista em silencio
+ * deixou de ser possivel: a recursao `resolverDentistaComFallback`, que
+ * fazia exatamente isso, foi REMOVIDA.
  */
-function resolverDentistaComFallback(
+function resolverDentistaEProcedimento(
   clinicaId: string,
   procedimentoId: string,
-  dentistaTexto: string | null,
+  dentistaIdPedido: string | undefined,
   catalogo: CatalogoClinica
-): ResolucaoDentistaComFallback {
+): ResolucaoDentistaProcedimento {
+  // Preferencia INVALIDA (ausente, inexistente, de outra clinica ou inativa)
+  // colapsa em "sem preferencia" -- mesma disciplina de `procedimento_id`
+  // invalido. A IA escolhe de uma lista real, entao isso e integridade, nao
+  // conversa: nao ha nuance a transportar ao paciente.
+  const preferido =
+    typeof dentistaIdPedido === 'string' && dentistaIdPedido.trim() !== ''
+      ? (catalogo.dentistas.find((d) => d.dentista_id === dentistaIdPedido && d.clinica_id === clinicaId && d.ativo) ??
+        null)
+      : null;
+
+  if (preferido === null) return semPreferencia(clinicaId, procedimentoId, catalogo);
+
+  // CASO 2.1 -- o profissional escolhido realiza o procedimento pedido.
+  if (temVinculoAtivo(catalogo, clinicaId, preferido.dentista_id, procedimentoId)) {
+    return { dentistaId: preferido.dentista_id, procedimentoIdEfetivo: procedimentoId };
+  }
+
+  // CASO 2.2 -- o pedido JA era a avaliacao. Nunca oferecer avaliacao de
+  // novo: seria ciclo (`dentistas-vinculos-v1.md` secao 12, regra 1).
+  if (procedimentoId === CONSULTA_AVALIACAO_ID) {
+    return { decisaoAntecipada: { tipo: 'combinacao_indisponivel', dentista_nome_exibido: preferido.nome_exibido } };
+  }
+
+  // CASO 2.3 -- o procedimento cede, o profissional fica. Duas conferencias,
+  // ambas obrigatorias.
+  const avaliacaoAtiva = catalogo.procedimentos.some(
+    (p) => p.procedimento_id === CONSULTA_AVALIACAO_ID && p.clinica_id === clinicaId && p.ativo
+  );
+  if (!avaliacaoAtiva || !temVinculoAtivo(catalogo, clinicaId, preferido.dentista_id, CONSULTA_AVALIACAO_ID)) {
+    return { decisaoAntecipada: { tipo: 'combinacao_indisponivel', dentista_nome_exibido: preferido.nome_exibido } };
+  }
+
+  return {
+    dentistaId: preferido.dentista_id,
+    procedimentoIdEfetivo: CONSULTA_AVALIACAO_ID,
+    substituicao: { dentista_nome_exibido: preferido.nome_exibido },
+  };
+}
+
+/** CASO 1: zero/um/varios aptos, exatamente como a secao 5 da spec sempre definiu. */
+function semPreferencia(
+  clinicaId: string,
+  procedimentoId: string,
+  catalogo: CatalogoClinica
+): ResolucaoDentistaProcedimento {
   const resultado = resolverDentista({
     clinica_id: clinicaId,
     procedimento_id: procedimentoId,
-    dentista_texto: dentistaTexto,
     dentistas: catalogo.dentistas,
     vinculos: catalogo.vinculos,
   });
 
-  if (dentistaTexto !== null && (resultado.tipo === 'preferencia_nao_encontrada' || resultado.tipo === 'preferencia_nao_apta')) {
-    return resolverDentistaComFallback(clinicaId, procedimentoId, null, catalogo);
-  }
-
   switch (resultado.tipo) {
     case 'um_apto':
-    case 'preferencia_apta':
-      return { dentistaId: resultado.dentista.dentista_id };
+      return { dentistaId: resultado.dentista.dentista_id, procedimentoIdEfetivo: procedimentoId };
     case 'varios_aptos':
       return { decisaoAntecipada: { tipo: 'aguardando_escolha_dentista', dentistas: resultado.dentistas } };
     case 'erro_catalogo':
       return { decisaoAntecipada: { tipo: 'erro_catalogo_dentista', resultado } };
-    default:
-      // nenhum_apto, e (sem preferencia) preferencia_nao_encontrada/
-      // preferencia_nao_apta -- este ultimo par nao deveria ocorrer com
-      // dentista_texto null, mas fica coberto por seguranca, nunca como
-      // excecao nao tratada.
-      return { decisaoAntecipada: { tipo: 'sem_dentista_disponivel' } };
+    case 'nenhum_apto':
+      // A resposta oferece Consulta/Avaliacao, e o contexto pendente grava
+      // essa oferta para que a aceitacao do turno seguinte seja compreendida
+      // (specs/contexto-pendente-interpretacao-v1.md secao 11). Só oferece o
+      // que e possivel -- ver `avaliacaoOferecivel`.
+      return {
+        decisaoAntecipada: {
+          tipo: 'sem_dentista_disponivel',
+          ...(avaliacaoOferecivel(clinicaId, procedimentoId, catalogo)
+            ? { procedimento_oferecido: CONSULTA_AVALIACAO_ID }
+            : {}),
+        },
+      };
   }
+}
+
+/**
+ * A Consulta/Avaliacao pode de fato ser oferecida como alternativa?
+ * (`dentistas-vinculos-v1.md` secao 12, gatilho A.)
+ *
+ * Tres condicoes, todas obrigatorias. Sem elas a Iris faria uma pergunta que
+ * nao tem como cumprir -- e, pior, o paciente que aceitasse cairia em zero
+ * aptos para a propria avaliacao, que ofereceria a avaliacao de novo: o ciclo
+ * que a regra 1 da mesma secao proibe.
+ */
+function avaliacaoOferecivel(clinicaId: string, procedimentoId: string, catalogo: CatalogoClinica): boolean {
+  // 1. o pedido nao pode ser ja a propria avaliacao (regra 1: nunca oferecer
+  //    de novo o que o paciente ja pediu).
+  if (procedimentoId === CONSULTA_AVALIACAO_ID) return false;
+
+  // 2. a avaliacao existe e esta ativa nesta clinica.
+  const existe = catalogo.procedimentos.some(
+    (p) => p.procedimento_id === CONSULTA_AVALIACAO_ID && p.clinica_id === clinicaId && p.ativo
+  );
+  if (!existe) return false;
+
+  // 3. ha ao menos um dentista apto para ela -- mesma regra de aptidao de
+  //    sempre, nunca uma checagem paralela.
+  const resultado = resolverDentista({
+    clinica_id: clinicaId,
+    procedimento_id: CONSULTA_AVALIACAO_ID,
+    dentistas: catalogo.dentistas,
+    vinculos: catalogo.vinculos,
+  });
+  return resultado.tipo === 'um_apto' || resultado.tipo === 'varios_aptos';
+}
+
+function temVinculoAtivo(
+  catalogo: CatalogoClinica,
+  clinicaId: string,
+  dentistaId: string,
+  procedimentoId: string
+): boolean {
+  return catalogo.vinculos.some(
+    (v) =>
+      v.clinica_id === clinicaId &&
+      v.dentista_id === dentistaId &&
+      v.procedimento_id === procedimentoId &&
+      v.ativo
+  );
 }

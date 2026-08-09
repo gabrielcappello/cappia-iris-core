@@ -50,7 +50,10 @@ interface CasoSimples {
 // codigo, para impedir troca acidental por dado real).
 const CASOS: readonly CasoSimples[] = Object.freeze([
   { titulo: 'procedimento', categoria: 'procedimento_id', mensagens_atuais: ['Quero fazer uma limpeza.'] },
-  { titulo: 'dentista', categoria: 'dentista_texto', mensagens_atuais: ['Prefiro ser atendido com a Dra. Ana.'] },
+  // `dentista_id` exige `dentistas_disponiveis` no payload, que este runner
+  // (mensagens simples, sem contexto) nao envia -- entao o caso de dentista
+  // saiu daqui em 2026-08-09. A cobertura vive em
+  // src/eval/teste-real-dentista-semantico.ts.
   { titulo: 'data hoje', categoria: 'data_texto', mensagens_atuais: ['Pode ser hoje?'] },
   { titulo: 'data amanha', categoria: 'data_texto', mensagens_atuais: ['Pode ser amanhã?'] },
   { titulo: 'periodo manha', categoria: 'periodo', mensagens_atuais: ['Prefiro de manhã.'] },

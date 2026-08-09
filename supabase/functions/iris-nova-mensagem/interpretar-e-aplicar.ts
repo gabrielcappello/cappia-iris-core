@@ -7,10 +7,18 @@ import {
   validarSnapshotOficial,
 } from './interpretacao-extrator.ts';
 import { preAplicar } from './pre-aplicacao.ts';
-import type { ClienteBancoDados, ContextoConversa, ParConversa, ResultadoAplicarDados } from './tipos.ts';
+import type {
+  AlteracoesDados,
+  ClienteBancoDados,
+  ContextoConversa,
+  ParConversa,
+  ResultadoAplicarDados,
+} from './tipos.ts';
 import type {
   ClienteModeloEstruturado,
   Conflito,
+  EventoCandidatoIA,
+  NaturezaMensagem,
   ResultadoInterpretacao,
   SnapshotOficialConversa,
 } from './interpretacao-tipos.ts';
@@ -45,6 +53,75 @@ export interface InterpretarEAplicarInput extends ContextoConversa {
    * ou reserva -- a integridade do ID e conferida depois pelo Core.
    */
   procedimentos_disponiveis?: { procedimento_id: string; nome_pt: string }[];
+  /**
+   * Dentistas ativos da clinica (specs/dentista-semantico-v1.md). Mesmo
+   * papel do catalogo acima, para `dentista_id`. Nao filtrada por aptidao:
+   * o vinculo e conferido depois pelo Core, contra o procedimento resolvido.
+   */
+  dentistas_disponiveis?: { dentista_id: string; nome_exibido: string }[];
+  /**
+   * Oferta de procedimento feita no turno anterior, aguardando resposta
+   * (specs/contexto-pendente-interpretacao-v1.md secao 11). Contexto de
+   * interpretacao; nunca influencia persistencia, disponibilidade ou reserva
+   * -- o procedimento aceito passa pela validacao de integridade de sempre.
+   */
+  oferta_procedimento_pendente?: { procedimento_id: string };
+}
+
+/**
+ * Traduz o candidato `aceitar_opcao` em uma alteracao concreta de
+ * `procedimento_id` -- deterministicamente, no Core.
+ *
+ * Regras, todas obrigatorias:
+ *
+ * - exige o evento E a oferta oficial. Falta qualquer um, nada acontece;
+ * - o id aplicado vem do snapshot oficial do Core, nunca do evento;
+ * - a ACAO e decidida aqui, nao pela IA: `corrigir` quando ja existe outro
+ *   procedimento em `dados_atuais`, `informar` quando nao existe. Isso
+ *   elimina uma falha real medida em 2026-08-09 -- quando a IA escolhia a
+ *   acao, um `informar` sobre campo ja preenchido virava conflito em
+ *   `preAplicar` e a aceitacao era descartada em silencio;
+ * - se o paciente ja pediu explicitamente outro procedimento NESTA mensagem,
+ *   o pedido explicito vence: a oferta nao sobrescreve o que ele acabou de
+ *   dizer.
+ *
+ * `referencia_textual` do evento e deliberadamente ignorada aqui: existe uma
+ * unica oferta por vez, entao nao ha o que desambiguar. Ela permanece no
+ * contrato para quando `aceitar_opcao` cobrir escolha de horario.
+ */
+function aplicarAceitacaoDeOferta(
+  alteracoes: AlteracoesDados,
+  eventos: readonly EventoCandidatoIA[],
+  naturezaMensagem: NaturezaMensagem,
+  ofertaPendente: { procedimento_id: string } | undefined,
+  snapshotOficial: SnapshotOficialConversa
+): AlteracoesDados {
+  const aceitou = eventos.some((e) => e.tipo === 'aceitar_opcao');
+  if (!aceitou || ofertaPendente === undefined) return alteracoes;
+
+  // SINAIS INCOMPATIVEIS (eventos-conversacionais-v1.md secao 7: "candidatos
+  // logicamente incompativeis na mesma mensagem nunca autorizam acao").
+  // `negacao` e aceitacao no mesmo turno se contradizem -- o Core nao escolhe
+  // qual acreditar, simplesmente nao aplica.
+  //
+  // Nao e regra de linguagem: e coerencia entre dois sinais que a propria IA
+  // produziu. Medido em 2026-08-09: "prefiro outra coisa" vinha com
+  // `natureza=negacao` E `aceitar_opcao`, e sem esta checagem o paciente
+  // recusava e acabava com a oferta aplicada.
+  if (naturezaMensagem === 'negacao') return alteracoes;
+
+  // Pedido explicito na mesma mensagem tem precedencia sobre a oferta.
+  if (alteracoes.procedimento_id !== undefined) return alteracoes;
+
+  const jaTemOutro =
+    typeof snapshotOficial.procedimento_id === 'string' &&
+    snapshotOficial.procedimento_id.trim() !== '' &&
+    snapshotOficial.procedimento_id !== ofertaPendente.procedimento_id;
+
+  return {
+    ...alteracoes,
+    procedimento_id: { acao: jaTemOutro ? 'corrigir' : 'informar', valor: ofertaPendente.procedimento_id },
+  };
 }
 
 const CHAVES_ENTRADA_INTEGRADA = ['conversa_id', 'clinica_id', 'telefone_normalizado', 'mensagens_atuais'] as const;
@@ -53,6 +130,8 @@ const CHAVES_OPCIONAIS_INTEGRADA = [
   'proposta_pendente',
   'historico_recente',
   'procedimentos_disponiveis',
+  'dentistas_disponiveis',
+  'oferta_procedimento_pendente',
 ] as const;
 
 /**
@@ -103,12 +182,32 @@ export async function interpretarEAplicar(
       entrada.horarios_oferecidos,
       entrada.proposta_pendente,
       entrada.historico_recente,
-      entrada.procedimentos_disponiveis
+      entrada.procedimentos_disponiveis,
+      entrada.dentistas_disponiveis,
+      entrada.oferta_procedimento_pendente !== undefined ? true : undefined
     )
   );
 
+  // 5b. ACEITACAO DE OFERTA -- quem aplica e o Core, nunca a IA
+  // (specs/contexto-pendente-interpretacao-v1.md secao 11 +
+  // eventos-conversacionais-v1.md secao 1: evento da IA e sempre candidato).
+  //
+  // Exige os DOIS lados: o candidato `aceitar_opcao` E uma oferta oficial
+  // pendente. Um evento sem oferta e simplesmente ignorado -- a IA nao tem
+  // como fazer o Core aplicar procedimento nenhum por conta propria.
+  //
+  // O `procedimento_id` vem SEMPRE do snapshot oficial, nunca do evento: o
+  // evento nao carrega id, e por isso mesmo nao ha o que forjar.
+  const alteracoesComOferta = aplicarAceitacaoDeOferta(
+    saida.alteracoes,
+    saida.eventos_candidatos,
+    saida.natureza_mensagem,
+    entrada.oferta_procedimento_pendente,
+    snapshotOficial
+  );
+
   // 6. pre-aplicacao deterministica usando o mesmo snapshot.
-  const preAplicacao = preAplicar(snapshotOficial, saida.alteracoes);
+  const preAplicacao = preAplicar(snapshotOficial, alteracoesComOferta);
   const conflitos: Conflito[] = [...preAplicacao.conflitos];
   let alteracoesAplicaveis = { ...preAplicacao.alteracoes_aplicaveis };
 

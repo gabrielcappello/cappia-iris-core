@@ -5,6 +5,7 @@ import {
   CAMPOS_CADASTRAIS_INTERPRETACAO,
   CAMPOS_OPERACIONAIS_INTERPRETACAO,
   NATUREZAS_MENSAGEM_PERMITIDAS,
+  TIPOS_EVENTO_CANDIDATO_PERMITIDOS,
 } from './interpretacao-tipos.ts';
 import type { AcaoAlteracaoDados, CampoDadosConversa, ParConversa } from './tipos.ts';
 import type {
@@ -12,6 +13,7 @@ import type {
   CampoOperacionalInterpretacao,
   ClienteModeloEstruturado,
   EntradaInterpretacao,
+  EventoCandidatoIA,
   NaturezaMensagem,
   SaidaInterpretacao,
   SnapshotOficialConversa,
@@ -47,6 +49,12 @@ export async function extrairAlteracoes(
     ...(entradaBruta.procedimentos_disponiveis !== undefined
       ? { procedimentos_disponiveis: [...entradaBruta.procedimentos_disponiveis] }
       : {}),
+    ...(entradaBruta.dentistas_disponiveis !== undefined
+      ? { dentistas_disponiveis: [...entradaBruta.dentistas_disponiveis] }
+      : {}),
+    ...(entradaBruta.oferta_procedimento_pendente !== undefined
+      ? { oferta_procedimento_pendente: entradaBruta.oferta_procedimento_pendente }
+      : {}),
     ...(entradaBruta.historico_recente !== undefined ? { historico_recente: [...entradaBruta.historico_recente] } : {}),
   };
 
@@ -75,7 +83,9 @@ export function construirEntradaMinimizada(
   horariosOferecidos?: string[],
   propostaPendente?: { data: string; horario: string },
   historicoRecente?: ParConversa[],
-  procedimentosDisponiveis?: { procedimento_id: string; nome_pt: string }[]
+  procedimentosDisponiveis?: { procedimento_id: string; nome_pt: string }[],
+  dentistasDisponiveis?: { dentista_id: string; nome_exibido: string }[],
+  ofertaProcedimentoPendente?: true
 ): EntradaInterpretacao {
   return {
     mensagens_atuais: [...mensagensAtuais],
@@ -84,6 +94,10 @@ export function construirEntradaMinimizada(
     ...(horariosOferecidos !== undefined ? { horarios_oferecidos: [...horariosOferecidos] } : {}),
     ...(propostaPendente !== undefined ? { proposta_pendente: propostaPendente } : {}),
     ...(procedimentosDisponiveis !== undefined ? { procedimentos_disponiveis: [...procedimentosDisponiveis] } : {}),
+    ...(dentistasDisponiveis !== undefined ? { dentistas_disponiveis: [...dentistasDisponiveis] } : {}),
+    ...(ofertaProcedimentoPendente !== undefined
+      ? { oferta_procedimento_pendente: ofertaProcedimentoPendente }
+      : {}),
     ...(historicoRecente !== undefined ? { historico_recente: [...historicoRecente] } : {}),
   };
 }
@@ -126,10 +140,12 @@ const CHAVES_ENTRADA_INTERPRETACAO = [
 // Chaves opcionais: podem estar ausentes, mas quando presentes precisam ser
 // validadas. A entrada continua FECHADA -- qualquer chave fora da uniao
 // (obrigatorias + opcionais) rejeita a entrada inteira, como sempre.
-const CHAVES_OPCIONAIS_INTERPRETACAO = [
+export const CHAVES_OPCIONAIS_INTERPRETACAO = [
   'horarios_oferecidos',
   'proposta_pendente',
   'procedimentos_disponiveis',
+  'dentistas_disponiveis',
+  'oferta_procedimento_pendente',
   'historico_recente',
 ] as const;
 
@@ -159,6 +175,8 @@ export function validarEntradaInterpretacao(entrada: unknown): asserts entrada i
     horarios_oferecidos,
     proposta_pendente,
     procedimentos_disponiveis,
+    dentistas_disponiveis,
+    oferta_procedimento_pendente,
     historico_recente,
   } = entrada as Record<string, unknown>;
   validarMensagensAtuais(mensagens_atuais);
@@ -167,7 +185,68 @@ export function validarEntradaInterpretacao(entrada: unknown): asserts entrada i
   if (horarios_oferecidos !== undefined) validarHorariosOferecidos(horarios_oferecidos);
   if (proposta_pendente !== undefined) validarPropostaPendente(proposta_pendente);
   if (procedimentos_disponiveis !== undefined) validarProcedimentosDisponiveis(procedimentos_disponiveis);
+  if (dentistas_disponiveis !== undefined) validarDentistasDisponiveis(dentistas_disponiveis);
+  if (oferta_procedimento_pendente !== undefined) validarOfertaProcedimentoPendente(oferta_procedimento_pendente);
   if (historico_recente !== undefined) validarHistoricoRecente(historico_recente);
+}
+
+/**
+ * Oferta de procedimento aguardando resposta (contexto-horarios.ts, acao
+ * `oferecer`). Fechada a exatamente `procedimento_id`, string nao vazia --
+ * quem produz esse valor e sempre o proprio Core, nunca a IA nem o paciente.
+ * Nao valida se o id existe no catalogo: a integridade e conferida depois, na
+ * mesma checagem de sempre, quando o procedimento aceito volta pelo fluxo.
+ */
+export function validarOfertaProcedimentoPendente(valor: unknown): asserts valor is true {
+  // Fechado a `true`. O `procedimento_id` oferecido NAO trafega ate a IA
+  // (specs/contexto-pendente-interpretacao-v1.md secao 11): ele fica so no
+  // snapshot oficial, e quem aplica e o Core. `false` tambem e rejeitado --
+  // "nao ha oferta" se representa pela AUSENCIA da chave, como as demais.
+  if (valor !== true) {
+    throw new EntradaInvalidaError(
+      'oferta_procedimento_pendente',
+      'oferta_procedimento_pendente deve ser exatamente true quando presente'
+    );
+  }
+}
+
+/**
+ * Dentistas ATIVOS da clinica (specs/dentista-semantico-v1.md). Mesma
+ * disciplina de `procedimentos_disponiveis`: fechada a arrays nao vazios de
+ * pares {dentista_id, nome_exibido}, ambos strings nao vazias -- "nenhum
+ * dentista ativo" se representa pela AUSENCIA da chave, nunca por `[]`. Nao
+ * valida se o id existe nem se ha vinculo: quem produz este valor e sempre o
+ * proprio Core (carregarCatalogo), e a aptidao e conferida DEPOIS, no
+ * orquestrador, contra o procedimento ja resolvido.
+ */
+export function validarDentistasDisponiveis(
+  valor: unknown
+): asserts valor is { dentista_id: string; nome_exibido: string }[] {
+  if (!Array.isArray(valor)) {
+    throw new EntradaInvalidaError('dentistas_disponiveis', 'dentistas_disponiveis deve ser um array');
+  }
+  if (valor.length === 0) {
+    throw new EntradaInvalidaError('dentistas_disponiveis', 'dentistas_disponiveis nao pode ser um array vazio');
+  }
+  for (const item of valor) {
+    if (item === null || typeof item !== 'object' || Array.isArray(item)) {
+      throw new EntradaInvalidaError('dentistas_disponiveis', 'dentistas_disponiveis contem item que nao e objeto');
+    }
+    const chaves = Object.keys(item as Record<string, unknown>).sort();
+    if (JSON.stringify(chaves) !== JSON.stringify(['dentista_id', 'nome_exibido'])) {
+      throw new EntradaInvalidaError(
+        'dentistas_disponiveis',
+        'dentistas_disponiveis contem item com chaves diferentes de dentista_id/nome_exibido'
+      );
+    }
+    const { dentista_id, nome_exibido } = item as Record<string, unknown>;
+    if (typeof dentista_id !== 'string' || dentista_id.trim() === '') {
+      throw new EntradaInvalidaError('dentistas_disponiveis', 'dentistas_disponiveis contem dentista_id invalido');
+    }
+    if (typeof nome_exibido !== 'string' || nome_exibido.trim() === '') {
+      throw new EntradaInvalidaError('dentistas_disponiveis', 'dentistas_disponiveis contem nome_exibido invalido');
+    }
+  }
 }
 
 /**
@@ -405,11 +484,16 @@ export function validarSaidaInterpretacao(saida: unknown): asserts saida is Said
   }
 
   const chavesNivelPrincipal = Object.keys(saida as Record<string, unknown>);
-  if (!mesmasChaves(chavesNivelPrincipal, ['natureza_mensagem', 'alteracoes'])) {
+  if (!mesmasChaves(chavesNivelPrincipal, ['natureza_mensagem', 'alteracoes', 'eventos_candidatos'])) {
     throw new InterpretacaoInvalidaError('propriedade_extra', 'saida');
   }
 
-  const { natureza_mensagem, alteracoes } = saida as { natureza_mensagem: unknown; alteracoes: unknown };
+  const { natureza_mensagem, alteracoes, eventos_candidatos } = saida as {
+    natureza_mensagem: unknown;
+    alteracoes: unknown;
+    eventos_candidatos: unknown;
+  };
+  validarEventosCandidatos(eventos_candidatos);
   if (
     typeof natureza_mensagem !== 'string' ||
     !NATUREZAS_MENSAGEM_PERMITIDAS.includes(natureza_mensagem as NaturezaMensagem)
@@ -463,6 +547,40 @@ export function validarSaidaInterpretacao(saida: unknown): asserts saida is Said
     if (campo === 'confirmacao' && !CONFIRMACOES_PERMITIDAS.includes(valor)) {
       throw new InterpretacaoInvalidaError('valor_fora_do_dominio', `${caminhoCampo}.valor`);
     }
+  }
+}
+
+/**
+ * Eventos candidatos (specs/eventos-conversacionais-v1.md secao 4).
+ * Array obrigatorio, possivelmente vazio. Fechado ao unico tipo implementado:
+ * tipo desconhecido ou evento repetido invalida a saida inteira -- nunca e
+ * descartado em silencio.
+ */
+export function validarEventosCandidatos(valor: unknown): asserts valor is EventoCandidatoIA[] {
+  if (!Array.isArray(valor)) {
+    throw new InterpretacaoInvalidaError('eventos_candidatos_invalido', 'saida.eventos_candidatos');
+  }
+  const vistos = new Set<string>();
+  for (const item of valor) {
+    if (item === null || typeof item !== 'object' || Array.isArray(item)) {
+      throw new InterpretacaoInvalidaError('evento_invalido', 'saida.eventos_candidatos');
+    }
+    const chaves = Object.keys(item as Record<string, unknown>);
+    if (!mesmasChaves(chaves, ['tipo', 'referencia_textual'])) {
+      throw new InterpretacaoInvalidaError('propriedade_extra', 'saida.eventos_candidatos');
+    }
+    const { tipo, referencia_textual } = item as { tipo: unknown; referencia_textual: unknown };
+    if (typeof tipo !== 'string' || !TIPOS_EVENTO_CANDIDATO_PERMITIDOS.includes(tipo as EventoCandidatoIA['tipo'])) {
+      throw new InterpretacaoInvalidaError('evento_desconhecido', 'saida.eventos_candidatos.tipo');
+    }
+    // `null` e valido e e o caso NORMAL de concordancia deitica ("pode ser").
+    if (referencia_textual !== null && typeof referencia_textual !== 'string') {
+      throw new InterpretacaoInvalidaError('valor_invalido', 'saida.eventos_candidatos.referencia_textual');
+    }
+    if (vistos.has(tipo)) {
+      throw new InterpretacaoInvalidaError('evento_repetido', 'saida.eventos_candidatos');
+    }
+    vistos.add(tipo);
   }
 }
 

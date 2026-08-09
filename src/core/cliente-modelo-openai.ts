@@ -8,8 +8,13 @@
 // Este arquivo NAO e chamado por nenhum fluxo de producao ainda -- nao ha
 // integracao com interpretarEAplicar nem com a Edge Function nesta etapa.
 import { ACOES_PERMITIDAS, CAMPOS_PERMITIDOS } from './aplicar-dados.ts';
-import { NATUREZAS_MENSAGEM_PERMITIDAS } from './interpretacao-tipos.ts';
-import type { ClienteModeloEstruturado, EntradaInterpretacao, NaturezaMensagem } from './interpretacao-tipos.ts';
+import { NATUREZAS_MENSAGEM_PERMITIDAS, TIPOS_EVENTO_CANDIDATO_PERMITIDOS } from './interpretacao-tipos.ts';
+import type {
+  ClienteModeloEstruturado,
+  EntradaInterpretacao,
+  EventoCandidatoIA,
+  NaturezaMensagem,
+} from './interpretacao-tipos.ts';
 import type { AcaoAlteracaoDados, AlteracoesDados, CampoDadosConversa } from './tipos.ts';
 
 export const MODELO_GPT_4_1_MINI = 'gpt-4.1-mini-2025-04-14';
@@ -47,7 +52,7 @@ const SCHEMA_PORTATIL_APROVADO = {
               // portatil estatico, ver cabecalho) -- trocar la sem trocar
               // aqui faz o modelo continuar obrigado ao campo antigo.
               'procedimento_id',
-              'dentista_texto',
+              'dentista_id',
               'data_texto',
               'periodo',
               'horario_texto',
@@ -70,8 +75,24 @@ const SCHEMA_PORTATIL_APROVADO = {
         additionalProperties: false,
       },
     },
+    // Terceiro campo raiz (specs/eventos-conversacionais-v1.md, fatia minima
+    // de 2026-08-09). Duplicado aqui de proposito, como o enum de campos --
+    // este e o schema REALMENTE enviado a OpenAI; declarar o evento so no
+    // tipo TypeScript faria o modelo nunca poder emiti-lo.
+    eventos_candidatos: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          tipo: { type: 'string', enum: ['aceitar_opcao'] },
+          referencia_textual: { type: ['string', 'null'] },
+        },
+        required: ['tipo', 'referencia_textual'],
+        additionalProperties: false,
+      },
+    },
   },
-  required: ['natureza_mensagem', 'alteracoes'],
+  required: ['natureza_mensagem', 'alteracoes', 'eventos_candidatos'],
   additionalProperties: false,
 } as const;
 
@@ -377,6 +398,20 @@ async function processarTentativa(
           ...(contexto.entrada.payload.procedimentos_disponiveis !== undefined
             ? { procedimentos_disponiveis: contexto.entrada.payload.procedimentos_disponiveis }
             : {}),
+          // Dentistas ativos da clinica (specs/dentista-semantico-v1.md):
+          // mesmo papel do catalogo acima, para `dentista_id`. NAO filtrada
+          // por aptidao -- ver o comentario do campo em interpretacao-tipos.ts.
+          ...(contexto.entrada.payload.dentistas_disponiveis !== undefined
+            ? { dentistas_disponiveis: contexto.entrada.payload.dentistas_disponiveis }
+            : {}),
+          // Terceira variante do contexto pendente
+          // (specs/contexto-pendente-interpretacao-v1.md secao 11): sem esta
+          // chave no corpo, uma concordancia nua ("pode ser") chega a
+          // interpretadora sem nenhuma pergunta declarada em aberto e vira
+          // `nao_compreendida` -- medido 3/3.
+          ...(contexto.entrada.payload.oferta_procedimento_pendente !== undefined
+            ? { oferta_procedimento_pendente: contexto.entrada.payload.oferta_procedimento_pendente }
+            : {}),
           // CORRECAO 2026-08-08: `historico_recente` existia em
           // EntradaInterpretacao desde specs/historico-conversacional-v1.md,
           // mas NUNCA era copiado para o corpo HTTP -- este objeto e montado
@@ -523,7 +558,7 @@ function classificarEConverter(
   tentativa: number,
   duracao: () => number,
   modelo: string
-): { natureza_mensagem: NaturezaMensagem; alteracoes: AlteracoesDados } {
+): { natureza_mensagem: NaturezaMensagem; alteracoes: AlteracoesDados; eventos_candidatos: EventoCandidatoIA[] } {
   if (textoCorpo === '') {
     // Corpo HTTP com zero bytes: unico caso, junto com output_text vazio
     // mais abaixo, classificado como resposta_vazia (repetivel).
@@ -631,26 +666,65 @@ function classificarEConverter(
 
   let naturezaMensagem: NaturezaMensagem;
   let alteracoesInternas: AlteracoesDados;
+  let eventosCandidatos: EventoCandidatoIA[];
   try {
     if (objetoPortatil === null || typeof objetoPortatil !== 'object' || Array.isArray(objetoPortatil)) {
       throw new ErroConversaoPortatil('raiz_invalida');
     }
     const chavesRaizPortatil = Object.keys(objetoPortatil as Record<string, unknown>).sort();
-    if (JSON.stringify(chavesRaizPortatil) !== JSON.stringify(['alteracoes', 'natureza_mensagem'])) {
+    if (JSON.stringify(chavesRaizPortatil) !== JSON.stringify(['alteracoes', 'eventos_candidatos', 'natureza_mensagem'])) {
       throw new ErroConversaoPortatil('propriedade_extra');
     }
-    const { natureza_mensagem, alteracoes } = objetoPortatil as { natureza_mensagem: unknown; alteracoes: unknown };
+    const { natureza_mensagem, alteracoes, eventos_candidatos } = objetoPortatil as {
+      natureza_mensagem: unknown;
+      alteracoes: unknown;
+      eventos_candidatos: unknown;
+    };
     if (typeof natureza_mensagem !== 'string' || !NATUREZAS_MENSAGEM_PERMITIDAS.includes(natureza_mensagem as NaturezaMensagem)) {
       throw new ErroConversaoPortatil('natureza_mensagem_invalida');
     }
     naturezaMensagem = natureza_mensagem as NaturezaMensagem;
     alteracoesInternas = converterParaContratoInterno({ alteracoes });
+    eventosCandidatos = converterEventosCandidatos(eventos_candidatos);
   } catch (erroConversao) {
     const codigo = erroConversao instanceof ErroConversaoPortatil ? erroConversao.codigo : 'objeto_portatil_invalido';
     throw new ErroClienteModeloOpenAI('resposta_invalida', codigo, tentativa, duracao(), modelo, statusHttpResposta);
   }
 
-  return { natureza_mensagem: naturezaMensagem, alteracoes: alteracoesInternas };
+  return { natureza_mensagem: naturezaMensagem, alteracoes: alteracoesInternas, eventos_candidatos: eventosCandidatos };
+}
+
+/**
+ * Valida os eventos candidatos vindos do modelo. Fechado ao unico tipo
+ * implementado; qualquer outro invalida a resposta inteira, nunca e ignorado
+ * em silencio (specs/eventos-conversacionais-v1.md secao 4: "tipos
+ * desconhecidos ou eventos repetidos sao invalidos").
+ */
+export function converterEventosCandidatos(valor: unknown): EventoCandidatoIA[] {
+  if (!Array.isArray(valor)) throw new ErroConversaoPortatil('eventos_candidatos_invalido');
+
+  const vistos = new Set<string>();
+  const eventos: EventoCandidatoIA[] = [];
+  for (const item of valor) {
+    if (item === null || typeof item !== 'object' || Array.isArray(item)) {
+      throw new ErroConversaoPortatil('eventos_candidatos_invalido');
+    }
+    const chaves = Object.keys(item as Record<string, unknown>).sort();
+    if (JSON.stringify(chaves) !== JSON.stringify(['referencia_textual', 'tipo'])) {
+      throw new ErroConversaoPortatil('eventos_candidatos_invalido');
+    }
+    const { tipo, referencia_textual } = item as { tipo: unknown; referencia_textual: unknown };
+    if (typeof tipo !== 'string' || !TIPOS_EVENTO_CANDIDATO_PERMITIDOS.includes(tipo as EventoCandidatoIA['tipo'])) {
+      throw new ErroConversaoPortatil('eventos_candidatos_invalido');
+    }
+    if (referencia_textual !== null && typeof referencia_textual !== 'string') {
+      throw new ErroConversaoPortatil('eventos_candidatos_invalido');
+    }
+    if (vistos.has(tipo)) throw new ErroConversaoPortatil('eventos_candidatos_invalido');
+    vistos.add(tipo);
+    eventos.push({ tipo: tipo as EventoCandidatoIA['tipo'], referencia_textual });
+  }
+  return eventos;
 }
 
 // AbortController so cancela I/O pendente (fetch/leitura do corpo) -- nao

@@ -10,6 +10,8 @@ import {
   MODELO_GPT_4_1_MINI,
 } from './cliente-modelo-openai.ts';
 import { INSTRUCOES_EXTRATOR } from './interpretacao-instrucoes.ts';
+import { CHAVES_OPCIONAIS_INTERPRETACAO } from './interpretacao-extrator.ts';
+import { CAMPOS_PERMITIDOS } from './aplicar-dados.ts';
 
 // --- dublês de fetch (todos falsos; nenhuma rede real em nenhum teste) ---
 
@@ -32,10 +34,15 @@ function criarFetchFalso(geradores: Array<(opcoes: RequestInit) => Response | Pr
   return { fetchFalso, chamadas };
 }
 
+// `eventos_candidatos` e campo raiz obrigatorio desde 2026-08-09
+// (specs/eventos-conversacionais-v1.md). O modelo real sempre o devolve (o
+// schema estrito exige), entao o default `[]` aqui reproduz producao. Testes
+// que exercitam o campo passam o valor explicitamente.
 function respostaSucesso(
   alteracoesPortatil: unknown[],
   usage: Record<string, number> = { input_tokens: 1, output_tokens: 1 },
-  naturezaMensagem: string = 'pedido'
+  naturezaMensagem: string = 'pedido',
+  eventosCandidatos: unknown[] = []
 ) {
   const corpo = {
     status: 'completed',
@@ -43,7 +50,14 @@ function respostaSucesso(
       {
         type: 'message',
         content: [
-          { type: 'output_text', text: JSON.stringify({ natureza_mensagem: naturezaMensagem, alteracoes: alteracoesPortatil }) },
+          {
+            type: 'output_text',
+            text: JSON.stringify({
+              natureza_mensagem: naturezaMensagem,
+              alteracoes: alteracoesPortatil,
+              eventos_candidatos: eventosCandidatos,
+            }),
+          },
         ],
       },
     ],
@@ -376,7 +390,7 @@ test('5: corpo HTTP realmente vazio gera resposta_vazia e permite no maximo um r
     const { fetchFalso, chamadas } = criarFetchFalso([() => respostaZeroBytes(), () => respostaSucesso([])]);
     const cliente = criarCliente({ fetch: fetchFalso });
     const resultado = await cliente.executar(entradaValida());
-    assert.deepEqual(resultado, { natureza_mensagem: 'pedido', alteracoes: {} });
+    assert.deepEqual(resultado, { natureza_mensagem: 'pedido', alteracoes: {}, eventos_candidatos: [] });
     assert.equal(chamadas.length, 2);
   }
   // caso B: vazio duas vezes -> falha apos exatamente 2 chamadas
@@ -1094,6 +1108,7 @@ test('extra: executar() bem-sucedido devolve o mapa interno pronto para validarS
       procedimento_id: { acao: 'informar', valor: 'limpeza' },
       cpf: { acao: 'remover' },
     },
+    eventos_candidatos: [],
   });
 });
 
@@ -1215,7 +1230,7 @@ test('correcao1b: com orcamento generoso, a revalidacao apos a espera nao bloque
   const { fetchFalso, chamadas } = criarFetchFalso([() => respostaErroHttp(503, {}), () => respostaSucesso([])]);
   const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs: 40, esperaEntreTentativasMs: 5, prazoTotalMs: 5000 });
   const resultado = await cliente.executar(entradaValida());
-  assert.deepEqual(resultado, { natureza_mensagem: 'pedido', alteracoes: {} });
+  assert.deepEqual(resultado, { natureza_mensagem: 'pedido', alteracoes: {}, eventos_candidatos: [] });
   assert.equal(chamadas.length, 2);
 });
 
@@ -1334,6 +1349,7 @@ test('correcao3c: resposta rapida dentro do prazo continua sendo aceita normalme
   assert.deepEqual(resultado, {
     natureza_mensagem: 'pedido',
     alteracoes: { nome: { acao: 'informar', valor: 'Joao' } },
+    eventos_candidatos: [],
   });
 });
 
@@ -1853,6 +1869,7 @@ describe('testes que substituem globais (Date.now, JSON.parse, Date.parse) -- co
                 text: JSON.stringify({
                   natureza_mensagem: 'pedido',
                   alteracoes: [{ campo: 'campo_desconhecido', acao: 'informar', valor: 'x' }],
+                  eventos_candidatos: [],
                 }),
               },
             ],
@@ -2033,8 +2050,23 @@ test('fronteira: GUARDA GERAL -- toda chave opcional do payload precisa aparecer
     campos_cadastrais_preenchidos: [],
     horarios_oferecidos: ['08:00', '09:00'],
     proposta_pendente: { data: '08/08', horario: '14:00' },
+    procedimentos_disponiveis: [{ procedimento_id: 'limpeza', nome_pt: 'Limpeza dental' }],
+    dentistas_disponiveis: [{ dentista_id: 'dent-ana', nome_exibido: 'Dra. Ana Souza' }],
+    oferta_procedimento_pendente: { procedimento_id: 'consultation_evaluation' },
     historico_recente: HISTORICO_EXEMPLO,
   };
+
+  // A guarda so cobre o que ESTE payload contem -- e em 2026-08-08
+  // `procedimentos_disponiveis` foi adicionado ao contrato sem entrar aqui,
+  // entao a "guarda geral" nao guardava a chave nova. Esta assercao fecha a
+  // brecha na propria guarda: um campo opcional novo que nao seja exercitado
+  // acima falha AQUI, antes mesmo de a fronteira ser testada.
+  for (const chave of CHAVES_OPCIONAIS_INTERPRETACAO) {
+    assert.ok(
+      chave in payloadCompleto,
+      `a chave opcional "${chave}" existe em EntradaInterpretacao mas nao esta em payloadCompleto -- adicione-a aqui, senao a guarda de fronteira nao a cobre`
+    );
+  }
 
   const { fetchFalso, chamadas } = criarFetchFalso([() => respostaSucesso([])]);
   const cliente = criarCliente({ fetch: fetchFalso });
@@ -2048,4 +2080,193 @@ test('fronteira: GUARDA GERAL -- toda chave opcional do payload precisa aparecer
     );
   }
   assert.deepEqual(enviado, payloadCompleto, 'o corpo enviado deve ser exatamente o payload, sem perder nem inventar chave');
+});
+
+test('fronteira: dentistas_disponiveis presente no payload chega LITERALMENTE ao corpo HTTP enviado', async () => {
+  const { fetchFalso, chamadas } = criarFetchFalso([() => respostaSucesso([])]);
+  const cliente = criarCliente({ fetch: fetchFalso });
+  const dentistas = [
+    { dentista_id: 'dent-ana', nome_exibido: 'Dra. Ana Souza' },
+    { dentista_id: 'dent-bruno', nome_exibido: 'Dr. Bruno Lima' },
+  ];
+
+  await cliente.executar(
+    entradaValida({
+      payload: {
+        mensagens_atuais: ['quero com o Bruno'],
+        dados_atuais: {},
+        campos_cadastrais_preenchidos: [],
+        dentistas_disponiveis: dentistas,
+      },
+    })
+  );
+
+  assert.deepEqual(
+    corpoEnviado(chamadas).dentistas_disponiveis,
+    dentistas,
+    'dentistas_disponiveis deve chegar byte a byte ao corpo HTTP -- sem isso a interpretadora nao tem como devolver dentista_id'
+  );
+});
+
+test('fronteira: oferta_procedimento_pendente presente no payload chega LITERALMENTE ao corpo HTTP', async () => {
+  const { fetchFalso, chamadas } = criarFetchFalso([() => respostaSucesso([])]);
+  const cliente = criarCliente({ fetch: fetchFalso });
+  const oferta = { procedimento_id: 'consultation_evaluation' };
+
+  await cliente.executar(
+    entradaValida({
+      payload: {
+        mensagens_atuais: ['pode ser'],
+        dados_atuais: {},
+        campos_cadastrais_preenchidos: [],
+        oferta_procedimento_pendente: oferta,
+      },
+    })
+  );
+
+  assert.deepEqual(
+    corpoEnviado(chamadas).oferta_procedimento_pendente,
+    oferta,
+    'sem esta chave no corpo, "pode ser" vira nao_compreendida -- medido 3/3 contra a IA real'
+  );
+});
+
+test('fronteira: oferta_procedimento_pendente ausente no payload nao cria chave morta no corpo HTTP', async () => {
+  const { fetchFalso, chamadas } = criarFetchFalso([() => respostaSucesso([])]);
+  const cliente = criarCliente({ fetch: fetchFalso });
+
+  await cliente.executar(entradaValida({ payload: { mensagens_atuais: ['oi'], dados_atuais: {}, campos_cadastrais_preenchidos: [] } }));
+
+  assert.equal('oferta_procedimento_pendente' in corpoEnviado(chamadas), false);
+});
+
+test('fronteira: dentistas_disponiveis ausente no payload nao cria chave morta no corpo HTTP', async () => {
+  const { fetchFalso, chamadas } = criarFetchFalso([() => respostaSucesso([])]);
+  const cliente = criarCliente({ fetch: fetchFalso });
+
+  await cliente.executar(entradaValida({ payload: { mensagens_atuais: ['oi'], dados_atuais: {}, campos_cadastrais_preenchidos: [] } }));
+
+  assert.equal('dentistas_disponiveis' in corpoEnviado(chamadas), false);
+});
+
+test('fronteira: o enum de campos do schema ENVIADO a OpenAI e exatamente CAMPOS_PERMITIDOS', async () => {
+  // O enum e uma lista DUPLICADA de CAMPOS_PERMITIDOS dentro do schema
+  // portatil -- trocar la sem trocar aqui faz o modelo continuar obrigado ao
+  // campo antigo. Assercao sobre o corpo REAL do fetch (nao sobre a
+  // constante), mesmo criterio dos demais testes de fronteira.
+  const { fetchFalso, chamadas } = criarFetchFalso([() => respostaSucesso([])]);
+  const cliente = criarCliente({ fetch: fetchFalso });
+
+  await cliente.executar(entradaValida({ payload: { mensagens_atuais: ['oi'], dados_atuais: {}, campos_cadastrais_preenchidos: [] } }));
+
+  const corpo = JSON.parse(String(chamadas[0].opcoes.body)) as {
+    text: { format: { schema: { properties: { alteracoes: { items: { properties: { campo: { enum: string[] } } } } } } } };
+  };
+  const enumCampos = corpo.text.format.schema.properties.alteracoes.items.properties.campo.enum;
+
+  assert.ok(enumCampos.includes('dentista_id'));
+  assert.equal(enumCampos.includes('dentista_texto'), false);
+  assert.deepEqual(
+    [...enumCampos].sort(),
+    [...CAMPOS_PERMITIDOS].sort(),
+    'o enum do schema enviado divergiu de CAMPOS_PERMITIDOS -- o modelo ficaria obrigado a um campo que o Core nao aceita mais'
+  );
+});
+
+// --- eventos_candidatos: contrato de saida (specs/eventos-conversacionais-v1.md) ---
+
+test('schema enviado: eventos_candidatos existe no schema REAL, com additionalProperties:false e referencia_textual nullable', async () => {
+  // Declarar o evento so nos tipos TypeScript faria o modelo nunca poder
+  // emiti-lo. A assercao e sobre o corpo do fetch, nao sobre a constante.
+  const { fetchFalso, chamadas } = criarFetchFalso([() => respostaSucesso([])]);
+  const cliente = criarCliente({ fetch: fetchFalso });
+
+  await cliente.executar(entradaValida({ payload: { mensagens_atuais: ['oi'], dados_atuais: {}, campos_cadastrais_preenchidos: [] } }));
+
+  const corpo = JSON.parse(String(chamadas[0].opcoes.body)) as {
+    text: { format: { schema: { required: string[]; properties: Record<string, unknown> } } };
+  };
+  const schema = corpo.text.format.schema;
+  assert.ok(schema.required.includes('eventos_candidatos'), 'eventos_candidatos precisa ser obrigatorio no schema enviado');
+
+  const eventos = schema.properties.eventos_candidatos as {
+    type: string;
+    items: { additionalProperties: boolean; required: string[]; properties: Record<string, { type: unknown; enum?: string[] }> };
+  };
+  assert.equal(eventos.type, 'array');
+  assert.equal(eventos.items.additionalProperties, false);
+  assert.deepEqual([...eventos.items.required].sort(), ['referencia_textual', 'tipo']);
+  assert.deepEqual(eventos.items.properties.tipo.enum, ['aceitar_opcao']);
+  assert.deepEqual(eventos.items.properties.referencia_textual.type, ['string', 'null']);
+});
+
+test('resposta com aceitar_opcao e referencia_textual null atravessa ate o resultado', async () => {
+  const { fetchFalso } = criarFetchFalso([
+    () => respostaSucesso([], undefined, 'resposta', [{ tipo: 'aceitar_opcao', referencia_textual: null }]),
+  ]);
+  const cliente = criarCliente({ fetch: fetchFalso });
+
+  const resultado = await cliente.executar(entradaValida());
+
+  assert.deepEqual(resultado, {
+    natureza_mensagem: 'resposta',
+    alteracoes: {},
+    eventos_candidatos: [{ tipo: 'aceitar_opcao', referencia_textual: null }],
+  });
+});
+
+test('resposta com referencia_textual string tambem e aceita', async () => {
+  const { fetchFalso } = criarFetchFalso([
+    () => respostaSucesso([], undefined, 'resposta', [{ tipo: 'aceitar_opcao', referencia_textual: 'essa aí' }]),
+  ]);
+  const cliente = criarCliente({ fetch: fetchFalso });
+
+  const resultado = await cliente.executar(entradaValida());
+
+  assert.deepEqual((resultado as { eventos_candidatos: unknown[] }).eventos_candidatos, [
+    { tipo: 'aceitar_opcao', referencia_textual: 'essa aí' },
+  ]);
+});
+
+test('evento de tipo desconhecido invalida a resposta inteira -- nunca e ignorado em silencio', async () => {
+  const { fetchFalso } = criarFetchFalso([
+    () => respostaSucesso([], undefined, 'resposta', [{ tipo: 'confirmar_resumo', referencia_textual: null }]),
+  ]);
+  const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs: 200, prazoTotalMs: 400, esperaEntreTentativasMs: 1 });
+
+  await assert.rejects(() => cliente.executar(entradaValida()), (erro: unknown) => {
+    assert.ok(erro instanceof ErroClienteModeloOpenAI);
+    assert.equal(erro.categoria, 'resposta_invalida');
+    return true;
+  });
+});
+
+test('evento repetido invalida a resposta inteira', async () => {
+  const { fetchFalso } = criarFetchFalso([
+    () =>
+      respostaSucesso([], undefined, 'resposta', [
+        { tipo: 'aceitar_opcao', referencia_textual: null },
+        { tipo: 'aceitar_opcao', referencia_textual: 'x' },
+      ]),
+  ]);
+  const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs: 200, prazoTotalMs: 400, esperaEntreTentativasMs: 1 });
+
+  await assert.rejects(() => cliente.executar(entradaValida()), ErroClienteModeloOpenAI);
+});
+
+test('eventos_candidatos ausente na resposta invalida -- o campo raiz e obrigatorio', async () => {
+  const { fetchFalso } = criarFetchFalso([
+    () =>
+      new Response(
+        JSON.stringify({
+          status: 'completed',
+          output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify({ natureza_mensagem: 'pedido', alteracoes: [] }) }] }],
+          usage: { input_tokens: 1, output_tokens: 1 },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      ),
+  ]);
+  const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs: 200, prazoTotalMs: 400, esperaEntreTentativasMs: 1 });
+
+  await assert.rejects(() => cliente.executar(entradaValida()), ErroClienteModeloOpenAI);
 });

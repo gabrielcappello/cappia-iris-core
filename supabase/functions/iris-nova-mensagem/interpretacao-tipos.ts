@@ -15,7 +15,7 @@ import type { AlteracoesDados, CampoDadosConversa, ParConversa, ResultadoAplicar
 
 export type CampoOperacionalInterpretacao = Extract<
   CampoDadosConversa,
-  'intencao' | 'procedimento_id' | 'dentista_texto' | 'data_texto' | 'periodo' | 'horario_texto' | 'confirmacao'
+  'intencao' | 'procedimento_id' | 'dentista_id' | 'data_texto' | 'periodo' | 'horario_texto' | 'confirmacao'
 >;
 
 export type CampoCadastralInterpretacao = Extract<
@@ -26,7 +26,7 @@ export type CampoCadastralInterpretacao = Extract<
 export const CAMPOS_OPERACIONAIS_INTERPRETACAO: readonly CampoOperacionalInterpretacao[] = [
   'intencao',
   'procedimento_id',
-  'dentista_texto',
+  'dentista_id',
   'data_texto',
   'periodo',
   'horario_texto',
@@ -99,6 +99,42 @@ export interface EntradaInterpretacao {
    */
   procedimentos_disponiveis?: { procedimento_id: string; nome_pt: string }[];
   /**
+   * Dentistas ATIVOS desta clinica (specs/dentista-semantico-v1.md). Mesmo
+   * papel que `procedimentos_disponiveis`: a interpretadora correlaciona
+   * semanticamente o que o paciente disse ("o Carlos", "a Dra. Vanesa") com
+   * um `dentista_id` real -- o Core nunca compara nome.
+   *
+   * NAO e filtrada por aptidao, deliberadamente: o vinculo depende do
+   * `procedimento_id`, que so existe DEPOIS desta interpretacao. Filtrar
+   * faria um dentista sem vinculo sumir da lista, a IA omitir o campo, e o
+   * Core seguir com outro profissional em silencio -- exatamente o defeito
+   * que esta spec corrige. Com a lista completa, o Core reprova por vinculo
+   * e existe um fato concreto para informar ao paciente.
+   *
+   * Exatamente dois campos por item. `nome_exibido` e dado de catalogo,
+   * nunca PII do paciente. AUSENTE (nunca `[]`) quando nao ha nenhum ativo.
+   */
+  dentistas_disponiveis?: { dentista_id: string; nome_exibido: string }[];
+  /**
+   * Existe uma oferta de procedimento aguardando resposta
+   * (specs/contexto-pendente-interpretacao-v1.md secao 11). Terceira variante
+   * do contexto pendente, ao lado de `horarios_oferecidos` e
+   * `proposta_pendente`.
+   *
+   * E o que autoriza a interpretadora a entender uma concordancia nua ("pode
+   * ser") como aceitacao. Medido: sem este marcador, a mesma frase vira
+   * `nao_compreendida` 3/3, mesmo com `historico_recente` presente -- porque
+   * o historico e DESCRITIVO (o que foi dito) e este e DECLARATIVO (o que
+   * esta em aberto).
+   *
+   * DELIBERADAMENTE sem o `procedimento_id` oferecido. O id fica so no
+   * snapshot oficial do Core, que e quem aplica. Mandar o id para a IA era o
+   * que a PUXAVA a emiti-lo -- causa medida do caso em que "prefiro outra
+   * coisa" acabava aceitando a oferta. O que foi oferecido ja esta no
+   * historico, em portugues, que e o que ela precisa para julgar.
+   */
+  oferta_procedimento_pendente?: true;
+  /**
    * Ultimos turnos da conversa (specs/historico-conversacional-v1.md secao
    * 6), do mais antigo para o mais recente, ja filtrados por validade (24h)
    * -- permite entender mensagens curtas ou dependentes de contexto ("sim",
@@ -142,9 +178,40 @@ export const NATUREZAS_MENSAGEM_PERMITIDAS: readonly NaturezaMensagem[] = [
 // vir vazio). `alteracoes` continua aceitando os dez campos -- o paciente
 // pode informar nome/cpf/nascimento/email na mensagem ATUAL, e o Core
 // compara contra o valor oficial do servidor.
+/**
+ * Evento CANDIDATO produzido pela IA (specs/eventos-conversacionais-v1.md
+ * secao 1). Nunca e uma decisao, uma transicao nem uma autorizacao: significa
+ * apenas "a mensagem atual parece conter isto". Quem valida contra o estado
+ * oficial e aplica qualquer efeito e sempre o Core.
+ *
+ * Somente `aceitar_opcao` e implementado (2026-08-09). Os outros quatro do
+ * catalogo canonico -- `solicitar_nova_opcao`, `desistir`,
+ * `aceitar_qualquer_profissional`, `confirmar_resumo` -- permanecem fora:
+ * nenhum deles e necessario para este funcionar, porque recusa e a AUSENCIA
+ * do evento e pedido de outro procedimento ja e coberto pela regra normal de
+ * `procedimento_id`.
+ *
+ * `referencia_textual` preserva a referencia presente na mensagem quando ela
+ * existe ("14h", "a segunda opcao"); e `null` para concordancia deitica
+ * ("pode ser") -- exemplo da propria spec canonica. A IA NUNCA resolve essa
+ * referencia para ID, indice ou registro.
+ */
+export interface EventoCandidatoIA {
+  tipo: 'aceitar_opcao';
+  referencia_textual: string | null;
+}
+
+export const TIPOS_EVENTO_CANDIDATO_PERMITIDOS: readonly EventoCandidatoIA['tipo'][] = ['aceitar_opcao'];
+
 export interface SaidaInterpretacao {
   natureza_mensagem: NaturezaMensagem;
   alteracoes: AlteracoesDados;
+  /**
+   * Terceiro campo raiz, obrigatorio e possivelmente vazio (canonica secao 4:
+   * "os dois campos sao obrigatorios e podem estar vazios"). Vazio e a saida
+   * normal da esmagadora maioria dos turnos.
+   */
+  eventos_candidatos: EventoCandidatoIA[];
 }
 
 // Dependencia injetavel de modelo estruturado.

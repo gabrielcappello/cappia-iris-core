@@ -41,7 +41,9 @@ export type ObjetivoResposta =
   | 'encerrar_cordialmente'
   | 'informar_falha_tecnica'
   | 'pedir_cadastro' // 2026-08-06 -- cadastro_necessario nao cabia em nenhum dos 14 originais.
-  | 'informar_sem_profissional'; // 2026-08-06 -- sem_dentista_disponivel, idem.
+  | 'informar_sem_profissional' // 2026-08-06 -- sem_dentista_disponivel, idem.
+  | 'informar_combinacao_indisponivel' // 2026-08-09 -- combinacao_indisponivel (specs/dentista-semantico-v1.md).
+  | 'informar_substituicao_por_avaliacao'; // 2026-08-09 -- o procedimento cedeu para preservar o dentista escolhido.
 
 export interface FatosAutorizados {
   objetivo: ObjetivoResposta;
@@ -62,6 +64,27 @@ export interface FatosAutorizados {
   dentista_resolvido?: string;
   /** Este SIM e populado: `aguardando_escolha_dentista` carrega `DentistaApto[]`, que ja tem `nome_exibido`. */
   dentistas_candidatos?: string[];
+  /**
+   * Nome do profissional que o paciente escolheu, quando a decisao gira em
+   * torno dele (specs/dentista-semantico-v1.md). Populado em
+   * `combinacao_indisponivel` e na substituicao por avaliacao. Dado de
+   * catalogo, nunca PII do paciente.
+   */
+  dentista_preferido?: string;
+  /**
+   * Presente SOMENTE quando o procedimento pedido cedeu lugar a
+   * Consulta/Avaliacao para preservar o dentista escolhido. A redatora
+   * PRECISA comunicar isso -- a troca dispensa nova aceitacao, nunca o
+   * dever de informar.
+   */
+  substituido_por_avaliacao?: true;
+  /**
+   * Presente somente quando `sem_dentista_disponivel` tem uma alternativa
+   * REAL a oferecer (a Consulta/Avaliação existe, está ativa e tem dentista
+   * apto). Sem este fato, a redatora não pode oferecer nada — não há
+   * alternativa a propor (specs/contexto-pendente-interpretacao-v1.md secao 11).
+   */
+  avaliacao_oferecida?: true;
   data_referencia?: string;
   horarios_disponiveis?: string[];
   agendamento_confirmado?: { data: string; horario: string };
@@ -84,7 +107,24 @@ export interface FatosAutorizados {
  * (gerar-resposta-paciente.ts) preserva a nuance completa quando a redacao
  * falha ou e reprovada.
  */
-export function derivarFatosAutorizados(decisao: DecisaoOrquestrador): FatosAutorizados {
+export function derivarFatosAutorizados(
+  decisao: DecisaoOrquestrador,
+  substituicaoPorAvaliacao?: { dentista_nome_exibido: string }
+): FatosAutorizados {
+  const fatos = derivarPorDecisao(decisao);
+  // A substituicao e um fato deste turno, ortogonal a decisao (ela pode
+  // acompanhar horarios_disponiveis, aguardando_confirmacao, reserva_criada
+  // ou qualquer outro desfecho depois da troca) -- por isso e anexada aqui,
+  // e nao dentro de um `case` (specs/dentista-semantico-v1.md secao 5).
+  if (substituicaoPorAvaliacao === undefined) return fatos;
+  return {
+    ...fatos,
+    dentista_preferido: substituicaoPorAvaliacao.dentista_nome_exibido,
+    substituido_por_avaliacao: true,
+  };
+}
+
+function derivarPorDecisao(decisao: DecisaoOrquestrador): FatosAutorizados {
   switch (decisao.tipo) {
     case 'clinica_sem_catalogo':
     case 'erro_catalogo_dentista':
@@ -115,7 +155,19 @@ export function derivarFatosAutorizados(decisao: DecisaoOrquestrador): FatosAuto
       };
 
     case 'sem_dentista_disponivel':
-      return { objetivo: 'informar_sem_profissional' };
+      // `avaliacao_oferecida` so aparece quando a alternativa e real -- sem
+      // ela a redatora nao tem fato que autorize oferecer nada, e por isso
+      // nao pode inventar a pergunta.
+      return {
+        objetivo: 'informar_sem_profissional',
+        ...(decisao.procedimento_oferecido !== undefined ? { avaliacao_oferecida: true as const } : {}),
+      };
+
+    case 'combinacao_indisponivel':
+      // O nome do profissional escolhido e o unico fato aqui -- nunca o nome
+      // de outro dentista: sugerir substituto e exatamente o que esta
+      // decisao existe para impedir.
+      return { objetivo: 'informar_combinacao_indisponivel', dentista_preferido: decisao.dentista_nome_exibido };
 
     case 'aguardando_data_horario':
       return { objetivo: 'pedir_data_ou_horario', dados_faltantes: ['data'] };

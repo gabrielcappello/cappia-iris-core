@@ -435,7 +435,7 @@ test('sem_dentista_disponivel: informa e oferece alternativa, nunca soa como fal
 test('falha tecnica real: os cinco estados compartilham a mesma frase honesta, nunca expondo motivo bruto', () => {
   const decisoes: DecisaoCaminhoFeliz[] = [
     { tipo: 'clinica_sem_catalogo' },
-    { tipo: 'erro_catalogo_dentista', resultado: { tipo: 'erro_catalogo', codigo: 'nome_resolucao_ambiguo', dentista_ids: ['d1'] } },
+    { tipo: 'erro_catalogo_dentista', resultado: { tipo: 'erro_catalogo', codigo: 'dentista_id_inconsistente', dentista_ids: ['d1'] } },
     { tipo: 'duracao_nao_configurada' },
     {
       tipo: 'erro_configuracao_duracao',
@@ -462,7 +462,7 @@ test('exaustividade: todos os 18 tipos de DecisaoOrquestrador produzem texto nao
     { tipo: 'aguardando_procedimento' },
     { tipo: 'aguardando_escolha_dentista', dentistas: [{ dentista_id: 'd1', clinica_id: 'c1', nome_exibido: 'Dra. Ana' }] },
     { tipo: 'sem_dentista_disponivel' },
-    { tipo: 'erro_catalogo_dentista', resultado: { tipo: 'erro_catalogo', codigo: 'vinculo_orfao', dentista_ids: [] } },
+    { tipo: 'erro_catalogo_dentista', resultado: { tipo: 'erro_catalogo', codigo: 'dentista_id_inconsistente', dentista_ids: [] } },
     { tipo: 'duracao_nao_configurada' },
     {
       tipo: 'erro_configuracao_duracao',

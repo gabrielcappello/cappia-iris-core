@@ -41,7 +41,15 @@
 - **Quando nenhum dentista estiver configurado para o procedimento**, oferecer
   Consulta/Avaliação.
 - **A Consulta/Avaliação somente substitui o procedimento com aceitação do paciente** —
-  nunca uma substituição automática/silenciosa.
+  nunca uma substituição automática/silenciosa. **Exceção única (09/08/2026,
+  `../specs/dentista-semantico-v1.md`):** quando o paciente escolheu explicitamente um
+  profissional que não realiza o procedimento pedido, a substituição por Consulta/Avaliação
+  **com esse mesmo profissional** dispensa nova pergunta de aceitação — a Iris informa a
+  troca na própria resposta. A troca nunca é silenciosa; ela deixa de ser uma pergunta, não
+  de ser comunicada. **Trocar de profissional continua proibido sem escolha do paciente**,
+  e quando nem a avaliação com ele é possível, o fluxo informa e para — nunca sugere outro.
+- **A preferência explícita de dentista prevalece sobre o procedimento pedido** (09/08/2026).
+  Quem cede é o procedimento, nunca o profissional escolhido.
 - **A revalidação do horário antes da criação é técnica** (proteção contra o horário ter
   sido ocupado entre a oferta e a confirmação) **e não exige repetir a pergunta ao
   paciente** — é uma checagem interna, não um novo turno de conversa.
@@ -67,10 +75,16 @@ vínculos, duração, disponibilidade). Detalhe completo:
   só o encerramento explícito do protocolo (ausência estrutural de agenda, falha
   técnica ou configuração inválida) pode significar fim da busca — nunca um horizonte
   silencioso de dias.
-- **Consulta/Avaliação terá um seletor puro e específico**, futuro, que escolhe pelo
-  marcador oficial `eh_consulta_avaliacao`, exigindo exatamente um procedimento ativo
-  correspondente na clínica. Zero ou vários correspondentes são erro estrutural. Nunca
-  usa nome ou alias; não altera o resolvedor textual de procedimento já publicado.
+- **Consulta/Avaliação é identificada pelo ID canônico `consultation_evaluation`**
+  (revisado em 09/08/2026; antes previa um seletor pelo marcador `eh_consulta_avaliacao`).
+  `procedimentos_catalogo` é global (sem `clinica_id`), então o ID é estável em todas as
+  clínicas; o Core confere apenas existência e `ativo`. **Nenhum seletor, marcador ou
+  coluna novo é criado:** `eh_consulta_avaliacao` nunca existiu no banco — até 08/08/2026
+  era `false` hardcoded para todos os procedimentos, logo o fallback que dependia dele
+  sempre foi inalcançável. Identificação por nome permanece proibida (quatro procedimentos
+  do catálogo casariam: `pedo_consult`, `consultation_evaluation`, `implant_consult`,
+  `ortho_consult`). Uma coluna por clínica continua possível como evolução futura, se o
+  Painel precisar desse controle.
 - **Ordem cadastral fixa**: nome, CPF, data de nascimento, e-mail (somente quando a
   clínica exigir). Campo já presente e válido nunca é solicitado de novo.
 - **Repetição idempotente — replay completo somente com resultado da composição

@@ -1091,10 +1091,15 @@ Regras:
   completo, versões internas, IDs de opção/resumo e catálogo de procedimentos.
 
 O contrato canônico dos sinais conversacionais, incluindo a separação estrutural entre
-`EventoCandidatoIA` e `DecisaoControlador`, está em
-`eventos-conversacionais-v1.md`. Quando essa integração for implementada, a saída
-estruturada passa a conter exatamente `alteracoes` e `eventos_candidatos`; até lá, este
-registro documental não autoriza alteração de código.
+`EventoCandidatoIA` e `DecisaoControlador`, está em `eventos-conversacionais-v1.md`.
+
+**Atualizado em 2026-08-09:** a integração começou, em fatia mínima. A saída estruturada
+passa a conter **três** campos raiz — `natureza_mensagem`, `alteracoes` e
+`eventos_candidatos` — e não os dois previstos aqui (`natureza_mensagem` veio depois desta
+nota, em `interpretacao-natureza-mensagem-v1.md`). De `eventos_candidatos`, apenas
+`aceitar_opcao` é emitido; os outros quatro eventos e todo o `DecisaoControlador`
+permanecem não implementados. Ver `contexto-pendente-interpretacao-v1.md` §11 e o bloco de
+revisão no topo de `eventos-conversacionais-v1.md`.
 
 ### Fatos temporais estruturados — contrato V2 futuro
 

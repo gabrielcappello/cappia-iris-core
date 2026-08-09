@@ -41,7 +41,7 @@ test('mapeamento: os 18 tipos produzem um objetivo, nenhum lanca', () => {
     { tipo: 'aguardando_procedimento' },
     { tipo: 'aguardando_escolha_dentista', dentistas: [{ dentista_id: 'd1', clinica_id: 'c1', nome_exibido: 'Dra. Ana' }] },
     { tipo: 'sem_dentista_disponivel' },
-    { tipo: 'erro_catalogo_dentista', resultado: { tipo: 'erro_catalogo', codigo: 'vinculo_orfao', dentista_ids: [] } },
+    { tipo: 'erro_catalogo_dentista', resultado: { tipo: 'erro_catalogo', codigo: 'dentista_id_inconsistente', dentista_ids: [] } },
     { tipo: 'duracao_nao_configurada' },
     {
       tipo: 'erro_configuracao_duracao',
@@ -143,7 +143,7 @@ test('reserva_criada: agendamento_confirmado com data/horario, sem IDs', () => {
 test('falha tecnica: os cinco estados marcam falha_tecnica:true e objetivo informar_falha_tecnica', () => {
   const decisoes: DecisaoOrquestrador[] = [
     { tipo: 'clinica_sem_catalogo' },
-    { tipo: 'erro_catalogo_dentista', resultado: { tipo: 'erro_catalogo', codigo: 'vinculo_orfao', dentista_ids: [] } },
+    { tipo: 'erro_catalogo_dentista', resultado: { tipo: 'erro_catalogo', codigo: 'dentista_id_inconsistente', dentista_ids: [] } },
     { tipo: 'duracao_nao_configurada' },
     {
       tipo: 'erro_configuracao_duracao',

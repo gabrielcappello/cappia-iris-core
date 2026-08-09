@@ -10,26 +10,22 @@
  * Identidade completa e sempre o par `(dentista_id, clinica_id)` (secao 1):
  * nao existe dentista global nesta v1.
  *
- * Tres campos de texto, com propositos DISTINTOS (secao 1, secao 6, e
- * secao 15 pendencia 1 -- tratados aqui como campos conceitualmente
- * separados, sem presumir que coincidem fisicamente):
+ * REMOVIDO em 2026-08-09 (specs/dentista-semantico-v1.md):
+ * `nome_completo_resolucao` e `nome_curto_resolucao`. Os dois existiam
+ * exclusivamente como chave de correspondencia textual em
+ * `resolverPorPreferencia`, que deixou de existir -- a secao 6 da
+ * `dentistas-vinculos-v1.md` ("entradas de resolucao, exatamente duas",
+ * match exato, colisoes) foi revogada.
  *
- * - `nome_exibido`: texto legivel ao paciente/painel, SEM valor de
- *   identidade e SEM participar de nenhuma correspondencia.
- * - `nome_completo_resolucao`: entrada de resolucao OBRIGATORIA (secao 6).
- * - `nome_curto_resolucao`: entrada de resolucao OPCIONAL (secao 6).
- *
- * "Entradas de resolucao, exatamente duas, nada alem" (secao 6) -- ao
- * contrario do procedimento (que tem uma lista aberta de aliases), o
- * dentista nunca tem mais que essas duas entradas fixas. Explicitamente
- * fora nesta v1: sistema aberto de aliases, apelidos aprendidos.
+ * `nome_exibido` permanece e agora tem dois usos, ambos de apresentacao:
+ * o texto que a IA LE em `dentistas_disponiveis` para correlacionar, e o
+ * texto da pergunta de desambiguacao. Nunca tem valor de identidade --
+ * exatamente o que aconteceu com `nome_pt` em procedimento.
  */
 export interface DentistaOficial {
   dentista_id: string;
   clinica_id: string;
   nome_exibido: string;
-  nome_completo_resolucao: string;
-  nome_curto_resolucao: string | null;
   ativo: boolean;
 }
 
@@ -56,16 +52,18 @@ export interface VinculoDentistaProcedimento {
  * procedimento (specs/procedimentos-v1.md) -- opaca, nunca re-resolvida
  * aqui, nunca substituida por nome.
  *
- * `dentista_texto` e a preferencia textual do paciente, quando informada.
- * Ausente (null/undefined/vazio/so espacos) significa que o paciente nao
- * expressou preferencia -- nao equivale a "aceitar qualquer profissional"
- * (`dentistas-vinculos-v1.md` secao 4; evento canonico proprio em
- * `eventos-conversacionais-v1.md`).
+ * Desde 2026-08-09 este resolvedor calcula SOMENTE aptidao (zero/um/varios)
+ * -- nunca recebe preferencia. A preferencia do paciente chega ao Core como
+ * `dentista_id` ja resolvido pela interpretadora, e e conferida no
+ * orquestrador (identidade, clinica, ativo, vinculo), nunca aqui.
+ *
+ * Ausencia de preferencia continua NAO equivalendo a "aceitar qualquer
+ * profissional" (`dentistas-vinculos-v1.md` secao 4, preservada; evento
+ * canonico proprio em `eventos-conversacionais-v1.md`, dormente).
  */
 export interface EntradaResolucaoDentista {
   clinica_id: string;
   procedimento_id: string;
-  dentista_texto: string | null | undefined;
   dentistas: readonly DentistaOficial[];
   vinculos: readonly VinculoDentistaProcedimento[];
 }
@@ -82,54 +80,40 @@ export interface DentistaApto {
 }
 
 /**
- * Motivo interno de preferencia resolvida-porem-nao-apta, para auditoria.
+ * Codigo fechado de erro estrutural de catalogo. Classificacao por CODIGO,
+ * nunca por mensagem livre (mesmo padrao de `procedimento-tipos.ts`).
  *
- * **Equivalentes perante o paciente**, junto com `preferencia_nao_encontrada`
- * (secao 4: "tratamento unificado... os motivos internos... permanecem
- * distintos para auditoria... mas nao autorizam exposicao administrativa
- * desnecessaria ao paciente"). O controlador colapsa esses quatro motivos
- * (inexistente/inativo/sem_vinculo/vinculo_inativo) em uma unica resposta
- * externa; este resolvedor preserva a distincao internamente.
+ * REMOVIDOS em 2026-08-09 (specs/dentista-semantico-v1.md secao 6), apos
+ * auditoria de alcancabilidade contra o unico produtor de catalogo em
+ * producao (`carregarCatalogo`):
+ *
+ * - `nome_resolucao_ambiguo` -- nao existe mais colisao textual a detectar;
+ * - `vinculo_orfao` e `vinculo_clinica_divergente` -- `montarDentistas`
+ *   empurra o vinculo no MESMO laco que empurra o dentista, com o mesmo
+ *   `dentista_id`/`clinica_id`; o vinculo nunca aponta para alguem ausente;
+ * - `vinculo_inconsistente` -- o mesmo laco empurra SEMPRE `ativo: true`,
+ *   entao a mesma chave nunca aparece com `ativo` divergente.
+ *
+ * Sobrou o unico alcancavel: dois registros com o mesmo `id` e conteudo
+ * diferente sao gravaveis pelo Painel.
  */
-export type MotivoPreferenciaNaoApta = 'dentista_inativo' | 'sem_vinculo' | 'vinculo_inativo';
+export type CodigoErroCatalogoDentista = 'dentista_id_inconsistente';
 
 /**
- * Codigos fechados de erro estrutural de catalogo/vinculo. Classificacao
- * por CODIGO, nunca por mensagem livre (mesmo padrao de
- * `procedimento-tipos.ts`).
- */
-export type CodigoErroCatalogoDentista =
-  /** Mesmo texto normalizado corresponde a `dentista_id` distintos (secao 6: colisao). */
-  | 'nome_resolucao_ambiguo'
-  /** Mesmo `dentista_id` aparece na clinica com conteudo divergente. */
-  | 'dentista_id_inconsistente'
-  /** Vinculo em escopo desta consulta aponta para `dentista_id` que nao existe em catalogo algum. */
-  | 'vinculo_orfao'
-  /** Vinculo em escopo desta consulta aponta para dentista pertencente a outra clinica (secao 2, secao 11). */
-  | 'vinculo_clinica_divergente'
-  /** Mesma chave (clinica_id, dentista_id, procedimento_id) aparece com `ativo` divergente. */
-  | 'vinculo_inconsistente';
-
-/**
- * Resultado tipado: exatamente um dos sete desfechos definidos no contrato
- * (rodada 0148). Uniao discriminada por `tipo`.
+ * Resultado tipado: exatamente um dos quatro desfechos. Uniao discriminada
+ * por `tipo`.
  *
- * **Composicao esperada pelo futuro controlador**: quando a preferencia nao
- * resolve para um dentista apto (`preferencia_nao_encontrada` ou
- * `preferencia_nao_apta`), a spec exige "reaplicar a regra de zero/um/varios
- * aptos" (secao 4). Este resolvedor NAO embute esse conjunto de aptos no
- * mesmo retorno -- a spec nao autoriza esse dado combinado explicitamente
- * (tarefa 0148 secao 7). O controlador deve chamar `resolverDentista`
- * novamente, com `dentista_texto` ausente, para obter o conjunto de aptos a
- * aplicar como fallback.
+ * As tres variantes de preferencia (`preferencia_apta`,
+ * `preferencia_nao_encontrada`, `preferencia_nao_apta`) foram REMOVIDAS em
+ * 2026-08-09 junto com `resolverPorPreferencia` e a recursao de fallback do
+ * orquestrador: este resolvedor passou a calcular somente aptidao. A
+ * preferencia do paciente e conferida no orquestrador, sobre um
+ * `dentista_id` que a interpretadora ja resolveu.
  */
 export type ResultadoResolucaoDentista =
   | { tipo: 'nenhum_apto' }
   | { tipo: 'um_apto'; dentista: DentistaApto }
   | { tipo: 'varios_aptos'; dentistas: readonly DentistaApto[] }
-  | { tipo: 'preferencia_apta'; dentista: DentistaApto }
-  | { tipo: 'preferencia_nao_encontrada' }
-  | { tipo: 'preferencia_nao_apta'; dentista: DentistaApto; motivo: MotivoPreferenciaNaoApta }
   | {
       tipo: 'erro_catalogo';
       codigo: CodigoErroCatalogoDentista;

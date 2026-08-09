@@ -29,7 +29,7 @@ function criarFetchCaptor() {
             content: [
               {
                 type: 'output_text',
-                text: JSON.stringify({ natureza_mensagem: 'resposta', alteracoes: [] }),
+                text: JSON.stringify({ natureza_mensagem: 'resposta', alteracoes: [], eventos_candidatos: [] }),
               },
             ],
           },

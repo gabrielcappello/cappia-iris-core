@@ -8,6 +8,25 @@ export interface ChamadaModeloFalso {
   payload: EntradaInterpretacao;
 }
 
+/**
+ * `eventos_candidatos` passou a ser campo raiz OBRIGATORIO em 2026-08-09
+ * (specs/eventos-conversacionais-v1.md, fatia minima). O modelo real SEMPRE o
+ * devolve -- o schema estrito o exige --, entao um dublê que o preenche
+ * quando a fixture nao se importa com eventos e MAIS fiel a producao, nao
+ * menos: evita reescrever ~100 fixtures para acrescentar `[]` em todas.
+ *
+ * Fixtures que se importam com eventos declaram o campo, e este completador
+ * nao toca nelas. A validacao do campo em si (ausencia, tipo desconhecido,
+ * evento repetido) tem testes proprios que chamam `validarSaidaInterpretacao`
+ * diretamente, sem passar por aqui.
+ */
+function completarEventosCandidatos(resposta: unknown): unknown {
+  if (resposta === null || typeof resposta !== 'object' || Array.isArray(resposta)) return resposta;
+  const objeto = resposta as Record<string, unknown>;
+  if (!('natureza_mensagem' in objeto) || 'eventos_candidatos' in objeto) return resposta;
+  return { ...objeto, eventos_candidatos: [] };
+}
+
 // Devolve respostas pre-definidas, uma por chamada (a ultima e repetida se
 // houver mais chamadas do que respostas). Registra cada chamada recebida
 // para os testes inspecionarem o payload exatamente como foi enviado
@@ -25,7 +44,7 @@ export class ClienteModeloFalso implements ClienteModeloEstruturado {
     this.chamadas.push(entrada);
     const resposta = this.respostas[Math.min(this.indice, this.respostas.length - 1)];
     this.indice++;
-    return resposta;
+    return completarEventosCandidatos(resposta);
   }
 }
 

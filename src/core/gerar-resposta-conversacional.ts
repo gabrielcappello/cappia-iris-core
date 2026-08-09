@@ -42,6 +42,14 @@ export interface GerarRespostaConversacionalEntrada {
    * (specs/historico-conversacional-v1.md secao 6), nunca antes.
    */
   historicoConversa: HistoricoConversa | null;
+  /**
+   * `ResultadoOrquestrador.substituicao_por_avaliacao`, quando presente
+   * (specs/dentista-semantico-v1.md secao 5): o procedimento pedido cedeu
+   * lugar a Consulta/Avaliacao para preservar o dentista escolhido. Vira
+   * fato autorizado -- a troca dispensa nova pergunta de aceitacao, nunca o
+   * dever de ser informada.
+   */
+  substituicaoPorAvaliacao?: { dentista_nome_exibido: string };
 }
 
 /**
@@ -54,7 +62,7 @@ export async function gerarRespostaConversacional(
   clienteRedator: ClienteModeloRedator | null,
   entrada: GerarRespostaConversacionalEntrada
 ): Promise<ResultadoRespostaConversacional> {
-  const fatos = derivarFatosAutorizados(entrada.decisao);
+  const fatos = derivarFatosAutorizados(entrada.decisao, entrada.substituicaoPorAvaliacao);
   const historicoParaEnvio = historicoValidoParaEnvio(entrada.historicoConversa, Date.now());
 
   if (clienteRedator === null) {

@@ -49,6 +49,17 @@ import type { ParConversa } from '../core/tipos.ts';
 /** O que observamos na saida: um campo de `alteracoes`, ou a `natureza_mensagem`. */
 type Observado = { tipo: 'campo'; campo: string } | { tipo: 'natureza' };
 
+// ATUALIZADO em 2026-08-09 (specs/dentista-semantico-v1.md): o campo
+// observado era `dentista_texto`, que deixou de existir -- a interpretadora
+// agora devolve `dentista_id` escolhido de `dentistas_disponiveis`. O
+// MECANISMO provado e o mesmo de antes (uma palavra que sozinha o modelo le
+// como nome do paciente, e com historico le como escolha de profissional);
+// so o campo mudou.
+//
+// A lista de dentistas e enviada IGUAL nos dois lados do par, entao o
+// isolamento continua intacto: a unica variavel entre A e B segue sendo o
+// historico. Sem a lista, `dentista_id` seria impossivel de emitir nos dois
+// lados e o par nao provaria nada.
 interface Par {
   titulo: string;
   /** IDENTICA nos dois lados -- e o que torna a comparacao valida. */
@@ -59,6 +70,8 @@ interface Par {
   /** `null` = espera o campo AUSENTE. */
   comHistorico: string | null;
   semHistorico: string | null;
+  /** Enviada IDENTICA nos dois lados -- nunca e a variavel do par. */
+  procedimentosDisponiveis: { procedimento_id: string; nome_pt: string }[];
 }
 
 // TODA mensagem de teste aqui precisa ser algo que um paciente REAL diria.
@@ -86,26 +99,89 @@ interface Par {
 // lê como escolha de dentista. Sao dois campos diferentes do vocabulario
 // fechado -- diferenca binaria, sem zona cinzenta. E realista: responder so
 // o nome do profissional ("A Ana") e exatamente como as pessoas escrevem.
+// ================== STATUS EM 2026-08-09: SEM DISCRIMINADOR ESTAVEL ========
+//
+// Este runner esta VERMELHO (0/2) e a causa NAO e regressao do historico.
+// O par original perdeu o poder de discriminar por causa de
+// specs/dentista-semantico-v1.md (explicado logo abaixo), e nenhuma
+// substituicao estavel foi encontrada ainda. Duas evidencias de que o
+// historico continua chegando e tendo efeito:
+//
+//   1. o teste deterministico de fronteira HTTP continua verde
+//      ("fronteira: historico_recente presente no payload chega LITERALMENTE
+//      ao corpo HTTP", cliente-modelo-openai.test.ts) -- a chave cruza a
+//      fronteira;
+//   2. nas execucoes abaixo, `natureza_mensagem` MUDA entre os dois lados
+//      (COM historico: "resposta"; SEM: "nao_compreendida") -- ou seja, o
+//      modelo esta lendo o historico.
+//
+// O que falta e um par cuja assercao seja ESTAVEL. Os candidatos de
+// aceitacao de oferta ("sim, quero", "tá bom, vamos nessa") resolveram
+// `consultation_evaluation` numa sondagem e nao resolveram na execucao
+// seguinte, com entrada identica -- mesma instabilidade que ja levou ao
+// descarte de `natureza_mensagem` como observavel em 2026-08-08. Assercao
+// instavel e pior que teste ausente: gera confianca falsa.
+//
+// NAO tratar isso aumentando o prompt. Encontrar um observavel binario e
+// estavel, como o par original era, e frente propria.
+// ===========================================================================
+//
+// TERCEIRO candidato DESCARTADO, em 2026-08-09, e vale registrar por que:
+// o par original ("A Ana" -> `dentista_texto`) parou de discriminar quando
+// `dentistas_disponiveis` passou a existir (specs/dentista-semantico-v1.md).
+// Com a lista no payload, o modelo resolve "A Ana" para o id da Dra. Ana
+// mesmo SEM historico -- os dois lados passaram a coincidir. Isso NAO e
+// regressao do historico: e o par que perdeu o poder de discriminar, porque
+// a lista de dentistas tornou obvia a leitura que antes so o historico dava.
+// Um par A/B so vale enquanto a unica explicacao possivel for a variavel
+// testada.
+//
+// O mecanismo que substitui e a ACEITACAO DE UMA OFERTA: "pode ser" sozinho
+// nao diz absolutamente nada; com o historico, diz exatamente qual
+// procedimento aceitar. E realista (e assim que as pessoas aceitam) e cobre,
+// de quebra, o ciclo do CASO 1 zero-aptos de dentista-semantico-v1.md: a
+// Iris oferece a avaliacao, o paciente aceita, e o turno seguinte resolve
+// `consultation_evaluation` pelo caminho normal -- sem nenhum mecanismo de
+// aceitacao dedicado.
+const CATALOGO = [
+  { procedimento_id: 'consultation_evaluation', nome_pt: 'Consulta / Avaliação' },
+  { procedimento_id: 'cleaning', nome_pt: 'Limpeza dental (profilaxia)' },
+  { procedimento_id: 'whitening', nome_pt: 'Clareamento em consultório' },
+];
+
 const PARES: readonly Par[] = Object.freeze([
   {
-    titulo: '"A Ana" -- com historico e escolha de dentista; sem historico o modelo entende como o NOME do proprio paciente',
-    mensagem: 'A Ana',
-    perguntaAnteriorDaIris: 'Temos a Dra. Ana e o Dr. Carlos disponíveis. Qual você prefere?',
-    mensagemAnteriorDoPaciente: 'quero limpeza amanhã',
-    observado: { tipo: 'campo', campo: 'dentista_texto' },
-    comHistorico: 'Ana',
+    titulo: '"sim, quero" -- com historico aceita a avaliacao oferecida; sozinho nao resolve procedimento nenhum',
+    mensagem: 'sim, quero',
+    perguntaAnteriorDaIris:
+      'Não encontrei nenhum profissional para clareamento. Posso agendar uma Consulta/Avaliação?',
+    mensagemAnteriorDoPaciente: 'quero clareamento',
+    observado: { tipo: 'campo', campo: 'procedimento_id' },
+    comHistorico: 'consultation_evaluation',
     semHistorico: null,
+    procedimentosDisponiveis: CATALOGO,
   },
   {
-    titulo: '"Silva" -- mesmo mecanismo com outro nome, para provar que o primeiro par nao foi sorte',
-    mensagem: 'Silva',
-    perguntaAnteriorDaIris: 'Prefere com o Dr. Silva ou com a Dra. Costa?',
-    mensagemAnteriorDoPaciente: 'quero marcar uma avaliação',
-    observado: { tipo: 'campo', campo: 'dentista_texto' },
-    comHistorico: 'Silva',
+    titulo: '"tá bom, vamos nessa" -- outro registro, para provar que o primeiro par nao foi sorte de uma frase',
+    mensagem: 'tá bom, vamos nessa',
+    perguntaAnteriorDaIris:
+      'Não encontrei nenhum profissional para clareamento. Posso agendar uma Consulta/Avaliação?',
+    mensagemAnteriorDoPaciente: 'quero clareamento',
+    observado: { tipo: 'campo', campo: 'procedimento_id' },
+    comHistorico: 'consultation_evaluation',
     semHistorico: null,
+    procedimentosDisponiveis: CATALOGO,
   },
 ]);
+
+// LIMITE CONHECIDO, medido em 2026-08-09 e registrado aqui para nao virar
+// surpresa num teste manual: uma aceitacao MINIMA ("pode ser", "isso mesmo")
+// nao fecha o ciclo -- mesmo com o historico presente, o modelo devolve
+// `alteracoes: {}` e classifica como `nao_compreendida`. Aceitacoes um pouco
+// mais comprometidas ("sim, quero", "tá bom, vamos nessa", "sim, por favor")
+// resolvem `consultation_evaluation` normalmente. Nao ha correcao aqui: seria
+// mais uma regra no prompt, e o CASO 1 zero-aptos foi explicitamente fechado
+// sem mecanismo proprio (specs/dentista-semantico-v1.md secao 5).
 
 function extrair(saida: SaidaInterpretacao, observado: Observado): string | undefined {
   return observado.tipo === 'natureza' ? saida.natureza_mensagem : saida.alteracoes[observado.campo]?.valor;
@@ -122,9 +198,19 @@ async function rodarLado(
   par: Par,
   historicoRecente: ParConversa[] | undefined
 ): Promise<Lado> {
-  // Assinatura: (mensagens, snapshot, horariosOferecidos, propostaPendente, historicoRecente).
-  // Os dois `undefined` do meio sao DELIBERADOS -- nenhum contexto paralelo.
-  const entrada = construirEntradaMinimizada([par.mensagem], {}, undefined, undefined, historicoRecente);
+  // Assinatura: (mensagens, snapshot, horariosOferecidos, propostaPendente,
+  // historicoRecente, procedimentosDisponiveis, dentistasDisponiveis). Os
+  // tres `undefined` sao DELIBERADOS -- nenhum contexto paralelo. A lista de
+  // dentistas e a UNICA excecao, e vai identica nos dois lados: sem ela o
+  // campo observado seria inemitivel em ambos, e o par nao teria diferencial.
+  const entrada = construirEntradaMinimizada(
+    [par.mensagem],
+    {},
+    undefined,
+    undefined,
+    historicoRecente,
+    par.procedimentosDisponiveis
+  );
   try {
     const saida = await extrairAlteracoes(cliente, entrada);
     return {

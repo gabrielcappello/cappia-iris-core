@@ -73,13 +73,15 @@ test('dentista modo procedimento: duracao vem do item, nao do tempo_padrao', asy
   assert.equal(resultado.tipo, 'carregado');
   if (resultado.tipo !== 'carregado') return;
 
+  // `nome_completo_resolucao`/`nome_curto_resolucao` foram REMOVIDOS em
+  // 2026-08-09 (specs/dentista-semantico-v1.md): existiam so como chave de
+  // match textual. Sobrou `nome_exibido`, que a IA le em
+  // `dentistas_disponiveis` -- apresentacao, nunca identidade.
   assert.deepEqual(resultado.catalogo.dentistas, [
     {
       dentista_id: dentistaId,
       clinica_id: CLINICA_ID,
       nome_exibido: 'Dra. Ana Souza',
-      nome_completo_resolucao: 'Dra. Ana Souza',
-      nome_curto_resolucao: 'Ana Souza',
       ativo: true,
     },
   ]);

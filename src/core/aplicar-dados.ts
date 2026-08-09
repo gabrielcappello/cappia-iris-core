@@ -15,7 +15,7 @@ import type {
 export const CAMPOS_PERMITIDOS: readonly CampoDadosConversa[] = [
   'intencao',
   'procedimento_id',
-  'dentista_texto',
+  'dentista_id',
   'data_texto',
   'periodo',
   'horario_texto',
@@ -31,7 +31,7 @@ export const PERIODOS_PERMITIDOS = ['manha', 'tarde', 'noite'];
 export const INTENCOES_PERMITIDAS = ['novo_agendamento'];
 // Fechado a 'sim': ausencia de confirmacao nunca e tratada como negacao
 // silenciosa, so como "ainda nao confirmou" -- mesmo principio ja usado em
-// dentista_texto/procedimento_id ausentes.
+// dentista_id/procedimento_id ausentes.
 export const CONFIRMACOES_PERMITIDAS = ['sim'];
 const MAX_TENTATIVAS = 5;
 

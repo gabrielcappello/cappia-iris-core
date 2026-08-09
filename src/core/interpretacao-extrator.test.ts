@@ -23,6 +23,9 @@ test('teste2: varios campos em uma saida valida sao aceitos', async () => {
       cpf: { acao: 'informar', valor: '11122233344' },
       periodo: { acao: 'informar', valor: 'manha' },
     },
+    // Campo raiz obrigatorio desde 2026-08-09 -- declarado aqui porque este
+    // teste compara o resultado com a fixture inteira, por identidade.
+    eventos_candidatos: [],
   };
   const cliente = new ClienteModeloFalso([saida]);
 
@@ -43,16 +46,41 @@ test('teste3: dois procedimentos coexistentes preservados em uma unica string', 
   assert.equal(resultado.alteracoes.procedimento_id?.valor, 'limpeza e clareamento');
 });
 
-test('teste4: dois dentistas alternativos preservados em uma unica string', async () => {
-  const saida = {
-    natureza_mensagem: 'pedido',
-    alteracoes: { dentista_texto: { acao: 'informar', valor: 'Ana ou Carla' } },
-  };
-  const cliente = new ClienteModeloFalso([saida]);
+// SUBSTITUIU, em 2026-08-09, o teste4 original ("dois dentistas
+// alternativos preservados em uma unica string"), que afirmava o contrato
+// antigo: a IA devolvia `dentista_texto` cru e o Core casava o nome depois.
+// Com specs/dentista-semantico-v1.md a IA devolve `dentista_id` escolhido de
+// `dentistas_disponiveis`, e duvida real entre dois candidatos OMITE o campo
+// -- nunca escolhe por aproximacao, nunca inventa um valor composto.
+test('teste4: duvida entre dois dentistas omite dentista_id, nunca produz um valor composto', async () => {
+  const cliente = new ClienteModeloFalso([{ natureza_mensagem: 'pedido', alteracoes: {} }]);
 
-  const resultado = await extrairAlteracoes(cliente, { mensagens_atuais: ['pode ser com Ana ou Carla'], dados_atuais: {}, campos_cadastrais_preenchidos: [] });
+  const resultado = await extrairAlteracoes(cliente, {
+    mensagens_atuais: ['pode ser com Ana ou Carla'],
+    dados_atuais: {},
+    campos_cadastrais_preenchidos: [],
+    dentistas_disponiveis: [
+      { dentista_id: 'dent-ana', nome_exibido: 'Dra. Ana Souza' },
+      { dentista_id: 'dent-carla', nome_exibido: 'Dra. Carla Lima' },
+    ],
+  });
 
-  assert.equal(resultado.alteracoes.dentista_texto?.valor, 'Ana ou Carla');
+  assert.equal(resultado.alteracoes.dentista_id, undefined);
+});
+
+test('teste4b: dentista_id escolhido da lista atravessa a validacao intacto', async () => {
+  const cliente = new ClienteModeloFalso([
+    { natureza_mensagem: 'pedido', alteracoes: { dentista_id: { acao: 'informar', valor: 'dent-ana' } } },
+  ]);
+
+  const resultado = await extrairAlteracoes(cliente, {
+    mensagens_atuais: ['quero com a Ana'],
+    dados_atuais: {},
+    campos_cadastrais_preenchidos: [],
+    dentistas_disponiveis: [{ dentista_id: 'dent-ana', nome_exibido: 'Dra. Ana Souza' }],
+  });
+
+  assert.equal(resultado.alteracoes.dentista_id?.valor, 'dent-ana');
 });
 
 test('teste15: duvida real gera alteracoes vazio, que e uma saida valida', async () => {

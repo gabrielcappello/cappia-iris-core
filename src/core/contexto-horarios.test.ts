@@ -367,13 +367,73 @@ test('derivacao: toda decisao produz exatamente uma acao conhecida, nunca undefi
     { tipo: 'mensagem_nao_compreendida' },
     { tipo: 'desistencia' },
     { tipo: 'sem_dentista_disponivel' },
+    { tipo: 'sem_dentista_disponivel', procedimento_oferecido: 'consultation_evaluation' },
+    { tipo: 'combinacao_indisponivel', dentista_nome_exibido: 'Dr. Bruno Lima' },
     { tipo: 'duracao_nao_configurada' },
     { tipo: 'cadastro_necessario' },
     { tipo: 'reserva_conflito' },
     { tipo: 'aguardando_confirmacao', procedimento_id: 'cleaning', dentista_id: 'dentista-1', opcao: opcao(540) },
   ];
-  const tiposValidos = new Set<AcaoContextoHorarios['tipo']>(['substituir', 'propor', 'preservar', 'limpar']);
+  const tiposValidos = new Set<AcaoContextoHorarios['tipo']>(['substituir', 'propor', 'oferecer', 'preservar', 'limpar']);
   for (const decisao of decisoes) {
     assert.ok(tiposValidos.has(derivarAcaoContextoHorarios(decisao).tipo));
+  }
+});
+
+// --- Oferta de procedimento pendente (specs/contexto-pendente-interpretacao-v1.md secao 11) ---
+
+test('oferta: sem_dentista_disponivel COM alternativa real grava a oferta', () => {
+  const acao = derivarAcaoContextoHorarios({
+    tipo: 'sem_dentista_disponivel',
+    procedimento_oferecido: 'consultation_evaluation',
+  });
+
+  assert.deepEqual(acao, { tipo: 'oferecer', procedimento_id: 'consultation_evaluation' });
+});
+
+test('oferta: sem_dentista_disponivel SEM alternativa real continua limpando, como antes', () => {
+  // A guarda importa: oferecer o que nao existe faria o paciente aceitar algo
+  // impossivel e cair em ciclo (dentistas-vinculos-v1.md secao 12 regra 1).
+  assert.deepEqual(derivarAcaoContextoHorarios({ tipo: 'sem_dentista_disponivel' }), { tipo: 'limpar' });
+});
+
+test('oferta: a acao oferecer grava SO a variante de oferta, nunca junto de horarios ou proposta', async () => {
+  const { cliente, instrucoes } = criarClienteRegistrador(1);
+
+  await gravarContextoHorarios(cliente, {
+    ...ENTRADA_BASE,
+    acao: { tipo: 'oferecer', procedimento_id: 'consultation_evaluation' },
+  });
+
+  const update = instrucoes.find((i) => i.operacao === 'update');
+  const gravado = update?.valores?.contexto_horarios as Record<string, unknown>;
+  assert.deepEqual(gravado.oferta_procedimento_pendente, { procedimento_id: 'consultation_evaluation' });
+  assert.equal('horarios' in gravado, false);
+  assert.equal('proposta_pendente' in gravado, false);
+  assert.equal(typeof gravado.criado_em, 'string');
+});
+
+test('oferta: snapshot lido do banco com a variante de oferta e aceito', () => {
+  const valido = validarContextoHorarios({
+    oferta_procedimento_pendente: { procedimento_id: 'consultation_evaluation' },
+    criado_em: '2026-08-09T12:00:00.000Z',
+  });
+
+  assert.deepEqual(valido, {
+    oferta_procedimento_pendente: { procedimento_id: 'consultation_evaluation' },
+    criado_em: '2026-08-09T12:00:00.000Z',
+  });
+});
+
+test('oferta: variante malformada invalida o snapshot inteiro (falha aberta, vira null)', () => {
+  const invalidos = [
+    { oferta_procedimento_pendente: {}, criado_em: 'x' },
+    { oferta_procedimento_pendente: { procedimento_id: '' }, criado_em: 'x' },
+    { oferta_procedimento_pendente: { procedimento_id: 'ok', extra: 1 }, criado_em: 'x' },
+    { oferta_procedimento_pendente: 'consultation_evaluation', criado_em: 'x' },
+  ];
+
+  for (const caso of invalidos) {
+    assert.equal(validarContextoHorarios(caso), null, `esperava null para ${JSON.stringify(caso)}`);
   }
 });

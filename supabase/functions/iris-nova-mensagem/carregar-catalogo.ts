@@ -168,17 +168,18 @@ function montarDentistas(
 
     const nome = typeof registro.nome === 'string' ? registro.nome.trim() : '';
     const titulo = typeof registro.titulo === 'string' ? registro.titulo.trim() : '';
-    // Mesmo par que cappia__resolver_dentista (legado) ja aceita como
-    // entrada valida hoje: "Titulo Nome" (completo) OU so "Nome" (curto).
     const nomeCompleto = [titulo, nome].filter((parte) => parte !== '').join(' ');
 
+    // REMOVIDO em 2026-08-09 (specs/dentista-semantico-v1.md):
+    // `nome_completo_resolucao` e `nome_curto_resolucao`. Existiam so como
+    // chave de match textual em resolverPorPreferencia, que nao existe mais.
+    // `nome_exibido` continua sendo montado igual -- deixou de ser chave e
+    // passou a ser o texto que a IA LE em `dentistas_disponiveis`.
     const ativo = registro.ativo === true;
     dentistas.push({
       dentista_id: dentistaId,
       clinica_id: clinicaId,
       nome_exibido: nomeCompleto !== '' ? nomeCompleto : nome,
-      nome_completo_resolucao: nomeCompleto,
-      nome_curto_resolucao: nome !== '' ? nome : null,
       ativo,
     });
 

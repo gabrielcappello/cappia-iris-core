@@ -246,10 +246,10 @@ test('INT-12: string vazia ou so espacos conta como ausente, nunca como preenchi
 test('INT-12: campo operacional vazio tambem e omitido de dados_atuais', () => {
   const entrada = construirEntradaMinimizada(['oi'], {
     procedimento_id: '  ',
-    dentista_texto: 'Ana',
+    dentista_id: 'dent-ana-a',
   });
 
-  assert.deepEqual(entrada.dados_atuais, { dentista_texto: 'Ana' });
+  assert.deepEqual(entrada.dados_atuais, { dentista_id: 'dent-ana-a' });
 });
 
 test('INT-12: a ordem dos indicadores e deterministica, independente da ordem do snapshot', () => {
@@ -358,7 +358,7 @@ function criarFetchCapturador() {
         output: [
           {
             type: 'message',
-            content: [{ type: 'output_text', text: JSON.stringify({ natureza_mensagem: 'pedido', alteracoes: [] }) }],
+            content: [{ type: 'output_text', text: JSON.stringify({ natureza_mensagem: 'pedido', alteracoes: [], eventos_candidatos: [] }) }],
           },
         ],
         usage: { input_tokens: 1, output_tokens: 1 },

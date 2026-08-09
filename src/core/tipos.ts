@@ -38,6 +38,20 @@ export interface ContextoHorarios {
    * ESSA proposta especifica, mesmo sem repetir data/horario no texto.
    */
   proposta_pendente?: { data: string; horario: string };
+  /**
+   * Procedimento que a Iris ofereceu ao paciente no turno anterior e cuja
+   * resposta ainda nao veio (specs/contexto-pendente-interpretacao-v1.md
+   * secao 11). E o que permite a interpretadora entender "pode ser" como
+   * aceitacao DAQUELA oferta -- sem nenhum repertorio de frases.
+   *
+   * Generico de proposito: carrega QUALQUER `procedimento_id`. Nao ha nada
+   * sobre Consulta/Avaliacao aqui; quem decide o que oferecer e o
+   * orquestrador, e hoje so a avaliacao e oferecida.
+   *
+   * AUSENTE quando as tres variantes nao se aplicam -- as tres sao
+   * mutuamente exclusivas, nunca coexistem no mesmo snapshot.
+   */
+  oferta_procedimento_pendente?: { procedimento_id: string };
   /** ISO, somente auditoria -- nunca usado como versao nem para ordenar escritas. */
   criado_em: string;
 }
@@ -132,7 +146,11 @@ export type CampoDadosConversa =
   // Substituiu `procedimento_texto` em 2026-08-08: o Core nunca mais
   // interpreta texto de procedimento, so confere integridade do ID.
   | 'procedimento_id'
-  | 'dentista_texto'
+  // Idem, para dentista (specs/dentista-semantico-v1.md). Substituiu
+  // `dentista_texto` em 2026-08-09: a interpretadora recebe os dentistas
+  // ativos da clinica e devolve o ID; o Core so confere integridade e
+  // vinculo -- nunca compara nome.
+  | 'dentista_id'
   | 'data_texto'
   | 'periodo'
   | 'horario_texto'
