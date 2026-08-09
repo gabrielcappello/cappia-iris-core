@@ -49,7 +49,7 @@ test('teste5: correcoes sucessivas resultam em uma unica alteracao final aplicad
   const clienteBanco = new ClienteFalso(tabelas);
   // simula o modelo ja tendo colapsado "quero limpeza, na verdade clareamento" em uma unica decisao final
   const clienteModelo = new ClienteModeloFalso([
-    { natureza_mensagem: 'pedido', alteracoes: { procedimento_texto: { acao: 'informar', valor: 'clareamento' } } },
+    { natureza_mensagem: 'pedido', alteracoes: { procedimento_id: { acao: 'informar', valor: 'clareamento' } } },
   ]);
 
   const resultado = await interpretarEAplicar(
@@ -59,16 +59,16 @@ test('teste5: correcoes sucessivas resultam em uma unica alteracao final aplicad
   );
 
   assert.deepEqual(resultado.conflitos, []);
-  assert.equal(resultado.aplicacao?.dados.procedimento_texto, 'clareamento');
-  assert.equal(comoRegistro(tabelas.estado_conversa[0].dados).procedimento_texto, 'clareamento');
+  assert.equal(resultado.aplicacao?.dados.procedimento_id, 'clareamento');
+  assert.equal(comoRegistro(tabelas.estado_conversa[0].dados).procedimento_id, 'clareamento');
 });
 
 test('teste6: ultima correcao cronologica prevalece (corrigir substitui o valor acumulado)', async () => {
   const tabelas = criarTabelasFalsasVazias();
-  const conversa = semearEstado(tabelas, { procedimento_texto: 'limpeza' });
+  const conversa = semearEstado(tabelas, { procedimento_id: 'cleaning' });
   const clienteBanco = new ClienteFalso(tabelas);
   const clienteModelo = new ClienteModeloFalso([
-    { natureza_mensagem: 'correcao', alteracoes: { procedimento_texto: { acao: 'corrigir', valor: 'clareamento' } } },
+    { natureza_mensagem: 'correcao', alteracoes: { procedimento_id: { acao: 'corrigir', valor: 'clareamento' } } },
   ]);
 
   const resultado = await interpretarEAplicar(
@@ -78,7 +78,7 @@ test('teste6: ultima correcao cronologica prevalece (corrigir substitui o valor 
   );
 
   assert.deepEqual(resultado.conflitos, [], 'corrigir nunca conflita');
-  assert.equal(resultado.aplicacao?.dados.procedimento_texto, 'clareamento');
+  assert.equal(resultado.aplicacao?.dados.procedimento_id, 'clareamento');
 });
 
 test('teste7: retorno ao valor original gera informar e e aplicavel (nao conflito)', async () => {
@@ -101,20 +101,20 @@ test('teste7: retorno ao valor original gera informar e e aplicavel (nao conflit
 
 test('teste11: campo conflitante nao segue para aplicarDados', async () => {
   const tabelas = criarTabelasFalsasVazias();
-  const conversa = semearEstado(tabelas, { procedimento_texto: 'limpeza' });
+  const conversa = semearEstado(tabelas, { procedimento_id: 'cleaning' });
   const clienteBanco = new ClienteFalso(tabelas);
   const clienteModelo = new ClienteModeloFalso([
-    { natureza_mensagem: 'pedido', alteracoes: { procedimento_texto: { acao: 'informar', valor: 'clareamento' } } },
+    { natureza_mensagem: 'pedido', alteracoes: { procedimento_id: { acao: 'informar', valor: 'clareamento' } } },
   ]);
 
   const resultado = await interpretarEAplicar(clienteModelo, clienteBanco, contexto(conversa.id, ['tambem quero clareamento']));
 
   assert.equal(resultado.conflitos.length, 1);
-  assert.equal(resultado.conflitos[0].valor_atual, 'limpeza');
+  assert.equal(resultado.conflitos[0].valor_atual, 'cleaning');
   assert.equal(resultado.conflitos[0].valor_informado, 'clareamento');
   assert.equal(resultado.aplicacao, null, 'nenhuma alteracao aplicavel: aplicarDados nunca deve ser chamado');
   assert.equal(clienteBanco.estatisticas.chamadasUpdate['estado_conversa'] ?? 0, 0);
-  assert.equal(comoRegistro(tabelas.estado_conversa[0].dados).procedimento_texto, 'limpeza', 'valor acumulado preservado');
+  assert.equal(comoRegistro(tabelas.estado_conversa[0].dados).procedimento_id, 'cleaning', 'valor acumulado preservado');
 });
 
 test('teste24-25: payload integralmente invalido nao chama aplicarDados e nao modifica o estado', async () => {
@@ -207,18 +207,18 @@ test('correcao2: telefone_normalizado invalido e rejeitado sem consultar o banco
 
 test('correcao4a: o modelo recebe o snapshot oficial lido do banco, nao um dados_atuais fornecido pelo chamador', async () => {
   const tabelas = criarTabelasFalsasVazias();
-  const conversa = semearEstado(tabelas, { procedimento_texto: 'limpeza' });
+  const conversa = semearEstado(tabelas, { procedimento_id: 'cleaning' });
   const clienteBanco = new ClienteFalso(tabelas);
   const clienteModelo = new ClienteModeloFalso([{ natureza_mensagem: 'saudacao', alteracoes: {} }]);
 
   await interpretarEAplicar(clienteModelo, clienteBanco, contexto(conversa.id, ['oi']));
 
-  assert.equal(clienteModelo.chamadas[0].payload.dados_atuais.procedimento_texto, 'limpeza');
+  assert.equal(clienteModelo.chamadas[0].payload.dados_atuais.procedimento_id, 'cleaning');
 });
 
 test('correcao4b: entrada integrada contendo dados_atuais e rejeitada; banco e modelo nao sao chamados', async () => {
   const tabelas = criarTabelasFalsasVazias();
-  const conversa = semearEstado(tabelas, { procedimento_texto: 'limpeza' });
+  const conversa = semearEstado(tabelas, { procedimento_id: 'cleaning' });
   const clienteBanco = new ClienteFalso(tabelas);
   const clienteModelo = new ClienteModeloNuncaDeveSerChamado();
 
@@ -227,7 +227,7 @@ test('correcao4b: entrada integrada contendo dados_atuais e rejeitada; banco e m
       interpretarEAplicar(
         clienteModelo,
         clienteBanco,
-        contexto(conversa.id, ['oi'], { dados_atuais: { procedimento_texto: 'limpeza' } })
+        contexto(conversa.id, ['oi'], { dados_atuais: { procedimento_id: 'cleaning' } })
       ),
     EntradaInvalidaError
   );

@@ -49,7 +49,7 @@ interface CasoSimples {
 // execucao-real-sintetica-adaptador-openai.ts (payload congelado no
 // codigo, para impedir troca acidental por dado real).
 const CASOS: readonly CasoSimples[] = Object.freeze([
-  { titulo: 'procedimento', categoria: 'procedimento_texto', mensagens_atuais: ['Quero fazer uma limpeza.'] },
+  { titulo: 'procedimento', categoria: 'procedimento_id', mensagens_atuais: ['Quero fazer uma limpeza.'] },
   { titulo: 'dentista', categoria: 'dentista_texto', mensagens_atuais: ['Prefiro ser atendido com a Dra. Ana.'] },
   { titulo: 'data hoje', categoria: 'data_texto', mensagens_atuais: ['Pode ser hoje?'] },
   { titulo: 'data amanha', categoria: 'data_texto', mensagens_atuais: ['Pode ser amanhã?'] },

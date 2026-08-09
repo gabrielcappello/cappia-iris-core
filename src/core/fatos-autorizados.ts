@@ -87,7 +87,6 @@ export interface FatosAutorizados {
 export function derivarFatosAutorizados(decisao: DecisaoOrquestrador): FatosAutorizados {
   switch (decisao.tipo) {
     case 'clinica_sem_catalogo':
-    case 'erro_catalogo_procedimento':
     case 'erro_catalogo_dentista':
     case 'duracao_nao_configurada':
     case 'erro_configuracao_duracao':

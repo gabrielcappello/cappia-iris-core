@@ -34,13 +34,13 @@ test('teste2: varios campos em uma saida valida sao aceitos', async () => {
 test('teste3: dois procedimentos coexistentes preservados em uma unica string', async () => {
   const saida = {
     natureza_mensagem: 'pedido',
-    alteracoes: { procedimento_texto: { acao: 'informar', valor: 'limpeza e clareamento' } },
+    alteracoes: { procedimento_id: { acao: 'informar', valor: 'limpeza e clareamento' } },
   };
   const cliente = new ClienteModeloFalso([saida]);
 
   const resultado = await extrairAlteracoes(cliente, { mensagens_atuais: ['quero limpeza e clareamento'], dados_atuais: {}, campos_cadastrais_preenchidos: [] });
 
-  assert.equal(resultado.alteracoes.procedimento_texto?.valor, 'limpeza e clareamento');
+  assert.equal(resultado.alteracoes.procedimento_id?.valor, 'limpeza e clareamento');
 });
 
 test('teste4: dois dentistas alternativos preservados em uma unica string', async () => {
@@ -252,7 +252,7 @@ test('correcao1: payload enviado ao modelo contem exatamente as tres chaves do c
 
   await extrairAlteracoes(cliente, {
     mensagens_atuais: ['oi'],
-    dados_atuais: { procedimento_texto: 'limpeza' },
+    dados_atuais: { procedimento_id: 'limpeza' },
     campos_cadastrais_preenchidos: ['nome'],
   });
 

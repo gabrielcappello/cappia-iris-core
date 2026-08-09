@@ -240,7 +240,7 @@ test('saudacao: cumprimenta e pergunta como pode ajudar, nunca null', () => {
 
 for (const motivo of ['texto_ausente', 'sem_correspondencia', 'alias_inativo', 'procedimento_inativo'] as const) {
   test(`aguardando_procedimento (motivo ${motivo}): pergunta qual procedimento, nunca null`, () => {
-    const decisao: DecisaoCaminhoFeliz = { tipo: 'aguardando_procedimento', resultado: { tipo: 'nao_resolvido', motivo } };
+    const decisao: DecisaoCaminhoFeliz = { tipo: 'aguardando_procedimento' };
     const texto = gerarRespostaPaciente(decisao);
     assert.equal(texto, 'Qual procedimento ou atendimento você está buscando?');
     assert.notEqual(texto, null);
@@ -430,12 +430,11 @@ test('sem_dentista_disponivel: informa e oferece alternativa, nunca soa como fal
   assert.ok(!/problema t[eé]cnico/i.test(texto));
 });
 
-// --- os seis estados de falha tecnica real (2026-08-06) ---
+// --- os cinco estados de falha tecnica real ---
 
-test('falha tecnica real: os seis estados compartilham a mesma frase honesta, nunca expondo motivo bruto', () => {
+test('falha tecnica real: os cinco estados compartilham a mesma frase honesta, nunca expondo motivo bruto', () => {
   const decisoes: DecisaoCaminhoFeliz[] = [
     { tipo: 'clinica_sem_catalogo' },
-    { tipo: 'erro_catalogo_procedimento', resultado: { tipo: 'erro_catalogo', codigo: 'alias_ambiguo', procedimento_ids: ['p1'] } },
     { tipo: 'erro_catalogo_dentista', resultado: { tipo: 'erro_catalogo', codigo: 'nome_resolucao_ambiguo', dentista_ids: ['d1'] } },
     { tipo: 'duracao_nao_configurada' },
     {
@@ -451,17 +450,16 @@ test('falha tecnica real: os seis estados compartilham a mesma frase honesta, nu
   assert.ok(!texto.includes('alias_ambiguo') && !texto.includes('erro_tecnico'));
 });
 
-// --- exaustividade: nenhum dos 19 tipos retorna null (nunca lanca, sempre string) ---
+// --- exaustividade: nenhum dos 18 tipos retorna null (nunca lanca, sempre string) ---
 
-test('exaustividade: todos os 19 tipos de DecisaoOrquestrador produzem texto nao vazio', () => {
+test('exaustividade: todos os 18 tipos de DecisaoOrquestrador produzem texto nao vazio', () => {
   const decisoes: DecisaoCaminhoFeliz[] = [
     { tipo: 'clinica_sem_catalogo' },
     { tipo: 'saudacao' },
     { tipo: 'duvida_livre' },
     { tipo: 'mensagem_nao_compreendida' },
     { tipo: 'desistencia' },
-    { tipo: 'aguardando_procedimento', resultado: { tipo: 'nao_resolvido', motivo: 'texto_ausente' } },
-    { tipo: 'erro_catalogo_procedimento', resultado: { tipo: 'erro_catalogo', codigo: 'alias_ambiguo', procedimento_ids: [] } },
+    { tipo: 'aguardando_procedimento' },
     { tipo: 'aguardando_escolha_dentista', dentistas: [{ dentista_id: 'd1', clinica_id: 'c1', nome_exibido: 'Dra. Ana' }] },
     { tipo: 'sem_dentista_disponivel' },
     { tipo: 'erro_catalogo_dentista', resultado: { tipo: 'erro_catalogo', codigo: 'vinculo_orfao', dentista_ids: [] } },
@@ -484,7 +482,7 @@ test('exaustividade: todos os 19 tipos de DecisaoOrquestrador produzem texto nao
     { tipo: 'reserva_conflito' },
     { tipo: 'reserva_falhou', motivo: 'erro_tecnico' },
   ];
-  assert.equal(decisoes.length, 19, 'confirma que os 19 tipos estao cobertos neste teste');
+  assert.equal(decisoes.length, 18, 'confirma que os 18 tipos estao cobertos neste teste');
   for (const decisao of decisoes) {
     const texto = gerarRespostaPaciente(decisao);
     assert.equal(typeof texto, 'string');

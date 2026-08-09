@@ -108,7 +108,7 @@ test('encadeado: contexto_horarios grava com sucesso, historico_conversa usa o a
     tabelas,
     new ClienteModeloFalso([
       respostaModelo('pedido', {
-        procedimento_texto: { acao: 'informar', valor: 'Limpeza' },
+        procedimento_id: { acao: 'informar', valor: PROCEDIMENTO_ID },
         data_texto: { acao: 'informar', valor: 'hoje' },
       }),
     ])

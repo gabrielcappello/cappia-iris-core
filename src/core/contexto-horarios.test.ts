@@ -116,10 +116,7 @@ test('limpar: reserva_criada e desistencia fecham o ciclo', () => {
 });
 
 test('limpar: aguardando_procedimento e reserva_conflito', () => {
-  const aguardando: DecisaoOrquestrador = {
-    tipo: 'aguardando_procedimento',
-    resultado: { tipo: 'nao_resolvido', motivo: 'texto_ausente' },
-  };
+  const aguardando: DecisaoOrquestrador = { tipo: 'aguardando_procedimento' };
   assert.deepEqual(derivarAcaoContextoHorarios(aguardando), { tipo: 'limpar' });
   assert.deepEqual(derivarAcaoContextoHorarios({ tipo: 'reserva_conflito' }), { tipo: 'limpar' });
 });

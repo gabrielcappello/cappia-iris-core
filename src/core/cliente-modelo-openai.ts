@@ -43,7 +43,10 @@ const SCHEMA_PORTATIL_APROVADO = {
             type: 'string',
             enum: [
               'intencao',
-              'procedimento_texto',
+              // Lista DUPLICADA de CAMPOS_PERMITIDOS de proposito (schema
+              // portatil estatico, ver cabecalho) -- trocar la sem trocar
+              // aqui faz o modelo continuar obrigado ao campo antigo.
+              'procedimento_id',
               'dentista_texto',
               'data_texto',
               'periodo',
@@ -367,6 +370,12 @@ async function processarTentativa(
             : {}),
           ...(contexto.entrada.payload.proposta_pendente !== undefined
             ? { proposta_pendente: contexto.entrada.payload.proposta_pendente }
+            : {}),
+          // Catalogo ativo minimo da clinica (specs/procedimento-semantico-v1.md):
+          // e o que permite a interpretadora resolver o pedido do paciente
+          // semanticamente ate `procedimento_id`, sem o Core casar texto.
+          ...(contexto.entrada.payload.procedimentos_disponiveis !== undefined
+            ? { procedimentos_disponiveis: contexto.entrada.payload.procedimentos_disponiveis }
             : {}),
           // CORRECAO 2026-08-08: `historico_recente` existia em
           // EntradaInterpretacao desde specs/historico-conversacional-v1.md,

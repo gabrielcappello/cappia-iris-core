@@ -52,13 +52,12 @@ const TELEFONE = '5511900000000';
 const PACIENTE_NOME = 'Gabriel (demo local)';
 const PROCEDIMENTO_LIMPEZA = 'limpeza';
 const PROCEDIMENTO_CLAREAMENTO = 'clareamento';
-// Consulta/Avaliacao (specs/procedimentos-v1.md secao 8, "Uso 1 -- pedido
-// direto"): resolve pelo fluxo normal de nome/alias, como qualquer outro
-// procedimento -- nao precisa de nenhum codigo especial. So faltava existir
-// no catalogo. O "Uso 2" (fallback automatico quando nenhum dentista atende
-// o procedimento pedido) e uma etapa diferente, ainda nao autorizada -- ver
-// carregar-catalogo.ts linha 11 (eh_consulta_avaliacao sempre false hoje,
-// por falta de coluna real em procedimentos_catalogo).
+// Consulta/Avaliacao desde specs/procedimento-semantico-v1.md (2026-08-08):
+// resolve como qualquer outro procedimento, pela compreensao semantica da IA
+// sobre o catalogo ativo -- nao ha alias, nao ha fallback tecnico, nao ha
+// flag. Um paciente que diz "nao sei o que preciso" chega aqui porque a IA
+// leu "Consulta / Avaliação" na lista e entendeu, nao porque alguem
+// cadastrou uma palavra-gatilho.
 const PROCEDIMENTO_AVALIACAO = 'avaliacao';
 
 const TEMPO_POR_PROCEDIMENTO: Record<string, number> = {

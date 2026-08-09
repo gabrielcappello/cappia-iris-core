@@ -14,7 +14,7 @@ import type {
 // por IA) sem duplicar as listas/regex canonicas.
 export const CAMPOS_PERMITIDOS: readonly CampoDadosConversa[] = [
   'intencao',
-  'procedimento_texto',
+  'procedimento_id',
   'dentista_texto',
   'data_texto',
   'periodo',
@@ -31,7 +31,7 @@ export const PERIODOS_PERMITIDOS = ['manha', 'tarde', 'noite'];
 export const INTENCOES_PERMITIDAS = ['novo_agendamento'];
 // Fechado a 'sim': ausencia de confirmacao nunca e tratada como negacao
 // silenciosa, so como "ainda nao confirmou" -- mesmo principio ja usado em
-// dentista_texto/procedimento_texto ausentes.
+// dentista_texto/procedimento_id ausentes.
 export const CONFIRMACOES_PERMITIDAS = ['sim'];
 const MAX_TENTATIVAS = 5;
 

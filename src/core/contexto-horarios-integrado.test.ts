@@ -109,7 +109,7 @@ test('integrado: horarios_disponiveis grava o snapshot com os mesmos horarios do
     tabelas,
     new ClienteModeloFalso([
       respostaModelo('pedido', {
-        procedimento_texto: { acao: 'informar', valor: 'Limpeza' },
+        procedimento_id: { acao: 'informar', valor: PROCEDIMENTO_ID },
         data_texto: { acao: 'informar', valor: 'hoje' },
       }),
     ])
@@ -159,7 +159,7 @@ test('integrado: aguardando_confirmacao grava proposta_pendente e SUBSTITUI hora
   const tabelas = criarTabelasFalsasVazias();
   const clinicaId = semearClinicaComAgenda(tabelas);
   semearConversa(tabelas, clinicaId, {
-    dados: { procedimento_texto: 'Limpeza', data_texto: 'hoje', horario_texto: '10:00' },
+    dados: { procedimento_id: PROCEDIMENTO_ID, data_texto: 'hoje', horario_texto: '10:00' },
     contexto_horarios: { horarios: ['08:00', '09:00'], criado_em: '2026-08-03T11:00:00.000Z' },
   });
 

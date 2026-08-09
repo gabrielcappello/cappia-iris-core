@@ -48,7 +48,7 @@ const SCHEMA_APROVADO = {
             type: 'string',
             enum: [
               'intencao',
-              'procedimento_texto',
+              'procedimento_id',
               'dentista_texto',
               'data_texto',
               'periodo',
@@ -82,7 +82,7 @@ const INSTRUCOES_MINIMAS = `
 Voce recebe mensagens de um paciente ficticio e o estado atual (ficticio) de dados ja coletados para um agendamento odontologico. Devolva somente o efeito final estruturado, como uma lista de alteracoes.
 
 Regras:
-- Campos permitidos: intencao, procedimento_texto, dentista_texto, data_texto, periodo, horario_texto, nome, cpf, data_nascimento, email.
+- Campos permitidos: intencao, procedimento_id, dentista_texto, data_texto, periodo, horario_texto, nome, cpf, data_nascimento, email.
 - Acoes permitidas: informar, corrigir, remover.
 - informar e corrigir usam "valor" como string.
 - remover usa "valor": null.
@@ -134,7 +134,7 @@ function validarSchemaAprovadoLocalmente(): void {
     JSON.stringify(campo.enum) !==
     JSON.stringify([
       'intencao',
-      'procedimento_texto',
+      'procedimento_id',
       'dentista_texto',
       'data_texto',
       'periodo',

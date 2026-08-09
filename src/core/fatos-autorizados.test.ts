@@ -31,15 +31,14 @@ function assertNuncaContemFraseProntaOuId(fatos: FatosAutorizados) {
 
 // --- Mapeamento exaustivo: um caso por tipo, os 19 ---
 
-test('mapeamento: os 19 tipos produzem um objetivo, nenhum lanca', () => {
+test('mapeamento: os 18 tipos produzem um objetivo, nenhum lanca', () => {
   const decisoes: DecisaoOrquestrador[] = [
     { tipo: 'clinica_sem_catalogo' },
     { tipo: 'saudacao' },
     { tipo: 'duvida_livre' },
     { tipo: 'mensagem_nao_compreendida' },
     { tipo: 'desistencia' },
-    { tipo: 'aguardando_procedimento', resultado: { tipo: 'nao_resolvido', motivo: 'texto_ausente' } },
-    { tipo: 'erro_catalogo_procedimento', resultado: { tipo: 'erro_catalogo', codigo: 'alias_ambiguo', procedimento_ids: [] } },
+    { tipo: 'aguardando_procedimento' },
     { tipo: 'aguardando_escolha_dentista', dentistas: [{ dentista_id: 'd1', clinica_id: 'c1', nome_exibido: 'Dra. Ana' }] },
     { tipo: 'sem_dentista_disponivel' },
     { tipo: 'erro_catalogo_dentista', resultado: { tipo: 'erro_catalogo', codigo: 'vinculo_orfao', dentista_ids: [] } },
@@ -70,7 +69,7 @@ test('mapeamento: os 19 tipos produzem um objetivo, nenhum lanca', () => {
     { tipo: 'reserva_conflito' },
     { tipo: 'reserva_falhou', motivo: 'erro_tecnico' },
   ];
-  assert.equal(decisoes.length, 19);
+  assert.equal(decisoes.length, 18);
   for (const decisao of decisoes) {
     const fatos = derivarFatosAutorizados(decisao);
     assert.equal(typeof fatos.objetivo, 'string');
@@ -141,10 +140,9 @@ test('reserva_criada: agendamento_confirmado com data/horario, sem IDs', () => {
   assert.deepEqual(fatos.agendamento_confirmado, { data: '05/08', horario: '09:00' });
 });
 
-test('falha tecnica: os seis estados marcam falha_tecnica:true e objetivo informar_falha_tecnica', () => {
+test('falha tecnica: os cinco estados marcam falha_tecnica:true e objetivo informar_falha_tecnica', () => {
   const decisoes: DecisaoOrquestrador[] = [
     { tipo: 'clinica_sem_catalogo' },
-    { tipo: 'erro_catalogo_procedimento', resultado: { tipo: 'erro_catalogo', codigo: 'alias_ambiguo', procedimento_ids: [] } },
     { tipo: 'erro_catalogo_dentista', resultado: { tipo: 'erro_catalogo', codigo: 'vinculo_orfao', dentista_ids: [] } },
     { tipo: 'duracao_nao_configurada' },
     {

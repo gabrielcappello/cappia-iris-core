@@ -100,7 +100,7 @@ const SCHEMA_PORTATIL_APROVADO = {
             type: 'string',
             enum: [
               'intencao',
-              'procedimento_texto',
+              'procedimento_id',
               'dentista_texto',
               'data_texto',
               'periodo',
@@ -133,7 +133,7 @@ const SCHEMA_PORTATIL_APROVADO = {
 // isolado, no mesmo espirito do smoke test anterior).
 const CAMPOS_PERMITIDOS = [
   'intencao',
-  'procedimento_texto',
+  'procedimento_id',
   'dentista_texto',
   'data_texto',
   'periodo',
@@ -183,7 +183,7 @@ const CENARIOS: readonly CenarioSemantico[] = [
     mensagens_atuais: ['Quero fazer uma limpeza na sexta a tarde.'],
     dados_atuais: {},
     resultado_esperado: [
-      { campo: 'procedimento_texto', acao: 'informar', valor: 'limpeza' },
+      { campo: 'procedimento_id', acao: 'informar', valor: 'limpeza' },
       { campo: 'data_texto', acao: 'informar', valor: 'sexta' },
       { campo: 'periodo', acao: 'informar', valor: 'tarde' },
       { campo: 'intencao', acao: 'informar', valor: 'novo_agendamento' },
@@ -194,14 +194,14 @@ const CENARIOS: readonly CenarioSemantico[] = [
     // comprovada do modelo -- registrado aqui, nao tratado como resultado
     // definitivo.
     origem:
-      'CAMPOS_PERMITIDOS (procedimento_texto/data_texto/periodo/intencao) + INSTRUCOES_EXTRATOR ("datas e horarios sempre preservados como texto"; periodo aceita manha/tarde/noite; intencao aceita novo_agendamento) -- composicao de campos individualmente aprovados, nenhuma regra nova',
+      'CAMPOS_PERMITIDOS (procedimento_id/data_texto/periodo/intencao) + INSTRUCOES_EXTRATOR ("datas e horarios sempre preservados como texto"; periodo aceita manha/tarde/noite; intencao aceita novo_agendamento) -- composicao de campos individualmente aprovados, nenhuma regra nova',
   },
   {
     id: 'multiplos_procedimentos_coexistentes',
     descricao: 'Dois procedimentos coexistentes preservados em uma unica string',
     mensagens_atuais: ['Quero limpeza e clareamento.'],
     dados_atuais: {},
-    resultado_esperado: [{ campo: 'procedimento_texto', acao: 'informar', valor: 'limpeza e clareamento' }],
+    resultado_esperado: [{ campo: 'procedimento_id', acao: 'informar', valor: 'limpeza e clareamento' }],
     origem: 'src/core/interpretacao-extrator.test.ts teste3',
   },
   {
@@ -216,8 +216,8 @@ const CENARIOS: readonly CenarioSemantico[] = [
     id: 'correcao_de_valor_acumulado',
     descricao: 'Correcao explicita de um valor ja acumulado em dados_atuais',
     mensagens_atuais: ['Na verdade quero clareamento, nao limpeza.'],
-    dados_atuais: { procedimento_texto: 'limpeza' },
-    resultado_esperado: [{ campo: 'procedimento_texto', acao: 'corrigir', valor: 'clareamento' }],
+    dados_atuais: { procedimento_id: 'limpeza' },
+    resultado_esperado: [{ campo: 'procedimento_id', acao: 'corrigir', valor: 'clareamento' }],
     origem: 'src/core/interpretar-e-aplicar.test.ts teste6',
   },
   {
@@ -225,7 +225,7 @@ const CENARIOS: readonly CenarioSemantico[] = [
     descricao: 'Correcoes sucessivas do mesmo campo dentro da mesma janela resultam em uma unica alteracao final',
     mensagens_atuais: ['Quero limpeza.', 'Na verdade prefiro clareamento.'],
     dados_atuais: {},
-    resultado_esperado: [{ campo: 'procedimento_texto', acao: 'informar', valor: 'clareamento' }],
+    resultado_esperado: [{ campo: 'procedimento_id', acao: 'informar', valor: 'clareamento' }],
     origem: 'src/core/interpretar-e-aplicar.test.ts teste5',
   },
   {

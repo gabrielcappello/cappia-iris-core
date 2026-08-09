@@ -822,12 +822,12 @@ test('conversao: resposta portatil valida converte para o mapa interno', () => {
   const resultado = converterParaContratoInterno({
     alteracoes: [
       { campo: 'nome', acao: 'informar', valor: 'Joao' },
-      { campo: 'procedimento_texto', acao: 'corrigir', valor: 'limpeza' },
+      { campo: 'procedimento_id', acao: 'corrigir', valor: 'limpeza' },
     ],
   });
   assert.deepEqual(resultado, {
     nome: { acao: 'informar', valor: 'Joao' },
-    procedimento_texto: { acao: 'corrigir', valor: 'limpeza' },
+    procedimento_id: { acao: 'corrigir', valor: 'limpeza' },
   });
 });
 
@@ -997,13 +997,13 @@ test('http: preenchimento parcial e enviado exatamente como derivado', async () 
 test('http: dados_atuais continua contendo apenas campos operacionais', async () => {
   const { payloadEnviado } = await payloadHttpDe({
     mensagens_atuais: ['oi'],
-    dados_atuais: { intencao: 'novo_agendamento', procedimento_texto: 'limpeza' },
+    dados_atuais: { intencao: 'novo_agendamento', procedimento_id: 'limpeza' },
     campos_cadastrais_preenchidos: ['nome', 'cpf'],
   });
 
   assert.deepEqual(payloadEnviado.dados_atuais, {
     intencao: 'novo_agendamento',
-    procedimento_texto: 'limpeza',
+    procedimento_id: 'limpeza',
   });
   for (const proibido of ['nome', 'cpf', 'data_nascimento', 'email', 'telefone']) {
     assert.ok(!(proibido in payloadEnviado.dados_atuais));
@@ -1080,7 +1080,7 @@ test('extra: executar() bem-sucedido devolve o mapa interno pronto para validarS
   const { fetchFalso } = criarFetchFalso([
     () =>
       respostaSucesso([
-        { campo: 'procedimento_texto', acao: 'informar', valor: 'limpeza' },
+        { campo: 'procedimento_id', acao: 'informar', valor: 'limpeza' },
         { campo: 'cpf', acao: 'remover', valor: null },
       ]),
   ]);
@@ -1091,7 +1091,7 @@ test('extra: executar() bem-sucedido devolve o mapa interno pronto para validarS
   assert.deepEqual(resultado, {
     natureza_mensagem: 'pedido',
     alteracoes: {
-      procedimento_texto: { acao: 'informar', valor: 'limpeza' },
+      procedimento_id: { acao: 'informar', valor: 'limpeza' },
       cpf: { acao: 'remover' },
     },
   });
@@ -2029,7 +2029,7 @@ test('fronteira: GUARDA GERAL -- toda chave opcional do payload precisa aparecer
   // o corpo faz este teste falhar, sem precisar escrever um teste dedicado.
   const payloadCompleto = {
     mensagens_atuais: ['Tarde.'],
-    dados_atuais: { procedimento_texto: 'limpeza' },
+    dados_atuais: { procedimento_id: 'limpeza' },
     campos_cadastrais_preenchidos: [],
     horarios_oferecidos: ['08:00', '09:00'],
     proposta_pendente: { data: '08/08', horario: '14:00' },

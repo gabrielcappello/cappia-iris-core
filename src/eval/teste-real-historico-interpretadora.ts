@@ -46,7 +46,7 @@ function historico(respostaIris: string, mensagemPaciente = 'quero limpeza amanh
   return [{ mensagem_paciente: mensagemPaciente, resposta_iris: respostaIris, gerada_em: new Date(Date.now() - 60_000).toISOString() }];
 }
 
-const APOS_PROPOSTA: SnapshotOficialConversa = { procedimento_texto: 'limpeza', data_texto: 'amanha' };
+const APOS_PROPOSTA: SnapshotOficialConversa = { procedimento_id: 'cleaning', data_texto: 'amanha' };
 const PROPOSTA = { data: '06/08', horario: '14:00' };
 const PERGUNTA_CONFIRMACAO = 'Posso confirmar sua limpeza para amanhã às 14h?';
 

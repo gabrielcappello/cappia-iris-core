@@ -33,7 +33,7 @@ const EMAIL_SINTETICO = 'zulmira.bettencourt@exemplo-sintetico.test';
 
 const SNAPSHOT_COM_CADASTRO_COMPLETO = {
   intencao: 'novo_agendamento',
-  procedimento_texto: 'limpeza',
+  procedimento_id: 'cleaning',
   nome: NOME_SINTETICO,
   cpf: CPF_SINTETICO,
   data_nascimento: NASCIMENTO_SINTETICO,
@@ -122,7 +122,7 @@ test('INT-11: nenhum objeto cadastral completo e transmitido -- dados_atuais so 
   const { payload } = clienteModelo.chamadas[0];
   assert.deepEqual(payload.dados_atuais, {
     intencao: 'novo_agendamento',
-    procedimento_texto: 'limpeza',
+    procedimento_id: 'cleaning',
   });
   for (const proibido of ['nome', 'cpf', 'data_nascimento', 'email', 'telefone']) {
     assert.ok(!(proibido in payload.dados_atuais), `dados_atuais nao pode conter '${proibido}'`);
@@ -216,10 +216,10 @@ test('INT-12: todos os campos cadastrais preenchidos', () => {
 });
 
 test('INT-12: nenhum campo cadastral preenchido', () => {
-  const entrada = construirEntradaMinimizada(['oi'], { procedimento_texto: 'limpeza' });
+  const entrada = construirEntradaMinimizada(['oi'], { procedimento_id: 'cleaning' });
 
   assert.deepEqual(entrada.campos_cadastrais_preenchidos, []);
-  assert.deepEqual(entrada.dados_atuais, { procedimento_texto: 'limpeza' });
+  assert.deepEqual(entrada.dados_atuais, { procedimento_id: 'cleaning' });
 });
 
 test('INT-12: preenchimento parcial informa exatamente os presentes e omite os ausentes', () => {
@@ -245,7 +245,7 @@ test('INT-12: string vazia ou so espacos conta como ausente, nunca como preenchi
 
 test('INT-12: campo operacional vazio tambem e omitido de dados_atuais', () => {
   const entrada = construirEntradaMinimizada(['oi'], {
-    procedimento_texto: '  ',
+    procedimento_id: '  ',
     dentista_texto: 'Ana',
   });
 
@@ -421,7 +421,7 @@ test('INT-11 (HTTP): dados_atuais serializado contem apenas campos operacionais'
 
   assert.deepEqual(payloadHttp.dados_atuais, {
     intencao: 'novo_agendamento',
-    procedimento_texto: 'limpeza',
+    procedimento_id: 'cleaning',
   });
 });
 
@@ -449,7 +449,7 @@ test('INT-12 (HTTP): todos os indicadores chegam ao corpo, na ordem canonica', a
 });
 
 test('INT-12 (HTTP): nenhum campo preenchido produz array vazio no corpo', async () => {
-  const { payloadHttp } = await corpoHttpAposFluxoCompleto({ procedimento_texto: 'limpeza' }, ['oi']);
+  const { payloadHttp } = await corpoHttpAposFluxoCompleto({ procedimento_id: 'cleaning' }, ['oi']);
 
   assert.deepEqual(payloadHttp.campos_cadastrais_preenchidos, []);
 });

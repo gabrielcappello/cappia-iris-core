@@ -3,7 +3,7 @@
 // por decisao explicita (moratoria P4, AGENTS.md "Simplicidade e prioridade
 // de entrega").
 
-import type { AliasProcedimento, ProcedimentoOficial, ResultadoResolucaoProcedimento } from './procedimento-tipos.ts';
+import type { ProcedimentoOficial } from './procedimento-tipos.ts';
 import type { DentistaApto, DentistaOficial, ResultadoResolucaoDentista, VinculoDentistaProcedimento } from './dentista-tipos.ts';
 import type { ConfiguracaoDuracao, ResultadoResolucaoDuracao } from './duracao-tipos.ts';
 import type { Conflito, NaturezaMensagem } from './interpretacao-tipos.ts';
@@ -21,7 +21,6 @@ import type { HistoricoConversa } from './tipos.ts';
  */
 export interface CatalogoClinica {
   procedimentos: readonly ProcedimentoOficial[];
-  aliasesProcedimento: readonly AliasProcedimento[];
   dentistas: readonly DentistaOficial[];
   vinculos: readonly VinculoDentistaProcedimento[];
   configuracoesDuracao: readonly ConfiguracaoDuracao[];
@@ -75,8 +74,13 @@ export type DecisaoOrquestrador =
   // (situacao "Desistencia", atendimento-v1.md secao 5). Nunca cancela
   // agendamento existente.
   | { tipo: 'desistencia' }
-  | { tipo: 'aguardando_procedimento'; resultado: ResultadoResolucaoProcedimento }
-  | { tipo: 'erro_catalogo_procedimento'; resultado: ResultadoResolucaoProcedimento }
+  // Sem payload desde 2026-08-08 (specs/procedimento-semantico-v1.md): a IA
+  // devolve `procedimento_id` e o Core so confere integridade. ID ausente,
+  // inexistente, de outra clinica ou inativo caem todos aqui -- os motivos
+  // internos ja eram equivalentes perante o paciente, entao nao ha nuance a
+  // transportar. `erro_catalogo_procedimento` foi REMOVIDO junto: sem
+  // aliases, nao existe alias ambiguo/orfao/de outra clinica a reportar.
+  | { tipo: 'aguardando_procedimento' }
   | { tipo: 'aguardando_escolha_dentista'; dentistas: readonly DentistaApto[] }
   | { tipo: 'sem_dentista_disponivel' }
   | { tipo: 'erro_catalogo_dentista'; resultado: ResultadoResolucaoDentista }

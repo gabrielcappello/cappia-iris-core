@@ -127,7 +127,11 @@ export interface ClienteBancoDados {
 // estruturado). Qualquer chave fora desta lista e rejeitada.
 export type CampoDadosConversa =
   | 'intencao'
-  | 'procedimento_texto'
+  // Identidade canonica ja resolvida semanticamente pela IA interpretadora
+  // contra o catalogo ativo da clinica (specs/procedimento-semantico-v1.md).
+  // Substituiu `procedimento_texto` em 2026-08-08: o Core nunca mais
+  // interpreta texto de procedimento, so confere integridade do ID.
+  | 'procedimento_id'
   | 'dentista_texto'
   | 'data_texto'
   | 'periodo'

@@ -37,7 +37,7 @@ interface Caso {
   confirmacaoEsperada: string | null;
 }
 
-const APOS_PROPOSTA: SnapshotOficialConversa = { procedimento_texto: 'limpeza', data_texto: 'hoje' };
+const APOS_PROPOSTA: SnapshotOficialConversa = { procedimento_id: 'cleaning', data_texto: 'hoje' };
 const PROPOSTA = { data: '05/08', horario: '15:00' };
 
 const CASOS: readonly Caso[] = Object.freeze([

@@ -1,7 +1,5 @@
 import { identificarConversa } from './identificacao.ts';
 import { interpretarEAplicar } from './interpretar-e-aplicar.ts';
-import { textoAusenteParaResolucao } from './normalizacao-texto.ts';
-import { resolverProcedimento } from './resolver-procedimento.ts';
 import { resolverDentista } from './resolver-dentista.ts';
 import { resolverDuracao } from './resolver-duracao.ts';
 import { montarFatosTemporais } from './montar-fatos-temporais.ts';
@@ -49,6 +47,20 @@ export async function processarMensagem(
   // usado depois na gravacao (seção 3 da mesma spec).
   const historicoParaInterpretacao = historicoValidoParaEnvio(identificacao.conversa.historico_conversa, Date.now());
 
+  // CARREGAR CEDO, CHECAR TARDE (specs/procedimento-semantico-v1.md secao 1).
+  // O catalogo precisa existir ANTES da interpretacao, porque e ele que
+  // permite a IA resolver o pedido ate `procedimento_id`. Mas a checagem de
+  // `clinica_sem_catalogo` continua LA EMBAIXO, depois do early-return
+  // conversacional: subi-la junto faria uma saudacao numa clinica sem
+  // catalogo devolver erro tecnico em vez de cumprimentar.
+  const catalogoCarregado = await carregarCatalogo(clienteBanco, { clinica_id: identificacao.clinica_id });
+  const procedimentosDisponiveis =
+    catalogoCarregado.tipo === 'carregado'
+      ? catalogoCarregado.catalogo.procedimentos
+          .filter((p) => p.ativo)
+          .map((p) => ({ procedimento_id: p.procedimento_id, nome_pt: p.nome_pt }))
+      : [];
+
   const interpretacao = await interpretarEAplicar(clienteModelo, clienteBanco, {
     conversa_id: identificacao.conversa.id,
     clinica_id: identificacao.clinica_id,
@@ -73,6 +85,10 @@ export async function processarMensagem(
     // (specs/historico-conversacional-v1.md secao 6): a interpretadora
     // passa a receber contexto, nunca so a mensagem atual isolada.
     ...(historicoParaInterpretacao !== undefined ? { historico_recente: historicoParaInterpretacao } : {}),
+    // Catalogo ativo minimo: a IA resolve o pedido do paciente diretamente
+    // para `procedimento_id` (specs/procedimento-semantico-v1.md). Chave
+    // AUSENTE quando a clinica nao tem catalogo carregavel -- nunca `[]`.
+    ...(procedimentosDisponiveis.length > 0 ? { procedimentos_disponiveis: procedimentosDisponiveis } : {}),
   });
 
   // `atualizado_em` EXATO do estado sobre o qual a decisao desta mensagem
@@ -123,7 +139,9 @@ export async function processarMensagem(
     }
   }
 
-  const catalogoCarregado = await carregarCatalogo(clienteBanco, { clinica_id: identificacao.clinica_id });
+  // Checagem TARDE (ver "carregar cedo, checar tarde" acima): o catalogo ja
+  // foi carregado antes da interpretacao, mas so aqui a ausencia dele vira
+  // decisao -- depois do early-return conversacional.
   if (catalogoCarregado.tipo !== 'carregado') {
     return await finalizar({ tipo: 'clinica_sem_catalogo' });
   }
@@ -150,6 +168,19 @@ export async function processarMensagem(
  * mensagem ja esta vazio (processarMensagem) -- nunca decide nada sobre
  * procedimento, dentista, duracao, disponibilidade ou reserva.
  */
+/**
+ * "Ainda nao ha procedimento conhecido nesta conversa". Desde
+ * specs/procedimento-semantico-v1.md o campo e `procedimento_id` -- um
+ * identificador OPACO do catalogo, nunca texto livre do paciente. Por isso a
+ * checagem e de PRESENCA, e nao mais `textoAusenteParaResolucao` (que
+ * normalizava acento/caixa para comparar contra alias; nao faz sentido sobre
+ * um id).
+ */
+function procedimentoAusente(dados: Record<string, string | undefined>): boolean {
+  const id = dados.procedimento_id;
+  return typeof id !== 'string' || id.trim() === '';
+}
+
 function decidirPorNatureza(
   natureza: NaturezaMensagem,
   dados: Record<string, string | undefined>
@@ -159,13 +190,13 @@ function decidirPorNatureza(
       // So cumprimenta se ainda nao ha procedimento conhecido nesta
       // conversa (de qualquer mensagem anterior) -- uma saudacao no meio
       // de um fluxo em andamento nunca o reabre.
-      return textoAusenteParaResolucao(dados.procedimento_texto) ? { tipo: 'saudacao' } : null;
+      return procedimentoAusente(dados) ? { tipo: 'saudacao' } : null;
     case 'duvida':
       // So acolhe como duvida livre se ainda nao ha procedimento conhecido
       // nesta conversa -- com procedimento ja conhecido, a duvida nao pode
       // interromper o fluxo em andamento: segue pelo caminho normal, que
       // retoma exatamente a pergunta pendente (data/horario/confirmacao).
-      return textoAusenteParaResolucao(dados.procedimento_texto) ? { tipo: 'duvida_livre' } : null;
+      return procedimentoAusente(dados) ? { tipo: 'duvida_livre' } : null;
     case 'negacao':
       return { tipo: 'desistencia' };
     case 'nao_compreendida':
@@ -190,23 +221,27 @@ async function decidir(
   catalogo: CatalogoClinica,
   instanteAtual: InstanteAtual
 ): Promise<DecisaoOrquestrador> {
-  const resultadoProcedimento = resolverProcedimento({
-    clinica_id: clinicaId,
-    procedimento_texto: dados.procedimento_texto ?? null,
-    catalogo: catalogo.procedimentos,
-    aliases: catalogo.aliasesProcedimento,
-  });
-
-  if (resultadoProcedimento.tipo === 'erro_catalogo') {
-    return { tipo: 'erro_catalogo_procedimento', resultado: resultadoProcedimento };
-  }
-  if (resultadoProcedimento.tipo !== 'resolvido') {
-    return { tipo: 'aguardando_procedimento', resultado: resultadoProcedimento };
+  // INTEGRIDADE, NUNCA INTERPRETACAO (specs/procedimento-semantico-v1.md
+  // secao 4). Quem entendeu o pedido do paciente foi a IA, que devolveu um
+  // `procedimento_id` canonico; aqui o Core so confere tres coisas -- o ID
+  // existe, pertence a esta clinica, e esta ativo. Nao normaliza texto, nao
+  // compara nome, nao rele a mensagem.
+  //
+  // ID ausente, inexistente, de outra clinica ou inativo caem todos no MESMO
+  // desfecho: `aguardando_procedimento`, a mesma pergunta de sempre. Os
+  // motivos ja eram equivalentes perante o paciente por decisao de spec
+  // (specs/procedimentos-v1.md secao 7: nunca revelar que um procedimento
+  // existe mas esta inativo), entao colapsa-los nao muda nada do que ele ve.
+  const procedimento = catalogo.procedimentos.find(
+    (p) => p.procedimento_id === dados.procedimento_id && p.clinica_id === clinicaId && p.ativo
+  );
+  if (!procedimento) {
+    return { tipo: 'aguardando_procedimento' };
   }
 
   const resolucaoDentista = resolverDentistaComFallback(
     clinicaId,
-    resultadoProcedimento.procedimento_id,
+    procedimento.procedimento_id,
     dados.dentista_texto ?? null,
     catalogo
   );
@@ -214,7 +249,7 @@ async function decidir(
 
   const resultadoDuracao = resolverDuracao({
     clinica_id: clinicaId,
-    procedimento_id: resultadoProcedimento.procedimento_id,
+    procedimento_id: procedimento.procedimento_id,
     configuracoes: catalogo.configuracoesDuracao,
   });
 
@@ -245,7 +280,7 @@ async function decidir(
   const carregado = await carregarEntradaDisponibilidade(clienteBanco, {
     clinica_id: clinicaId,
     dentista_id: resolucaoDentista.dentistaId,
-    procedimento_id: resultadoProcedimento.procedimento_id,
+    procedimento_id: procedimento.procedimento_id,
     data: resultadoTemporal.data,
     instante_atual: instanteAtual,
     modo: derivarModoConsulta(resultadoTemporal),
@@ -264,7 +299,7 @@ async function decidir(
           clinicaId,
           pacienteId,
           telefoneNormalizado,
-          resultadoProcedimento.procedimento_id,
+          procedimento.procedimento_id,
           resolucaoDentista.dentistaId,
           resultadoDuracao.duracao_min,
           carregado.resultado.opcao,
@@ -273,7 +308,7 @@ async function decidir(
       }
       return {
         tipo: 'horarios_disponiveis',
-        procedimento_id: resultadoProcedimento.procedimento_id,
+        procedimento_id: procedimento.procedimento_id,
         dentista_id: resolucaoDentista.dentistaId,
         duracao_min: resultadoDuracao.duracao_min,
         resultado: carregado.resultado,

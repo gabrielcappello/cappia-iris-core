@@ -46,8 +46,10 @@ export function normalizarTextoCanonico(texto: string): string {
 /**
  * Texto considerado ausente para fins de resolucao: nao e string, ou
  * normaliza para vazio (vazio, somente espacos, somente quebras de linha).
- * `procedimento_texto` omitido pela IA chega aqui como ausencia de entrada
- * (specs/procedimentos-v1.md secao 6).
+ * Usado hoje por dentista (resolver-dentista.ts) e pelo adaptador temporal.
+ * Procedimento deixou de passar por aqui em 2026-08-08: a IA devolve
+ * `procedimento_id` canonico, e um id nunca e normalizado como texto
+ * (specs/procedimento-semantico-v1.md).
  */
 export function textoAusenteParaResolucao(texto: unknown): boolean {
   return typeof texto !== 'string' || normalizarTextoCanonico(texto) === '';

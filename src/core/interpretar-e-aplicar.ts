@@ -38,10 +38,22 @@ export interface InterpretarEAplicarInput extends ContextoConversa {
    * influencia persistencia, disponibilidade ou reserva.
    */
   historico_recente?: ParConversa[];
+  /**
+   * Catalogo ativo minimo da clinica (specs/procedimento-semantico-v1.md).
+   * Repassado a IA para que ela resolva o pedido do paciente diretamente
+   * para `procedimento_id`; nunca influencia persistencia, disponibilidade
+   * ou reserva -- a integridade do ID e conferida depois pelo Core.
+   */
+  procedimentos_disponiveis?: { procedimento_id: string; nome_pt: string }[];
 }
 
 const CHAVES_ENTRADA_INTEGRADA = ['conversa_id', 'clinica_id', 'telefone_normalizado', 'mensagens_atuais'] as const;
-const CHAVES_OPCIONAIS_INTEGRADA = ['horarios_oferecidos', 'proposta_pendente', 'historico_recente'] as const;
+const CHAVES_OPCIONAIS_INTEGRADA = [
+  'horarios_oferecidos',
+  'proposta_pendente',
+  'historico_recente',
+  'procedimentos_disponiveis',
+] as const;
 
 /**
  * Orquestracao minima: valida o contexto (reutilizando a validacao
@@ -90,7 +102,8 @@ export async function interpretarEAplicar(
       snapshotOficial,
       entrada.horarios_oferecidos,
       entrada.proposta_pendente,
-      entrada.historico_recente
+      entrada.historico_recente,
+      entrada.procedimentos_disponiveis
     )
   );
 

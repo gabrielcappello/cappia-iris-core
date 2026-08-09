@@ -66,7 +66,7 @@ test(
         ...contexto,
         alteracoes: {
           nome: { acao: 'informar', valor: 'Joao da Silva' },
-          procedimento_texto: { acao: 'informar', valor: 'limpeza dental' },
+          procedimento_id: { acao: 'informar', valor: 'limpeza dental' },
         },
       });
 
@@ -82,7 +82,7 @@ test(
       // 4) confirmar que os quatro valores ficaram acumulados
       assert.deepEqual(acumulado.dados, {
         nome: 'Joao da Silva',
-        procedimento_texto: 'limpeza dental',
+        procedimento_id: 'limpeza dental',
         data_texto: 'sexta-feira',
         periodo: 'manha',
       });
@@ -103,7 +103,7 @@ test(
       // 7) somente a data foi substituida
       assert.equal(corrigido.dados.data_texto, 'sabado');
       assert.equal(corrigido.dados.nome, 'Joao da Silva');
-      assert.equal(corrigido.dados.procedimento_texto, 'limpeza dental');
+      assert.equal(corrigido.dados.procedimento_id, 'limpeza dental');
       assert.equal(corrigido.dados.periodo, 'manha');
       assert.equal(corrigido.dados.horario_texto, '10h');
       assert.deepEqual(corrigido.campos_corrigidos, ['data_texto']);
@@ -134,7 +134,7 @@ test(
     try {
       const contexto = { conversa_id: conversaId, clinica_id: clinicaId, telefone_normalizado: telefone };
 
-      // 2) duas chamadas simultaneas, uma informando nome, outra procedimento_texto
+      // 2) duas chamadas simultaneas, uma informando nome, outra procedimento_id
       const [resultadoA, resultadoB] = await Promise.all([
         aplicarDados(supabase as unknown as ClienteBancoDados, {
           ...contexto,
@@ -142,7 +142,7 @@ test(
         }),
         aplicarDados(supabase as unknown as ClienteBancoDados, {
           ...contexto,
-          alteracoes: { procedimento_texto: { acao: 'informar', valor: 'limpeza dental' } },
+          alteracoes: { procedimento_id: { acao: 'informar', valor: 'limpeza dental' } },
         }),
       ]);
       assert.equal(resultadoA.conversa_id, conversaId);
@@ -155,7 +155,7 @@ test(
         .eq('clinica_id', clinicaId)
         .eq('telefone_normalizado', telefone);
       if (erroLinhas) throw erroLinhas;
-      assert.deepEqual(linhas?.[0]?.dados, { nome: 'Joao da Silva', procedimento_texto: 'limpeza dental' });
+      assert.deepEqual(linhas?.[0]?.dados, { nome: 'Joao da Silva', procedimento_id: 'limpeza dental' });
 
       // 5) confirmar que ha somente uma conversa
       assert.equal(linhas?.length, 1);

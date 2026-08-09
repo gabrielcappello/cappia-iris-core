@@ -41,7 +41,7 @@ async function criarClinicaEConversaSinteticas(supabase: SupabaseClient) {
       telefone_normalizado: telefone,
       paciente_id: null,
       estado: 'atendimento',
-      dados: { procedimento_texto: 'limpeza' },
+      dados: { procedimento_id: 'limpeza' },
     })
     .select('id')
     .single();
@@ -65,11 +65,11 @@ test(
     try {
       const contextoBase = { conversa_id: conversaId, clinica_id: clinicaId, telefone_normalizado: telefone };
 
-      // 3) cliente falso retorna procedimento_texto informar clareamento + data_texto informar sexta
+      // 3) cliente falso retorna procedimento_id informar clareamento + data_texto informar sexta
       const clienteModelo1 = new ClienteModeloFalso([
         {
           alteracoes: {
-            procedimento_texto: { acao: 'informar', valor: 'clareamento' },
+            procedimento_id: { acao: 'informar', valor: 'clareamento' },
             data_texto: { acao: 'informar', valor: 'sexta' },
           },
         },
@@ -80,9 +80,9 @@ test(
         mensagens_atuais: ['tambem quero clareamento', 'pode ser sexta'],
       });
 
-      // 4) procedimento_texto vira conflito; clareamento fica no conflito; data_texto e aplicada
+      // 4) procedimento_id vira conflito; clareamento fica no conflito; data_texto e aplicada
       assert.equal(resultado1.conflitos.length, 1);
-      assert.equal(resultado1.conflitos[0].campo, 'procedimento_texto');
+      assert.equal(resultado1.conflitos[0].campo, 'procedimento_id');
       assert.equal(resultado1.conflitos[0].valor_atual, 'limpeza');
       assert.equal(resultado1.conflitos[0].valor_informado, 'clareamento');
       assert.equal(resultado1.aplicacao?.dados.data_texto, 'sexta');
@@ -94,7 +94,7 @@ test(
         .single();
       if (erro1) throw erro1;
       // limpeza permanece no estado (nao foi sobrescrita pelo conflito)
-      assert.equal(linhaApos1.dados.procedimento_texto, 'limpeza');
+      assert.equal(linhaApos1.dados.procedimento_id, 'limpeza');
       assert.equal(linhaApos1.dados.data_texto, 'sexta');
 
       // 5) estado e paciente_id intactos
@@ -125,7 +125,7 @@ test(
         .eq('id', conversaId)
         .single();
       if (erro2) throw erro2;
-      assert.deepEqual(linhaApos2.dados, { procedimento_texto: 'limpeza', data_texto: 'sexta' });
+      assert.deepEqual(linhaApos2.dados, { procedimento_id: 'limpeza', data_texto: 'sexta' });
       assert.equal(linhaApos2.estado, 'atendimento');
       assert.equal(linhaApos2.paciente_id, null);
     } finally {

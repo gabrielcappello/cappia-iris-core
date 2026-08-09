@@ -73,10 +73,10 @@ export const PAYLOAD_SINTETICO_AUTORIZADO = Object.freeze({
 const INDICADORES_CADASTRAIS_CANONICOS = ['nome', 'cpf', 'data_nascimento', 'email'];
 
 // --- Saida estrutural esperada para este payload especifico (secao 3/7 da especificacao) ---
-export const CAMPOS_ESPERADOS = ['intencao', 'procedimento_texto', 'data_texto', 'periodo'] as const;
+export const CAMPOS_ESPERADOS = ['intencao', 'procedimento_id', 'data_texto', 'periodo'] as const;
 const VALORES_ESPERADOS: Record<(typeof CAMPOS_ESPERADOS)[number], string> = {
   intencao: 'novo_agendamento',
-  procedimento_texto: 'limpeza',
+  procedimento_id: 'limpeza',
   data_texto: 'amanhã',
   periodo: 'tarde',
 };

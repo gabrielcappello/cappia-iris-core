@@ -44,6 +44,9 @@ export async function extrairAlteracoes(
       ? { horarios_oferecidos: [...entradaBruta.horarios_oferecidos] }
       : {}),
     ...(entradaBruta.proposta_pendente !== undefined ? { proposta_pendente: entradaBruta.proposta_pendente } : {}),
+    ...(entradaBruta.procedimentos_disponiveis !== undefined
+      ? { procedimentos_disponiveis: [...entradaBruta.procedimentos_disponiveis] }
+      : {}),
     ...(entradaBruta.historico_recente !== undefined ? { historico_recente: [...entradaBruta.historico_recente] } : {}),
   };
 
@@ -71,7 +74,8 @@ export function construirEntradaMinimizada(
   snapshotOficial: SnapshotOficialConversa,
   horariosOferecidos?: string[],
   propostaPendente?: { data: string; horario: string },
-  historicoRecente?: ParConversa[]
+  historicoRecente?: ParConversa[],
+  procedimentosDisponiveis?: { procedimento_id: string; nome_pt: string }[]
 ): EntradaInterpretacao {
   return {
     mensagens_atuais: [...mensagensAtuais],
@@ -79,6 +83,7 @@ export function construirEntradaMinimizada(
     campos_cadastrais_preenchidos: derivarCamposCadastraisPreenchidos(snapshotOficial),
     ...(horariosOferecidos !== undefined ? { horarios_oferecidos: [...horariosOferecidos] } : {}),
     ...(propostaPendente !== undefined ? { proposta_pendente: propostaPendente } : {}),
+    ...(procedimentosDisponiveis !== undefined ? { procedimentos_disponiveis: [...procedimentosDisponiveis] } : {}),
     ...(historicoRecente !== undefined ? { historico_recente: [...historicoRecente] } : {}),
   };
 }
@@ -121,7 +126,12 @@ const CHAVES_ENTRADA_INTERPRETACAO = [
 // Chaves opcionais: podem estar ausentes, mas quando presentes precisam ser
 // validadas. A entrada continua FECHADA -- qualquer chave fora da uniao
 // (obrigatorias + opcionais) rejeita a entrada inteira, como sempre.
-const CHAVES_OPCIONAIS_INTERPRETACAO = ['horarios_oferecidos', 'proposta_pendente', 'historico_recente'] as const;
+const CHAVES_OPCIONAIS_INTERPRETACAO = [
+  'horarios_oferecidos',
+  'proposta_pendente',
+  'procedimentos_disponiveis',
+  'historico_recente',
+] as const;
 
 export function validarEntradaInterpretacao(entrada: unknown): asserts entrada is EntradaInterpretacao {
   if (entrada === null || typeof entrada !== 'object' || Array.isArray(entrada)) {
@@ -142,14 +152,60 @@ export function validarEntradaInterpretacao(entrada: unknown): asserts entrada i
     throw new EntradaInvalidaError('entrada', 'entrada contem propriedade nao permitida');
   }
 
-  const { mensagens_atuais, dados_atuais, campos_cadastrais_preenchidos, horarios_oferecidos, proposta_pendente, historico_recente } =
-    entrada as Record<string, unknown>;
+  const {
+    mensagens_atuais,
+    dados_atuais,
+    campos_cadastrais_preenchidos,
+    horarios_oferecidos,
+    proposta_pendente,
+    procedimentos_disponiveis,
+    historico_recente,
+  } = entrada as Record<string, unknown>;
   validarMensagensAtuais(mensagens_atuais);
   validarDadosAtuais(dados_atuais);
   validarCamposCadastraisPreenchidos(campos_cadastrais_preenchidos);
   if (horarios_oferecidos !== undefined) validarHorariosOferecidos(horarios_oferecidos);
   if (proposta_pendente !== undefined) validarPropostaPendente(proposta_pendente);
+  if (procedimentos_disponiveis !== undefined) validarProcedimentosDisponiveis(procedimentos_disponiveis);
   if (historico_recente !== undefined) validarHistoricoRecente(historico_recente);
+}
+
+/**
+ * Catalogo ativo minimo da clinica (specs/procedimento-semantico-v1.md).
+ * Fechado a arrays nao vazios de pares {procedimento_id, nome_pt}, ambos
+ * strings nao vazias -- "clinica sem catalogo" se representa pela AUSENCIA
+ * da chave, nunca por `[]`, pelo mesmo motivo de horarios_oferecidos. Nao
+ * valida se o id existe de fato: quem produz este valor e sempre o proprio
+ * Core (carregarCatalogo), nunca a IA nem o paciente.
+ */
+export function validarProcedimentosDisponiveis(
+  valor: unknown
+): asserts valor is { procedimento_id: string; nome_pt: string }[] {
+  if (!Array.isArray(valor)) {
+    throw new EntradaInvalidaError('procedimentos_disponiveis', 'procedimentos_disponiveis deve ser um array');
+  }
+  if (valor.length === 0) {
+    throw new EntradaInvalidaError('procedimentos_disponiveis', 'procedimentos_disponiveis nao pode ser um array vazio');
+  }
+  for (const item of valor) {
+    if (item === null || typeof item !== 'object' || Array.isArray(item)) {
+      throw new EntradaInvalidaError('procedimentos_disponiveis', 'procedimentos_disponiveis contem item que nao e objeto');
+    }
+    const chaves = Object.keys(item as Record<string, unknown>).sort();
+    if (JSON.stringify(chaves) !== JSON.stringify(['nome_pt', 'procedimento_id'])) {
+      throw new EntradaInvalidaError(
+        'procedimentos_disponiveis',
+        'procedimentos_disponiveis contem item com chaves diferentes de procedimento_id/nome_pt'
+      );
+    }
+    const { procedimento_id, nome_pt } = item as Record<string, unknown>;
+    if (typeof procedimento_id !== 'string' || procedimento_id.trim() === '') {
+      throw new EntradaInvalidaError('procedimentos_disponiveis', 'procedimentos_disponiveis contem procedimento_id invalido');
+    }
+    if (typeof nome_pt !== 'string' || nome_pt.trim() === '') {
+      throw new EntradaInvalidaError('procedimentos_disponiveis', 'procedimentos_disponiveis contem nome_pt invalido');
+    }
+  }
 }
 
 /**

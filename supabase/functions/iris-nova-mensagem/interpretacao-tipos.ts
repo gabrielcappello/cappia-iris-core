@@ -15,7 +15,7 @@ import type { AlteracoesDados, CampoDadosConversa, ParConversa, ResultadoAplicar
 
 export type CampoOperacionalInterpretacao = Extract<
   CampoDadosConversa,
-  'intencao' | 'procedimento_texto' | 'dentista_texto' | 'data_texto' | 'periodo' | 'horario_texto' | 'confirmacao'
+  'intencao' | 'procedimento_id' | 'dentista_texto' | 'data_texto' | 'periodo' | 'horario_texto' | 'confirmacao'
 >;
 
 export type CampoCadastralInterpretacao = Extract<
@@ -25,7 +25,7 @@ export type CampoCadastralInterpretacao = Extract<
 
 export const CAMPOS_OPERACIONAIS_INTERPRETACAO: readonly CampoOperacionalInterpretacao[] = [
   'intencao',
-  'procedimento_texto',
+  'procedimento_id',
   'dentista_texto',
   'data_texto',
   'periodo',
@@ -86,6 +86,18 @@ export interface EntradaInterpretacao {
   campos_cadastrais_preenchidos: CampoCadastralInterpretacao[];
   horarios_oferecidos?: string[];
   proposta_pendente?: { data: string; horario: string };
+  /**
+   * Procedimentos REAIS e ATIVOS desta clinica
+   * (specs/procedimento-semantico-v1.md). E o que permite a interpretadora
+   * resolver o pedido do paciente semanticamente ate a identidade canonica
+   * (`procedimento_id`), em vez de o Core tentar casar texto contra uma
+   * lista de aliases -- o paciente fala naturalmente, a IA compreende.
+   *
+   * Exatamente dois campos por item, nada alem: nunca preco, duracao,
+   * dentista, ou procedimento de outra clinica. AUSENTE (nunca `[]`) quando
+   * a clinica nao tem catalogo carregavel.
+   */
+  procedimentos_disponiveis?: { procedimento_id: string; nome_pt: string }[];
   /**
    * Ultimos turnos da conversa (specs/historico-conversacional-v1.md secao
    * 6), do mais antigo para o mais recente, ja filtrados por validade (24h)

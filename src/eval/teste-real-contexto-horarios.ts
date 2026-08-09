@@ -52,7 +52,7 @@ interface CasoContexto {
 }
 
 // Estado tipico depois de "quero uma limpeza hoje" -> Iris ofereceu a grade.
-const APOS_GRADE: SnapshotOficialConversa = { procedimento_texto: 'limpeza', data_texto: 'hoje' };
+const APOS_GRADE: SnapshotOficialConversa = { procedimento_id: 'cleaning', data_texto: 'hoje' };
 const GRADE = ['13:00', '14:00', '15:00', '16:00'];
 
 // Fixo, nunca aceito por argv/stdin/env -- mesmo espirito dos demais
@@ -85,7 +85,7 @@ const CASOS: readonly CasoContexto[] = Object.freeze([
     // OUTRA regra, fora do escopo desta spec (que so trata horario).
     titulo: '"esse mesmo" no estado de confirmacao (LACUNA CONHECIDA -- fora do escopo desta spec)',
     mensagem: 'esse mesmo',
-    snapshot: { procedimento_texto: 'limpeza', data_texto: 'hoje', horario_texto: '15:00' },
+    snapshot: { procedimento_id: 'cleaning', data_texto: 'hoje', horario_texto: '15:00' },
     horarioEsperado: null,
     confirmacaoEsperada: 'sim',
     gapConhecido: 'regra de confirmacao ancorada em lista fechada de frases; nao e sobre contexto de horario',
@@ -93,7 +93,7 @@ const CASOS: readonly CasoContexto[] = Object.freeze([
   {
     titulo: 'NEGATIVO: "dia 15" SEM snapshot nunca vira 15:00',
     mensagem: 'dia 15',
-    snapshot: { procedimento_texto: 'limpeza' },
+    snapshot: { procedimento_id: 'cleaning' },
     horarioEsperado: null,
     dataEsperada: '15',
   },

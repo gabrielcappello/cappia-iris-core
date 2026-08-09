@@ -16,26 +16,26 @@ test('teste9: informar igual ao valor acumulado e idempotente (aplicavel, sem co
 
 test('teste10: informar diferente gera conflito', () => {
   const resultado = preAplicar(
-    { procedimento_texto: 'limpeza' },
-    { procedimento_texto: { acao: 'informar', valor: 'clareamento' } }
+    { procedimento_id: 'limpeza' },
+    { procedimento_id: { acao: 'informar', valor: 'clareamento' } }
   );
   assert.deepEqual(resultado.alteracoes_aplicaveis, {});
   assert.deepEqual(resultado.conflitos, [
-    { campo: 'procedimento_texto', valor_atual: 'limpeza', valor_informado: 'clareamento' },
+    { campo: 'procedimento_id', valor_atual: 'limpeza', valor_informado: 'clareamento' },
   ]);
 });
 
 test('teste12: alteracao sem conflito da mesma saida continua aplicavel', () => {
   const resultado = preAplicar(
-    { procedimento_texto: 'limpeza' },
+    { procedimento_id: 'limpeza' },
     {
-      procedimento_texto: { acao: 'informar', valor: 'clareamento' }, // conflita
+      procedimento_id: { acao: 'informar', valor: 'clareamento' }, // conflita
       data_texto: { acao: 'informar', valor: 'sexta' }, // sem conflito
     }
   );
   assert.deepEqual(resultado.alteracoes_aplicaveis, { data_texto: { acao: 'informar', valor: 'sexta' } });
   assert.equal(resultado.conflitos.length, 1);
-  assert.equal(resultado.conflitos[0].campo, 'procedimento_texto');
+  assert.equal(resultado.conflitos[0].campo, 'procedimento_id');
 });
 
 test('teste13: corrigir sempre e aplicavel (autoriza substituicao)', () => {

@@ -5,14 +5,10 @@
 // para o contrato ja aprovado. Mesmo espirito de carregar-disponibilidade.ts
 // -- nenhum dos resolvedores e alterado aqui, nenhum deles e reimplementado.
 //
-// Duas simplificacoes deliberadas, por causa do schema real (nao inventadas
+// Uma simplificacao deliberada, por causa do schema real (nao inventada
 // aqui, apenas o reflexo honesto do que existe hoje):
 //
-// 1. procedimentos_catalogo nao tem eh_consulta_avaliacao -- nao ha fonte
-//    real pra esse dado ainda, entao todo procedimento carrega `false`.
-//    Nunca escolhe Consulta/Avaliacao por conta propria (isso permanece
-//    responsabilidade do controlador, nao deste carregador).
-// 2. resolverDuracao (nao alterado) exige UMA duracao por clinica+
+// 1. resolverDuracao (nao alterado) exige UMA duracao por clinica+
 //    procedimento; a duracao real hoje pode variar por dentista (visto na
 //    ClearDent). Este carregador nao escolhe qual delas vale -- projeta o
 //    valor efetivo de cada dentista ATIVO (nunca de um inativo, ver
@@ -24,7 +20,7 @@
 import { EntradaInvalidaError } from './erros.ts';
 import type { ClienteBancoDados } from './tipos.ts';
 import type { CatalogoClinica } from './orquestrador-tipos.ts';
-import type { AliasProcedimento, ProcedimentoOficial } from './procedimento-tipos.ts';
+import type { ProcedimentoOficial } from './procedimento-tipos.ts';
 import type { DentistaOficial, VinculoDentistaProcedimento } from './dentista-tipos.ts';
 import type { ConfiguracaoDuracao } from './duracao-tipos.ts';
 
@@ -47,7 +43,7 @@ export async function carregarCatalogo(
 
   const procedimentosCatalogo = await buscarProcedimentosCatalogo(cliente);
 
-  const { procedimentos, aliasesProcedimento } = montarProcedimentos(entrada.clinica_id, procedimentosCatalogo);
+  const procedimentos = montarProcedimentos(entrada.clinica_id, procedimentosCatalogo);
   const { dentistas, vinculos, configuracoesDuracao } = montarDentistas(
     entrada.clinica_id,
     clinica.dentistas,
@@ -56,7 +52,7 @@ export async function carregarCatalogo(
 
   return {
     tipo: 'carregado',
-    catalogo: { procedimentos, aliasesProcedimento, dentistas, vinculos, configuracoesDuracao },
+    catalogo: { procedimentos, dentistas, vinculos, configuracoesDuracao },
   };
 }
 
@@ -119,59 +115,29 @@ async function buscarProcedimentosCatalogo(cliente: ClienteBancoDados): Promise<
   return resultado;
 }
 
-// Sinonimos informais que pacientes usam no dia a dia, alem dos 8 nomes
-// oficiais do catalogo -- mecanismo de alias ja existente (AliasProcedimento),
-// so mais uma fonte de texto por procedimento_id. Escopo minimo, decidido
-// por Gabriel em 2026-08-05: comecar so por "limpeza" -> cleaning. Herda
-// `ativo` do proprio procedimento no catalogo (mesma regra dos 8 nomes
-// oficiais): se "cleaning" for desativado, "limpeza" tambem fica inativa.
-const SINONIMOS_INFORMAIS: Readonly<Record<string, readonly string[]>> = {
-  cleaning: ['limpeza'],
-};
+// REMOVIDO em 2026-08-08 (specs/procedimento-semantico-v1.md):
+// `SINONIMOS_INFORMAIS` e o loop que transformava os 8 nomes multilingues em
+// `AliasProcedimento`. Toda essa maquinaria existia para o Core casar TEXTO
+// do paciente contra o catalogo -- uma lista que crescia a cada forma nova de
+// falar e que, mesmo assim, nunca cobriria "quero que o dentista de uma
+// olhada". Quem entende linguagem agora e a IA interpretadora, que recebe
+// `{procedimento_id, nome_pt}` e devolve o id canonico.
+//
+// `nome_pt` continua sendo carregado -- deixou de ser chave de match e passou
+// a ser o texto que a IA LE para compreender o pedido. As outras 7 colunas de
+// nome (es/en/fr/de/it/ru/ar) nao sao mais lidas: existiam apenas como fonte
+// de alias.
 
 function montarProcedimentos(
   clinicaId: string,
   linhas: readonly ProcedimentoCatalogoRow[]
-): { procedimentos: ProcedimentoOficial[]; aliasesProcedimento: AliasProcedimento[] } {
-  const procedimentos: ProcedimentoOficial[] = [];
-  const aliasesProcedimento: AliasProcedimento[] = [];
-
-  for (const linha of linhas) {
-    procedimentos.push({
-      procedimento_id: linha.id,
-      clinica_id: clinicaId,
-      nome_pt: linha.nome_pt,
-      ativo: linha.ativo,
-      // procedimentos_catalogo nao tem esse dado hoje -- ver nota de topo.
-      eh_consulta_avaliacao: false,
-    });
-
-    // As 8 colunas de nome multilingue sao os aliases reais: e exatamente
-    // como cappia__resolver_procedimento (legado, ja em producao) resolve
-    // texto -> procedimento_id hoje. Nunca duplicado: nomes identicos entre
-    // idiomas geram o mesmo texto de alias mais de uma vez, o que o
-        // resolvedor novo ja trata como aliases equivalentes (mesmo destino).
-    for (const nome of [
-      linha.nome_pt,
-      linha.nome_es,
-      linha.nome_en,
-      linha.nome_fr,
-      linha.nome_de,
-      linha.nome_it,
-      linha.nome_ru,
-      linha.nome_ar,
-    ]) {
-      if (typeof nome === 'string' && nome.trim() !== '') {
-        aliasesProcedimento.push({ clinica_id: clinicaId, procedimento_id: linha.id, texto: nome, ativo: linha.ativo });
-      }
-    }
-
-    for (const sinonimo of SINONIMOS_INFORMAIS[linha.id] ?? []) {
-      aliasesProcedimento.push({ clinica_id: clinicaId, procedimento_id: linha.id, texto: sinonimo, ativo: linha.ativo });
-    }
-  }
-
-  return { procedimentos, aliasesProcedimento };
+): ProcedimentoOficial[] {
+  return linhas.map((linha) => ({
+    procedimento_id: linha.id,
+    clinica_id: clinicaId,
+    nome_pt: linha.nome_pt,
+    ativo: linha.ativo,
+  }));
 }
 
 // --- Dentistas (clinicas.dentistas[i]) ---

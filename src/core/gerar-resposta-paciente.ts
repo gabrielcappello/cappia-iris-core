@@ -17,10 +17,10 @@
 // (specs/resposta-conversacional-v1.md secao 6), os NOVE estados restantes:
 // aguardando_escolha_dentista, cadastro_necessario e sem_dentista_disponivel
 // tem texto proprio (situacoes de conversa normal, nunca falha); os outros
-// seis (clinica_sem_catalogo, erro_catalogo_procedimento,
-// erro_catalogo_dentista, duracao_nao_configurada, erro_configuracao_duracao,
-// reserva_falhou) sao falha tecnica real e compartilham uma unica frase
-// honesta. Este modulo agora cobre os 19 tipos de DecisaoOrquestrador por
+// cinco (clinica_sem_catalogo, erro_catalogo_dentista,
+// duracao_nao_configurada, erro_configuracao_duracao, reserva_falhou) sao
+// falha tecnica real e compartilham uma unica frase
+// honesta. Este modulo agora cobre os 18 tipos de DecisaoOrquestrador por
 // completo -- nenhum deles retorna resposta:null. Desde a mesma data, este
 // e o FALLBACK deterministico (specs/resposta-conversacional-v1.md secao 6):
 // o caminho normal e a IA redatora (gerar-resposta-conversacional.ts); este
@@ -39,13 +39,13 @@ import type {
 
 /**
  * Mantido como alias documental (era um subconjunto restrito antes de
- * 2026-08-06) -- gerarRespostaPaciente agora cobre os 19 tipos por
+ * 2026-08-06) -- gerarRespostaPaciente agora cobre os 18 tipos por
  * completo, entao a restricao deixou de existir. O nome permanece porque
  * chamadores existentes (index.ts) ja o referenciam.
  */
 export type DecisaoCaminhoFeliz = DecisaoOrquestrador;
 
-// Os seis estados de falha tecnica REAL (nunca duvida do paciente) --
+// Os cinco estados de falha tecnica REAL (nunca duvida do paciente) --
 // compartilham uma unica frase honesta, nunca expondo o motivo tecnico
 // bruto (specs/resposta-conversacional-v1.md secao 6).
 const RESPOSTA_FALHA_TECNICA_GENERICA = 'Tive um problema técnico agora. Pode tentar de novo em instantes?';
@@ -92,9 +92,8 @@ export function gerarRespostaPaciente(decisao: DecisaoOrquestrador): string {
       return 'Para confirmar esse agendamento, preciso completar seu cadastro antes. Pode me passar seu nome completo?';
     case 'sem_dentista_disponivel':
       return 'Não encontrei nenhum profissional disponível para esse atendimento. Posso verificar uma Consulta/Avaliação em vez disso?';
-    // --- Os seis estados de falha tecnica real (2026-08-06) ---
+    // --- Os cinco estados de falha tecnica real ---
     case 'clinica_sem_catalogo':
-    case 'erro_catalogo_procedimento':
     case 'erro_catalogo_dentista':
     case 'duracao_nao_configurada':
     case 'erro_configuracao_duracao':

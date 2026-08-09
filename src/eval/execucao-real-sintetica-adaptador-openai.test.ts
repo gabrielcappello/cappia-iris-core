@@ -77,7 +77,7 @@ function corpoEnvelopeValido(): Record<string, unknown> {
             text: JSON.stringify({
               alteracoes: [
                 { campo: 'intencao', acao: 'informar', valor: 'novo_agendamento' },
-                { campo: 'procedimento_texto', acao: 'informar', valor: 'Limpeza' },
+                { campo: 'procedimento_id', acao: 'informar', valor: 'Limpeza' },
                 { campo: 'data_texto', acao: 'informar', valor: 'Amanhã' },
                 { campo: 'periodo', acao: 'informar', valor: 'TARDE' },
               ],
@@ -482,7 +482,7 @@ test('validarConversao: exatamente os quatro campos esperados, informar, com tol
   const ok = validarConversao({
     alteracoes: {
       intencao: { acao: 'informar', valor: 'novo_agendamento' },
-      procedimento_texto: { acao: 'informar', valor: '  Limpeza  ' },
+      procedimento_id: { acao: 'informar', valor: '  Limpeza  ' },
       data_texto: { acao: 'informar', valor: 'AMANHÃ' },
       periodo: { acao: 'informar', valor: 'Tarde' },
     },
@@ -494,7 +494,7 @@ test('validarConversao: campo extra (ex.: nome) reprova', () => {
   const ok = validarConversao({
     alteracoes: {
       intencao: { acao: 'informar', valor: 'novo_agendamento' },
-      procedimento_texto: { acao: 'informar', valor: 'limpeza' },
+      procedimento_id: { acao: 'informar', valor: 'limpeza' },
       data_texto: { acao: 'informar', valor: 'amanhã' },
       periodo: { acao: 'informar', valor: 'tarde' },
       nome: { acao: 'informar', valor: 'Joao' },
@@ -507,7 +507,7 @@ test('validarConversao: campo ausente reprova', () => {
   const ok = validarConversao({
     alteracoes: {
       intencao: { acao: 'informar', valor: 'novo_agendamento' },
-      procedimento_texto: { acao: 'informar', valor: 'limpeza' },
+      procedimento_id: { acao: 'informar', valor: 'limpeza' },
       data_texto: { acao: 'informar', valor: 'amanhã' },
     },
   });
@@ -518,7 +518,7 @@ test('validarConversao: acao diferente de informar reprova', () => {
   const ok = validarConversao({
     alteracoes: {
       intencao: { acao: 'corrigir', valor: 'novo_agendamento' },
-      procedimento_texto: { acao: 'informar', valor: 'limpeza' },
+      procedimento_id: { acao: 'informar', valor: 'limpeza' },
       data_texto: { acao: 'informar', valor: 'amanhã' },
       periodo: { acao: 'informar', valor: 'tarde' },
     },
@@ -530,7 +530,7 @@ test('validarConversao: valor incompativel (mesmo apos normalizacao) reprova', (
   const ok = validarConversao({
     alteracoes: {
       intencao: { acao: 'informar', valor: 'cancelamento' },
-      procedimento_texto: { acao: 'informar', valor: 'limpeza' },
+      procedimento_id: { acao: 'informar', valor: 'limpeza' },
       data_texto: { acao: 'informar', valor: 'amanhã' },
       periodo: { acao: 'informar', valor: 'tarde' },
     },
@@ -623,7 +623,7 @@ test('executarUma: campo extra na saida do modelo reprova (aprovado=false, sem e
             text: JSON.stringify({
               alteracoes: [
                 { campo: 'intencao', acao: 'informar', valor: 'novo_agendamento' },
-                { campo: 'procedimento_texto', acao: 'informar', valor: 'limpeza' },
+                { campo: 'procedimento_id', acao: 'informar', valor: 'limpeza' },
                 { campo: 'data_texto', acao: 'informar', valor: 'amanhã' },
                 { campo: 'periodo', acao: 'informar', valor: 'tarde' },
                 { campo: 'nome', acao: 'informar', valor: 'Joao' },

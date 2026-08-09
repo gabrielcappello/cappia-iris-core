@@ -63,7 +63,7 @@ test('payload: horarios_oferecidos chega intacto e na ordem exata ate o corpo da
   const { fetchFalso, corpos } = criarFetchCaptor();
   await extrairAlteracoes(
     cliente(fetchFalso),
-    construirEntradaMinimizada(['15 hrs'], { procedimento_texto: 'limpeza', data_texto: 'hoje' }, [
+    construirEntradaMinimizada(['15 hrs'], { procedimento_id: 'cleaning', data_texto: 'hoje' }, [
       '13:00',
       '14:00',
       '15:00',
@@ -78,7 +78,7 @@ test('payload: a chave e OMITIDA (nao `null`, nao `[]`) quando nao ha snapshot',
   const { fetchFalso, corpos } = criarFetchCaptor();
   await extrairAlteracoes(
     cliente(fetchFalso),
-    construirEntradaMinimizada(['quero uma limpeza'], { procedimento_texto: 'limpeza' })
+    construirEntradaMinimizada(['quero uma limpeza'], { procedimento_id: 'cleaning' })
   );
 
   const payload = payloadEnviado(corpos[0]);
@@ -89,11 +89,11 @@ test('payload: o snapshot nunca contamina dados_atuais nem campos_cadastrais_pre
   const { fetchFalso, corpos } = criarFetchCaptor();
   await extrairAlteracoes(
     cliente(fetchFalso),
-    construirEntradaMinimizada(['o segundo'], { procedimento_texto: 'limpeza' }, ['13:00', '14:00'])
+    construirEntradaMinimizada(['o segundo'], { procedimento_id: 'cleaning' }, ['13:00', '14:00'])
   );
 
   const payload = payloadEnviado(corpos[0]);
-  assert.deepEqual(payload.dados_atuais, { procedimento_texto: 'limpeza' });
+  assert.deepEqual(payload.dados_atuais, { procedimento_id: 'cleaning' });
   assert.deepEqual(payload.campos_cadastrais_preenchidos, []);
 });
 
@@ -135,7 +135,7 @@ test('payload: proposta_pendente chega intacto ate o corpo da requisicao', async
   const { fetchFalso, corpos } = criarFetchCaptor();
   await extrairAlteracoes(
     cliente(fetchFalso),
-    construirEntradaMinimizada(['pode confirmar'], { procedimento_texto: 'limpeza' }, undefined, {
+    construirEntradaMinimizada(['pode confirmar'], { procedimento_id: 'cleaning' }, undefined, {
       data: '05/08',
       horario: '09:00',
     })
@@ -147,7 +147,7 @@ test('payload: proposta_pendente chega intacto ate o corpo da requisicao', async
 
 test('payload: proposta_pendente e OMITIDO (nao null) quando nao ha proposta em aberto', async () => {
   const { fetchFalso, corpos } = criarFetchCaptor();
-  await extrairAlteracoes(cliente(fetchFalso), construirEntradaMinimizada(['quero uma limpeza'], { procedimento_texto: 'limpeza' }));
+  await extrairAlteracoes(cliente(fetchFalso), construirEntradaMinimizada(['quero uma limpeza'], { procedimento_id: 'cleaning' }));
 
   const payload = payloadEnviado(corpos[0]);
   assert.equal('proposta_pendente' in payload, false);
@@ -157,7 +157,7 @@ test('payload: horarios_oferecidos e proposta_pendente convivem no mesmo payload
   const { fetchFalso, corpos } = criarFetchCaptor();
   await extrairAlteracoes(
     cliente(fetchFalso),
-    construirEntradaMinimizada(['13:00'], { procedimento_texto: 'limpeza' }, ['13:00', '14:00'], {
+    construirEntradaMinimizada(['13:00'], { procedimento_id: 'cleaning' }, ['13:00', '14:00'], {
       data: '05/08',
       horario: '13:00',
     })

@@ -79,7 +79,6 @@ export function derivarAcaoContextoHorarios(decisao: DecisaoOrquestrador): AcaoC
     case 'clinica_sem_catalogo':
     case 'desistencia':
     case 'aguardando_procedimento':
-    case 'erro_catalogo_procedimento':
     case 'aguardando_escolha_dentista':
     case 'sem_dentista_disponivel':
     case 'erro_catalogo_dentista':

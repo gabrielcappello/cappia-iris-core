@@ -82,12 +82,12 @@ test('teste1: uma entrada acrescenta varios campos juntos', async () => {
     ...contexto(conversa.id),
     alteracoes: {
       nome: { acao: 'informar', valor: 'Joao' },
-      procedimento_texto: { acao: 'informar', valor: 'limpeza' },
+      procedimento_id: { acao: 'informar', valor: 'limpeza' },
     },
   });
 
-  assert.deepEqual(resultado.dados, { nome: 'Joao', procedimento_texto: 'limpeza' });
-  assert.deepEqual(resultado.campos_adicionados.sort(), ['nome', 'procedimento_texto']);
+  assert.deepEqual(resultado.dados, { nome: 'Joao', procedimento_id: 'limpeza' });
+  assert.deepEqual(resultado.campos_adicionados.sort(), ['nome', 'procedimento_id']);
   assert.deepEqual(resultado.campos_corrigidos, []);
   assert.deepEqual(resultado.campos_removidos, []);
   assert.deepEqual(resultado.campos_preservados, []);
@@ -129,10 +129,10 @@ test('teste3: mensagens sucessivas acumulam dados', async () => {
   });
   const resultado = await aplicarDados(cliente, {
     ...contexto(conversa.id),
-    alteracoes: { procedimento_texto: { acao: 'informar', valor: 'limpeza' } },
+    alteracoes: { procedimento_id: { acao: 'informar', valor: 'limpeza' } },
   });
 
-  assert.deepEqual(resultado.dados, { nome: 'Joao', procedimento_texto: 'limpeza' });
+  assert.deepEqual(resultado.dados, { nome: 'Joao', procedimento_id: 'limpeza' });
 });
 
 test('teste4: campo ausente preserva o valor anterior e nao aparece nas listas', async () => {
@@ -142,7 +142,7 @@ test('teste4: campo ausente preserva o valor anterior e nao aparece nas listas',
 
   const resultado = await aplicarDados(cliente, {
     ...contexto(conversa.id),
-    alteracoes: { procedimento_texto: { acao: 'informar', valor: 'limpeza' } },
+    alteracoes: { procedimento_id: { acao: 'informar', valor: 'limpeza' } },
   });
 
   assert.equal(resultado.dados.nome, 'Joao');
@@ -185,7 +185,7 @@ test('teste6: informar valor diferente sem correcao nao substitui', async () => 
 
 test('teste7: correcao explicita substitui somente o campo indicado', async () => {
   const tabelas = criarTabelasFalsasVazias();
-  const conversa = semearEstado(tabelas, { nome: 'Joao', procedimento_texto: 'limpeza' });
+  const conversa = semearEstado(tabelas, { nome: 'Joao', procedimento_id: 'limpeza' });
   const cliente = new ClienteFalso(tabelas);
 
   const resultado = await aplicarDados(cliente, {
@@ -194,7 +194,7 @@ test('teste7: correcao explicita substitui somente o campo indicado', async () =
   });
 
   assert.equal(resultado.dados.nome, 'Maria');
-  assert.equal(resultado.dados.procedimento_texto, 'limpeza');
+  assert.equal(resultado.dados.procedimento_id, 'limpeza');
   assert.deepEqual(resultado.campos_corrigidos, ['nome']);
 });
 
@@ -215,7 +215,7 @@ test('teste8: remocao explicita remove somente o campo indicado', async () => {
 
 test('teste9: correcao preserva todos os demais dados', async () => {
   const tabelas = criarTabelasFalsasVazias();
-  const dadosIniciais = { nome: 'Joao', procedimento_texto: 'limpeza', periodo: 'manha', cpf: '11122233344' };
+  const dadosIniciais = { nome: 'Joao', procedimento_id: 'limpeza', periodo: 'manha', cpf: '11122233344' };
   const conversa = semearEstado(tabelas, { ...dadosIniciais });
   const cliente = new ClienteFalso(tabelas);
 
@@ -469,13 +469,13 @@ test('revisao11: duas chamadas concorrentes acrescentando campos diferentes pres
     aplicarDados(cliente, { ...contexto(conversa.id), alteracoes: { nome: { acao: 'informar', valor: 'Joao' } } }),
     aplicarDados(cliente, {
       ...contexto(conversa.id),
-      alteracoes: { procedimento_texto: { acao: 'informar', valor: 'limpeza' } },
+      alteracoes: { procedimento_id: { acao: 'informar', valor: 'limpeza' } },
     }),
   ]);
 
   assert.equal(resultadoA.conversa_id, conversa.id);
   assert.equal(resultadoB.conversa_id, conversa.id);
-  assert.deepEqual(tabelas.estado_conversa[0].dados, { nome: 'Joao', procedimento_texto: 'limpeza' });
+  assert.deepEqual(tabelas.estado_conversa[0].dados, { nome: 'Joao', procedimento_id: 'limpeza' });
 });
 
 test('revisao12: concorrencia no mesmo campo nao causa substituicao silenciosa', async () => {
