@@ -212,6 +212,26 @@ export interface SaidaInterpretacao {
    * normal da esmagadora maioria dos turnos.
    */
   eventos_candidatos: EventoCandidatoIA[];
+  /**
+   * Quem a interpretadora entendeu que o paciente quis dizer, ao mencionar um
+   * profissional (specs/dentista-semantico-v1.md secao 12). Resultado
+   * SEMANTICO da leitura da preferencia -- por isso campo raiz, e nao uma
+   * alteracao de dado.
+   *
+   * - `null`  -- o paciente NAO mencionou profissional;
+   * - `[]`    -- mencionou, e nenhum dentista real da clinica corresponde;
+   * - `[id]`  -- um candidato claro;
+   * - `[a,b]` -- varios plausiveis; a IA nao escolhe.
+   *
+   * `null` em vez de chave ausente porque o Structured Outputs estrito exige
+   * TODA propriedade raiz em `required` -- entao "ausente" precisa de um valor
+   * que o represente. E a unica excecao a convencao "ausente, nunca vazio" do
+   * projeto, e existe porque aqui `[]` e `null` significam coisas diferentes.
+   *
+   * Quem conta e decide e o Core; a IA nunca escolhe entre candidatos nem
+   * emite `dentista_id`.
+   */
+  dentistas_candidatos: string[] | null;
 }
 
 // Dependencia injetavel de modelo estruturado.
@@ -236,4 +256,14 @@ export interface ResultadoInterpretacao {
   alteracoes_aplicaveis: AlteracoesDados;
   conflitos: Conflito[];
   aplicacao: ResultadoAplicarDados | null;
+  /**
+   * Candidatos a dentista lidos pela IA nesta mensagem
+   * (specs/dentista-semantico-v1.md secao 12), repassados ao orquestrador
+   * para a regra de contagem. `null` = o paciente nao mencionou profissional.
+   *
+   * Quando ha exatamente UM candidato, ele ja foi persistido em
+   * `dados.dentista_id` por este modulo -- o orquestrador nao precisa fazer
+   * nada. Os casos `[]` e `[varios]` e que viram decisao la.
+   */
+  dentistas_candidatos: string[] | null;
 }

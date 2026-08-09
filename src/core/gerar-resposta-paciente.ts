@@ -82,12 +82,22 @@ export function gerarRespostaPaciente(decisao: DecisaoOrquestrador): string {
     case 'aguardando_data_horario':
       return respostaAguardandoDataHorario(decisao.resultado);
     // --- Os tres estados de conversa normal (2026-08-06) ---
-    case 'aguardando_escolha_dentista':
+    case 'aguardando_escolha_dentista': {
       // dentistas ja vem com nome_exibido (dentista-tipos.ts) -- dado de
       // catalogo, nunca PII do paciente.
-      return `Encontrei mais de um profissional para esse atendimento: ${decisao.dentistas
-        .map((d) => d.nome_exibido)
-        .join(', ')}. Qual você prefere?`;
+      const nomes = decisao.dentistas.map((d) => d.nome_exibido).join(', ');
+      // Fallback deterministico: nao repete o nome que o paciente usou (o
+      // Core nao o transporta). A redatora, que recebe a mensagem crua, faz
+      // isso melhor -- aqui basta ser honesto e util.
+      if (decisao.preferencia_nao_localizada === true) {
+        return decisao.dentistas.length === 1
+          ? `Não encontrei esse profissional aqui. Para esse atendimento temos ${nomes}. Pode ser com ele?`
+          : `Não encontrei esse profissional aqui. Para esse atendimento temos: ${nomes}. Qual você prefere?`;
+      }
+      return decisao.dentistas.length === 1
+        ? `Para esse atendimento temos ${nomes}. Pode ser com ele?`
+        : `Encontrei mais de um profissional para esse atendimento: ${nomes}. Qual você prefere?`;
+    }
     case 'cadastro_necessario':
       return 'Para confirmar esse agendamento, preciso completar seu cadastro antes. Pode me passar seu nome completo?';
     case 'sem_dentista_disponivel':

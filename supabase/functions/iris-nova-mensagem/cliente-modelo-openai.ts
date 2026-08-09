@@ -7,7 +7,7 @@
 //
 // Este arquivo NAO e chamado por nenhum fluxo de producao ainda -- nao ha
 // integracao com interpretarEAplicar nem com a Edge Function nesta etapa.
-import { ACOES_PERMITIDAS, CAMPOS_PERMITIDOS } from './aplicar-dados.ts';
+import { ACOES_PERMITIDAS, CAMPOS_EMITIVEIS_PELA_IA, CAMPOS_PERMITIDOS } from './aplicar-dados.ts';
 import { NATUREZAS_MENSAGEM_PERMITIDAS, TIPOS_EVENTO_CANDIDATO_PERMITIDOS } from './interpretacao-tipos.ts';
 import type {
   ClienteModeloEstruturado,
@@ -46,22 +46,12 @@ const SCHEMA_PORTATIL_APROVADO = {
         properties: {
           campo: {
             type: 'string',
-            enum: [
-              'intencao',
-              // Lista DUPLICADA de CAMPOS_PERMITIDOS de proposito (schema
-              // portatil estatico, ver cabecalho) -- trocar la sem trocar
-              // aqui faz o modelo continuar obrigado ao campo antigo.
-              'procedimento_id',
-              'dentista_id',
-              'data_texto',
-              'periodo',
-              'horario_texto',
-              'confirmacao',
-              'nome',
-              'cpf',
-              'data_nascimento',
-              'email',
-            ],
+            // DERIVADO de CAMPOS_EMITIVEIS_PELA_IA, nunca uma segunda lista
+            // escrita a mao (2026-08-09): duas listas manuais divergiriam em
+            // silencio no primeiro campo novo que alguem esquecesse de
+            // espelhar -- e ja aconteceu neste arquivo. `dentista_id` fica de
+            // fora por construcao: so o Core o escreve.
+            enum: [...CAMPOS_EMITIVEIS_PELA_IA],
           },
           acao: {
             type: 'string',
@@ -91,8 +81,17 @@ const SCHEMA_PORTATIL_APROVADO = {
         additionalProperties: false,
       },
     },
+    // Quarto campo raiz (specs/dentista-semantico-v1.md secao 12). `null` = o
+    // paciente nao mencionou profissional; `[]` = mencionou e nenhum
+    // corresponde -- os dois significam coisas diferentes, por isso nullable
+    // em vez de opcional (o Structured Outputs estrito exige toda propriedade
+    // raiz em `required`, entao "ausente" precisa de um valor que o represente).
+    dentistas_candidatos: {
+      type: ['array', 'null'],
+      items: { type: 'string' },
+    },
   },
-  required: ['natureza_mensagem', 'alteracoes', 'eventos_candidatos'],
+  required: ['natureza_mensagem', 'alteracoes', 'eventos_candidatos', 'dentistas_candidatos'],
   additionalProperties: false,
 } as const;
 
@@ -558,7 +557,12 @@ function classificarEConverter(
   tentativa: number,
   duracao: () => number,
   modelo: string
-): { natureza_mensagem: NaturezaMensagem; alteracoes: AlteracoesDados; eventos_candidatos: EventoCandidatoIA[] } {
+): {
+  natureza_mensagem: NaturezaMensagem;
+  alteracoes: AlteracoesDados;
+  eventos_candidatos: EventoCandidatoIA[];
+  dentistas_candidatos: string[] | null;
+} {
   if (textoCorpo === '') {
     // Corpo HTTP com zero bytes: unico caso, junto com output_text vazio
     // mais abaixo, classificado como resposta_vazia (repetivel).
@@ -667,18 +671,23 @@ function classificarEConverter(
   let naturezaMensagem: NaturezaMensagem;
   let alteracoesInternas: AlteracoesDados;
   let eventosCandidatos: EventoCandidatoIA[];
+  let dentistasCandidatos: string[] | null;
   try {
     if (objetoPortatil === null || typeof objetoPortatil !== 'object' || Array.isArray(objetoPortatil)) {
       throw new ErroConversaoPortatil('raiz_invalida');
     }
     const chavesRaizPortatil = Object.keys(objetoPortatil as Record<string, unknown>).sort();
-    if (JSON.stringify(chavesRaizPortatil) !== JSON.stringify(['alteracoes', 'eventos_candidatos', 'natureza_mensagem'])) {
+    if (
+      JSON.stringify(chavesRaizPortatil) !==
+      JSON.stringify(['alteracoes', 'dentistas_candidatos', 'eventos_candidatos', 'natureza_mensagem'])
+    ) {
       throw new ErroConversaoPortatil('propriedade_extra');
     }
-    const { natureza_mensagem, alteracoes, eventos_candidatos } = objetoPortatil as {
+    const { natureza_mensagem, alteracoes, eventos_candidatos, dentistas_candidatos } = objetoPortatil as {
       natureza_mensagem: unknown;
       alteracoes: unknown;
       eventos_candidatos: unknown;
+      dentistas_candidatos: unknown;
     };
     if (typeof natureza_mensagem !== 'string' || !NATUREZAS_MENSAGEM_PERMITIDAS.includes(natureza_mensagem as NaturezaMensagem)) {
       throw new ErroConversaoPortatil('natureza_mensagem_invalida');
@@ -686,12 +695,40 @@ function classificarEConverter(
     naturezaMensagem = natureza_mensagem as NaturezaMensagem;
     alteracoesInternas = converterParaContratoInterno({ alteracoes });
     eventosCandidatos = converterEventosCandidatos(eventos_candidatos);
+    dentistasCandidatos = converterDentistasCandidatos(dentistas_candidatos);
   } catch (erroConversao) {
     const codigo = erroConversao instanceof ErroConversaoPortatil ? erroConversao.codigo : 'objeto_portatil_invalido';
     throw new ErroClienteModeloOpenAI('resposta_invalida', codigo, tentativa, duracao(), modelo, statusHttpResposta);
   }
 
-  return { natureza_mensagem: naturezaMensagem, alteracoes: alteracoesInternas, eventos_candidatos: eventosCandidatos };
+  return {
+    natureza_mensagem: naturezaMensagem,
+    alteracoes: alteracoesInternas,
+    eventos_candidatos: eventosCandidatos,
+    dentistas_candidatos: dentistasCandidatos,
+  };
+}
+
+/**
+ * `dentistas_candidatos` vindo do modelo: `null` ou array de ids nao vazios.
+ * Ids repetidos invalidam a resposta -- a lista representa candidatos
+ * DISTINTOS, e uma repeticao indicaria que o modelo nao entendeu o contrato.
+ * Nao confere se o id existe no catalogo: isso e integridade, e o Core faz
+ * depois.
+ */
+export function converterDentistasCandidatos(valor: unknown): string[] | null {
+  if (valor === null) return null;
+  if (!Array.isArray(valor)) throw new ErroConversaoPortatil('dentistas_candidatos_invalido');
+
+  const vistos = new Set<string>();
+  for (const id of valor) {
+    if (typeof id !== 'string' || id.trim() === '') {
+      throw new ErroConversaoPortatil('dentistas_candidatos_invalido');
+    }
+    if (vistos.has(id)) throw new ErroConversaoPortatil('dentistas_candidatos_invalido');
+    vistos.add(id);
+  }
+  return [...valor];
 }
 
 /**

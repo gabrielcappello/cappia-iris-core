@@ -23,9 +23,10 @@ test('teste2: varios campos em uma saida valida sao aceitos', async () => {
       cpf: { acao: 'informar', valor: '11122233344' },
       periodo: { acao: 'informar', valor: 'manha' },
     },
-    // Campo raiz obrigatorio desde 2026-08-09 -- declarado aqui porque este
+    // Campos raiz obrigatorios desde 2026-08-09 -- declarados aqui porque este
     // teste compara o resultado com a fixture inteira, por identidade.
     eventos_candidatos: [],
+    dentistas_candidatos: null,
   };
   const cliente = new ClienteModeloFalso([saida]);
 
@@ -68,9 +69,9 @@ test('teste4: duvida entre dois dentistas omite dentista_id, nunca produz um val
   assert.equal(resultado.alteracoes.dentista_id, undefined);
 });
 
-test('teste4b: dentista_id escolhido da lista atravessa a validacao intacto', async () => {
+test('teste4b: um candidato claro atravessa a validacao em dentistas_candidatos', async () => {
   const cliente = new ClienteModeloFalso([
-    { natureza_mensagem: 'pedido', alteracoes: { dentista_id: { acao: 'informar', valor: 'dent-ana' } } },
+    { natureza_mensagem: 'pedido', alteracoes: {}, dentistas_candidatos: ['dent-ana'] },
   ]);
 
   const resultado = await extrairAlteracoes(cliente, {
@@ -80,7 +81,74 @@ test('teste4b: dentista_id escolhido da lista atravessa a validacao intacto', as
     dentistas_disponiveis: [{ dentista_id: 'dent-ana', nome_exibido: 'Dra. Ana Souza' }],
   });
 
-  assert.equal(resultado.alteracoes.dentista_id?.valor, 'dent-ana');
+  assert.deepEqual(resultado.dentistas_candidatos, ['dent-ana']);
+  // A IA nunca escreve o campo -- quem persiste e o Core
+  // (specs/dentista-semantico-v1.md secao 12).
+  assert.equal(resultado.alteracoes.dentista_id, undefined);
+});
+
+test('teste4c: a IA nao pode EMITIR dentista_id -- a saida inteira e invalida', async () => {
+  // Guarda de regressao da propria assimetria: `dentista_id` continua
+  // persistivel pelo Core, mas saiu de CAMPOS_EMITIVEIS_PELA_IA.
+  const cliente = new ClienteModeloFalso([
+    { natureza_mensagem: 'pedido', alteracoes: { dentista_id: { acao: 'informar', valor: 'dent-ana' } } },
+  ]);
+
+  await assert.rejects(
+    () =>
+      extrairAlteracoes(cliente, {
+        mensagens_atuais: ['quero com a Ana'],
+        dados_atuais: {},
+        campos_cadastrais_preenchidos: [],
+        dentistas_disponiveis: [{ dentista_id: 'dent-ana', nome_exibido: 'Dra. Ana Souza' }],
+      }),
+    InterpretacaoInvalidaError
+  );
+});
+
+test('teste4d: varios candidatos plausiveis atravessam intactos -- a IA nao escolhe', async () => {
+  const cliente = new ClienteModeloFalso([
+    { natureza_mensagem: 'pedido', alteracoes: {}, dentistas_candidatos: ['dent-lapa', 'dent-gomes'] },
+  ]);
+
+  const resultado = await extrairAlteracoes(cliente, {
+    mensagens_atuais: ['quero com a Vanessa'],
+    dados_atuais: {},
+    campos_cadastrais_preenchidos: [],
+    dentistas_disponiveis: [
+      { dentista_id: 'dent-lapa', nome_exibido: 'Dra. Vanessa Lapa' },
+      { dentista_id: 'dent-gomes', nome_exibido: 'Dra. Vanessa Gomes' },
+    ],
+  });
+
+  assert.deepEqual(resultado.dentistas_candidatos, ['dent-lapa', 'dent-gomes']);
+});
+
+test('teste4e: lista vazia e valida e DIFERENTE de null -- mencionou, nenhum corresponde', async () => {
+  const cliente = new ClienteModeloFalso([
+    { natureza_mensagem: 'pedido', alteracoes: {}, dentistas_candidatos: [] },
+  ]);
+
+  const resultado = await extrairAlteracoes(cliente, {
+    mensagens_atuais: ['quero com a Dra. Beatriz'],
+    dados_atuais: {},
+    campos_cadastrais_preenchidos: [],
+    dentistas_disponiveis: [{ dentista_id: 'dent-ana', nome_exibido: 'Dra. Ana Souza' }],
+  });
+
+  assert.deepEqual(resultado.dentistas_candidatos, []);
+  assert.notEqual(resultado.dentistas_candidatos, null);
+});
+
+test('teste4f: candidato repetido invalida a saida inteira', async () => {
+  const cliente = new ClienteModeloFalso([
+    { natureza_mensagem: 'pedido', alteracoes: {}, dentistas_candidatos: ['dent-ana', 'dent-ana'] },
+  ]);
+
+  await assert.rejects(
+    () => extrairAlteracoes(cliente, { mensagens_atuais: ['oi'], dados_atuais: {}, campos_cadastrais_preenchidos: [] }),
+    InterpretacaoInvalidaError
+  );
 });
 
 test('teste15: duvida real gera alteracoes vazio, que e uma saida valida', async () => {

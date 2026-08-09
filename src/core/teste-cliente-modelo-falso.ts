@@ -9,7 +9,8 @@ export interface ChamadaModeloFalso {
 }
 
 /**
- * `eventos_candidatos` passou a ser campo raiz OBRIGATORIO em 2026-08-09
+ * `eventos_candidatos` e `dentistas_candidatos` sao campos raiz OBRIGATORIOS
+ * desde 2026-08-09
  * (specs/eventos-conversacionais-v1.md, fatia minima). O modelo real SEMPRE o
  * devolve -- o schema estrito o exige --, entao um dublê que o preenche
  * quando a fixture nao se importa com eventos e MAIS fiel a producao, nao
@@ -23,8 +24,14 @@ export interface ChamadaModeloFalso {
 function completarEventosCandidatos(resposta: unknown): unknown {
   if (resposta === null || typeof resposta !== 'object' || Array.isArray(resposta)) return resposta;
   const objeto = resposta as Record<string, unknown>;
-  if (!('natureza_mensagem' in objeto) || 'eventos_candidatos' in objeto) return resposta;
-  return { ...objeto, eventos_candidatos: [] };
+  if (!('natureza_mensagem' in objeto)) return resposta;
+  return {
+    ...objeto,
+    ...('eventos_candidatos' in objeto ? {} : { eventos_candidatos: [] }),
+    // `null` = o paciente nao mencionou profissional -- o default correto
+    // para toda fixture que nao trata de dentista.
+    ...('dentistas_candidatos' in objeto ? {} : { dentistas_candidatos: null }),
+  };
 }
 
 // Devolve respostas pre-definidas, uma por chamada (a ultima e repetida se

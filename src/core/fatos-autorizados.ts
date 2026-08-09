@@ -85,6 +85,17 @@ export interface FatosAutorizados {
    * alternativa a propor (specs/contexto-pendente-interpretacao-v1.md secao 11).
    */
   avaliacao_oferecida?: true;
+  /**
+   * O paciente mencionou um profissional que nao existe nesta clinica
+   * (specs/dentista-semantico-v1.md secao 12). A redatora deve dizer isso
+   * antes de apresentar `dentistas_candidatos` -- que, neste caso, sao os
+   * APTOS reais, nao os mencionados.
+   *
+   * O Core nao transporta o nome que o paciente usou: ele esta na mensagem
+   * crua, que a redatora ja tem. Inventar um campo para isso seria duplicar
+   * dado que ja atravessa.
+   */
+  preferencia_nao_localizada?: true;
   data_referencia?: string;
   horarios_disponiveis?: string[];
   agendamento_confirmado?: { data: string; horario: string };
@@ -152,6 +163,11 @@ function derivarPorDecisao(decisao: DecisaoOrquestrador): FatosAutorizados {
       return {
         objetivo: 'escolher_entre_dentistas',
         dentistas_candidatos: decisao.dentistas.map((d) => d.nome_exibido),
+        // Derivado pelo Core a partir de `dentistas_candidatos: []`
+        // (specs/dentista-semantico-v1.md secao 12) -- nunca um sinal proprio
+        // da IA. So diz "o profissional mencionado nao existe aqui"; QUEM ele
+        // mencionou esta na mensagem crua, que a redatora ja recebe.
+        ...(decisao.preferencia_nao_localizada === true ? { preferencia_nao_localizada: true as const } : {}),
       };
 
     case 'sem_dentista_disponivel':

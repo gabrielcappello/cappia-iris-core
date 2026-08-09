@@ -81,7 +81,26 @@ export type DecisaoOrquestrador =
   // transportar. `erro_catalogo_procedimento` foi REMOVIDO junto: sem
   // aliases, nao existe alias ambiguo/orfao/de outra clinica a reportar.
   | { tipo: 'aguardando_procedimento' }
-  | { tipo: 'aguardando_escolha_dentista'; dentistas: readonly DentistaApto[] }
+  // `dentistas` sao os candidatos a apresentar -- NAO necessariamente todos os
+  // aptos (specs/dentista-semantico-v1.md secao 12):
+  //
+  // - varios candidatos plausiveis ("a Vanessa", com duas Vanessas): sao SO
+  //   esses, sem filtro de aptidao. Filtrar removeria justamente quem o
+  //   paciente pediu; o turno seguinte resolve para um e a regra de vinculo
+  //   (CASO 2) roda normalmente;
+  // - `preferencia_nao_localizada`: o paciente mencionou alguem que nao existe
+  //   na clinica, entao `dentistas` traz os APTOS reais e a resposta comeca
+  //   dizendo que nao encontrou quem ele pediu;
+  // - sem preferencia e varios aptos: os aptos, como sempre.
+  //
+  // Pode carregar UM unico elemento (antes so ocorria com >= 2) -- e o caso
+  // "nao encontrei a Dra. Beatriz; temos o Dr. Carlos Turiak, pode ser com
+  // ele?", que e honesto e nao existia antes.
+  | {
+      tipo: 'aguardando_escolha_dentista';
+      dentistas: readonly DentistaApto[];
+      preferencia_nao_localizada?: true;
+    }
   // `procedimento_oferecido` presente = a Iris esta de fato oferecendo esse
   // procedimento como alternativa, e a resposta pode fazer essa pergunta
   // (specs/contexto-pendente-interpretacao-v1.md secao 11). So vem preenchido

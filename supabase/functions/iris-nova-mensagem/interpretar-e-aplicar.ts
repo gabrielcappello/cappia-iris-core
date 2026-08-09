@@ -124,6 +124,42 @@ function aplicarAceitacaoDeOferta(
   };
 }
 
+/**
+ * Persiste `dentista_id` quando -- e somente quando -- a IA identificou
+ * exatamente UM candidato (specs/dentista-semantico-v1.md secao 12).
+ *
+ * `null` (nao mencionou), `[]` (mencionou e nenhum corresponde) e varios
+ * candidatos NAO escrevem nada: os dois ultimos viram pergunta ao paciente,
+ * no orquestrador. Escrever qualquer coisa neles seria escolher por ele.
+ *
+ * A ACAO e decidida aqui, nunca pela IA: `corrigir` quando ja havia outro
+ * dentista, `informar` quando nao havia -- mesma disciplina de
+ * `aplicarAceitacaoDeOferta`, pelo mesmo motivo (um `informar` sobre campo ja
+ * preenchido vira conflito em `preAplicar` e some em silencio).
+ *
+ * A integridade do id (existe, e da clinica, esta ativo, tem vinculo) NAO e
+ * conferida aqui: isso e do orquestrador, que tem o catalogo. Mesmo criterio
+ * de quando a IA emitia `dentista_id` diretamente.
+ */
+function aplicarCandidatoUnicoDeDentista(
+  alteracoes: AlteracoesDados,
+  candidatos: string[] | null,
+  snapshotOficial: SnapshotOficialConversa
+): AlteracoesDados {
+  if (candidatos === null || candidatos.length !== 1) return alteracoes;
+
+  const escolhido = candidatos[0];
+  const jaTemOutro =
+    typeof snapshotOficial.dentista_id === 'string' &&
+    snapshotOficial.dentista_id.trim() !== '' &&
+    snapshotOficial.dentista_id !== escolhido;
+
+  return {
+    ...alteracoes,
+    dentista_id: { acao: jaTemOutro ? 'corrigir' : 'informar', valor: escolhido },
+  };
+}
+
 const CHAVES_ENTRADA_INTEGRADA = ['conversa_id', 'clinica_id', 'telefone_normalizado', 'mensagens_atuais'] as const;
 const CHAVES_OPCIONAIS_INTEGRADA = [
   'horarios_oferecidos',
@@ -206,8 +242,19 @@ export async function interpretarEAplicar(
     snapshotOficial
   );
 
+  // 5c. CANDIDATO UNICO DE DENTISTA -- quem escreve `dentista_id` e o Core
+  // (specs/dentista-semantico-v1.md secao 12). A IA nao emite esse campo: ela
+  // devolve `dentistas_candidatos`, e so o caso de UM candidato vira dado
+  // persistido aqui. Zero e varios nao escrevem nada -- viram decisao no
+  // orquestrador, que precisa perguntar ao paciente antes de haver escolha.
+  const alteracoesFinais = aplicarCandidatoUnicoDeDentista(
+    alteracoesComOferta,
+    saida.dentistas_candidatos,
+    snapshotOficial
+  );
+
   // 6. pre-aplicacao deterministica usando o mesmo snapshot.
-  const preAplicacao = preAplicar(snapshotOficial, alteracoesComOferta);
+  const preAplicacao = preAplicar(snapshotOficial, alteracoesFinais);
   const conflitos: Conflito[] = [...preAplicacao.conflitos];
   let alteracoesAplicaveis = { ...preAplicacao.alteracoes_aplicaveis };
 
@@ -257,6 +304,7 @@ export async function interpretarEAplicar(
     alteracoes_aplicaveis: alteracoesAplicaveis,
     conflitos,
     aplicacao,
+    dentistas_candidatos: saida.dentistas_candidatos,
   };
 }
 

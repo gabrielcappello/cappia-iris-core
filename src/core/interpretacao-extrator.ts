@@ -1,4 +1,11 @@
-import { ACOES_PERMITIDAS, CAMPOS_PERMITIDOS, CONFIRMACOES_PERMITIDAS, INTENCOES_PERMITIDAS, PERIODOS_PERMITIDOS } from './aplicar-dados.ts';
+import {
+  ACOES_PERMITIDAS,
+  CAMPOS_EMITIVEIS_PELA_IA,
+  CAMPOS_PERMITIDOS,
+  CONFIRMACOES_PERMITIDAS,
+  INTENCOES_PERMITIDAS,
+  PERIODOS_PERMITIDOS,
+} from './aplicar-dados.ts';
 import { EntradaInvalidaError, InterpretacaoInvalidaError } from './erros.ts';
 import { INSTRUCOES_EXTRATOR, SCHEMA_SAIDA_INTERPRETACAO } from './interpretacao-instrucoes.ts';
 import {
@@ -484,16 +491,25 @@ export function validarSaidaInterpretacao(saida: unknown): asserts saida is Said
   }
 
   const chavesNivelPrincipal = Object.keys(saida as Record<string, unknown>);
-  if (!mesmasChaves(chavesNivelPrincipal, ['natureza_mensagem', 'alteracoes', 'eventos_candidatos'])) {
+  if (
+    !mesmasChaves(chavesNivelPrincipal, [
+      'natureza_mensagem',
+      'alteracoes',
+      'eventos_candidatos',
+      'dentistas_candidatos',
+    ])
+  ) {
     throw new InterpretacaoInvalidaError('propriedade_extra', 'saida');
   }
 
-  const { natureza_mensagem, alteracoes, eventos_candidatos } = saida as {
+  const { natureza_mensagem, alteracoes, eventos_candidatos, dentistas_candidatos } = saida as {
     natureza_mensagem: unknown;
     alteracoes: unknown;
     eventos_candidatos: unknown;
+    dentistas_candidatos: unknown;
   };
   validarEventosCandidatos(eventos_candidatos);
+  validarDentistasCandidatos(dentistas_candidatos);
   if (
     typeof natureza_mensagem !== 'string' ||
     !NATUREZAS_MENSAGEM_PERMITIDAS.includes(natureza_mensagem as NaturezaMensagem)
@@ -508,7 +524,10 @@ export function validarSaidaInterpretacao(saida: unknown): asserts saida is Said
     // A chave bruta `campo` nunca deve aparecer em nenhum erro: se ela nao
     // for um dos dez campos canonicos (fixos, sem PII), usamos um caminho
     // generico em vez de interpolar o nome recebido do modelo.
-    if (!CAMPOS_PERMITIDOS.includes(campo as CampoDadosConversa)) {
+    // CAMPOS_EMITIVEIS_PELA_IA, nao CAMPOS_PERMITIDOS: `dentista_id` continua
+    // persistivel, mas so o Core o escreve (specs/dentista-semantico-v1.md
+    // secao 12). Se a IA o emitir, a saida inteira e invalida.
+    if (!CAMPOS_EMITIVEIS_PELA_IA.includes(campo as CampoDadosConversa)) {
       throw new InterpretacaoInvalidaError('campo_desconhecido', 'saida.alteracoes.campo_desconhecido');
     }
 
@@ -581,6 +600,29 @@ export function validarEventosCandidatos(valor: unknown): asserts valor is Event
       throw new InterpretacaoInvalidaError('evento_repetido', 'saida.eventos_candidatos');
     }
     vistos.add(tipo);
+  }
+}
+
+/**
+ * `dentistas_candidatos` (specs/dentista-semantico-v1.md secao 12).
+ * `null` (nao mencionou) ou array de ids nao vazios e distintos -- inclusive
+ * `[]`, que significa "mencionou e nenhum corresponde". Nao confere se o id
+ * existe no catalogo: isso e integridade, conferida depois pelo Core.
+ */
+export function validarDentistasCandidatos(valor: unknown): asserts valor is string[] | null {
+  if (valor === null) return;
+  if (!Array.isArray(valor)) {
+    throw new InterpretacaoInvalidaError('dentistas_candidatos_invalido', 'saida.dentistas_candidatos');
+  }
+  const vistos = new Set<string>();
+  for (const id of valor) {
+    if (typeof id !== 'string' || id.trim() === '') {
+      throw new InterpretacaoInvalidaError('valor_invalido', 'saida.dentistas_candidatos');
+    }
+    if (vistos.has(id)) {
+      throw new InterpretacaoInvalidaError('candidato_repetido', 'saida.dentistas_candidatos');
+    }
+    vistos.add(id);
   }
 }
 

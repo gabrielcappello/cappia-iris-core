@@ -180,7 +180,8 @@ export async function processarMensagem(
     entrada.telefone_normalizado,
     dados,
     catalogoCarregado.catalogo,
-    entrada.instante_atual
+    entrada.instante_atual,
+    interpretacao.dentistas_candidatos
   );
 
   return await finalizar(resultadoDecisao.decisao, resultadoDecisao.substituicao);
@@ -245,7 +246,8 @@ async function decidir(
   telefoneNormalizado: string,
   dados: Record<string, string | undefined>,
   catalogo: CatalogoClinica,
-  instanteAtual: InstanteAtual
+  instanteAtual: InstanteAtual,
+  dentistasCandidatos: string[] | null
 ): Promise<{ decisao: DecisaoOrquestrador; substituicao?: { dentista_nome_exibido: string } }> {
   // INTEGRIDADE, NUNCA INTERPRETACAO (specs/procedimento-semantico-v1.md
   // secao 4). Quem entendeu o pedido do paciente foi a IA, que devolveu um
@@ -265,10 +267,22 @@ async function decidir(
     return { decisao: { tipo: 'aguardando_procedimento' } };
   }
 
+  // REGRA DE CONTAGEM DOS CANDIDATOS (specs/dentista-semantico-v1.md secao
+  // 12). Vem ANTES da resolucao normal porque `varios` e `nenhum` sao
+  // perguntas ao paciente -- nao ha escolha a validar ainda, e um
+  // `dados.dentista_id` antigo nao pode prevalecer sobre a mencao atual.
+  //
+  // O caso de UM candidato nao aparece aqui: ele ja foi persistido em
+  // `dados.dentista_id` por interpretar-e-aplicar.ts, e segue pelo CASO 2 de
+  // sempre, logo abaixo, sem uma linha de mudanca.
+  const analise = analisarCandidatos(clinicaId, procedimento.procedimento_id, dentistasCandidatos, catalogo);
+  if ('decisao' in analise) return { decisao: analise.decisao };
+
   const resolucaoDentista = resolverDentistaEProcedimento(
     clinicaId,
     procedimento.procedimento_id,
-    dados.dentista_id,
+    // A mencao ATUAL prevalece sobre um dentista escolhido em turno anterior.
+    analise.dentistaId ?? dados.dentista_id,
     catalogo
   );
   if ('decisaoAntecipada' in resolucaoDentista) return { decisao: resolucaoDentista.decisaoAntecipada };
@@ -484,6 +498,78 @@ function derivarModoConsulta(resultado: ResolucaoTemporalOficial): ModoConsulta 
  * "Consulta / Planejamento", "Consulta ortodontia").
  */
 export const CONSULTA_AVALIACAO_ID = 'consultation_evaluation';
+
+/**
+ * Regra de contagem de `dentistas_candidatos` (specs/dentista-semantico-v1.md
+ * secao 12). Uma regra, quatro entradas.
+ *
+ * | Entrada | Aqui |
+ * |---|---|
+ * | `null` (nao mencionou) | segue sem preferencia nova -- vale o que ja estava em `dados` |
+ * | um candidato valido | e a preferencia deste turno |
+ * | varios validos | pergunta, apresentando SO esses |
+ * | `[]` (nenhum corresponde) | pergunta, apresentando os APTOS reais, avisando que nao localizou |
+ *
+ * Os candidatos NAO sao filtrados por aptidao: filtrar removeria justamente
+ * quem o paciente pediu -- o defeito que esta spec eliminou. So a INTEGRIDADE
+ * e conferida (existe, e da clinica, esta ativo). O turno seguinte resolve
+ * para um e a regra de vinculo (CASO 2) roda normalmente, inclusive a
+ * substituicao por avaliacao.
+ *
+ * Candidatos que nao sobrevivem a integridade simplesmente somem. Se nenhum
+ * sobreviver, isso NAO vira "nao localizei" -- vira ausencia de preferencia,
+ * mesma disciplina de um `procedimento_id` invalido: e falha de integridade
+ * do que a IA devolveu, nao uma afirmacao sobre o que o paciente disse. So o
+ * `[]` EXPLICITO significa "mencionou e nenhum corresponde".
+ */
+function analisarCandidatos(
+  clinicaId: string,
+  procedimentoId: string,
+  candidatos: string[] | null,
+  catalogo: CatalogoClinica
+): { decisao: DecisaoOrquestrador } | { dentistaId: string | undefined } {
+  if (candidatos === null) return { dentistaId: undefined };
+
+  if (candidatos.length > 0) {
+    const plausiveis = candidatos
+      .map((id) => catalogo.dentistas.find((d) => d.dentista_id === id && d.clinica_id === clinicaId && d.ativo))
+      .filter((d) => d !== undefined)
+      .map((d) => ({ dentista_id: d.dentista_id, clinica_id: d.clinica_id, nome_exibido: d.nome_exibido }));
+
+    if (plausiveis.length > 1) return { decisao: { tipo: 'aguardando_escolha_dentista', dentistas: plausiveis } };
+    if (plausiveis.length === 1) return { dentistaId: plausiveis[0].dentista_id };
+    return { dentistaId: undefined }; // nenhum sobreviveu a integridade
+  }
+
+  // `[]` EXPLICITO -- o paciente mencionou alguem que nao existe na clinica.
+  const aptos = resolverDentista({
+    clinica_id: clinicaId,
+    procedimento_id: procedimentoId,
+    dentistas: catalogo.dentistas,
+    vinculos: catalogo.vinculos,
+  });
+  if (aptos.tipo === 'um_apto') {
+    return {
+      decisao: {
+        tipo: 'aguardando_escolha_dentista',
+        dentistas: [aptos.dentista],
+        preferencia_nao_localizada: true,
+      },
+    };
+  }
+  if (aptos.tipo === 'varios_aptos') {
+    return {
+      decisao: { tipo: 'aguardando_escolha_dentista', dentistas: aptos.dentistas, preferencia_nao_localizada: true },
+    };
+  }
+  if (aptos.tipo === 'erro_catalogo') return { decisao: { tipo: 'erro_catalogo_dentista', resultado: aptos } };
+  return {
+    decisao: {
+      tipo: 'sem_dentista_disponivel',
+      ...(avaliacaoOferecivel(clinicaId, procedimentoId, catalogo) ? { procedimento_oferecido: CONSULTA_AVALIACAO_ID } : {}),
+    },
+  };
+}
 
 type ResolucaoDentistaProcedimento =
   | { decisaoAntecipada: DecisaoOrquestrador }

@@ -418,3 +418,97 @@ dentista e são recomeçadas. Todo o ambiente é de teste, então o custo é zer
 - `aceitar_qualquer_profissional` — permanece dormente; ausência de preferência continua
   não equivalendo a essa autorização (`dentistas-vinculos-v1.md` §4, preservado).
 - Cancelamento, remarcação, avaliação como etapa de plano de tratamento.
+
+---
+
+## 12. Correlação com vários candidatos plausíveis — CONTRATO FECHADO (2026-08-09)
+
+**Aprovado pelo Gabriel em 2026-08-09. Especificado, não implementado.**
+
+### Por que o canal atual não serve
+
+A IA expressa a preferência por um campo escalar, `dentista_id?: string`. Ele sabe dizer
+"é este" ou nada — e o *nada* carrega três situações distintas.
+
+| Caso | Frequência | Representável hoje? |
+|---|---|---|
+| Um candidato claro ("o Carlos") | comum | ✅ sim — provado 8/8 contra a IA real |
+| Vários plausíveis ("a Vanessa", com duas Vanessas) | **comum** | ❌ não |
+| Nenhum correspondente ("Dra. Beatriz") | raro | ❌ não |
+
+**O limite é o canal, não o prompt** (medido 3/3 em 2026-08-09): diante de dois candidatos
+o modelo devolve `"dent-carlos-turiak,dent-carlos-sanches"` — os dois ids concatenados. Não
+*consegue* expressar ambiguidade num campo de valor único, então inventa um valor
+malformado. O Core rejeita e o desfecho é seguro, mas a informação se perde.
+
+### Saída: `dentistas_candidatos` como campo raiz
+
+Não é alteração de dado — é o **resultado semântico da leitura da preferência**. Por isso
+campo raiz, ao lado de `eventos_candidatos`, e não dentro de `alteracoes` (cujo contrato é
+fechado a valores string com `informar`/`corrigir`/`remover`).
+
+```ts
+dentistas_candidatos?: string[];   // ids copiados LITERALMENTE de `dentistas_disponiveis`
+```
+
+| Valor | Significado |
+|---|---|
+| **ausente** | o paciente não mencionou profissional |
+| `[]` | mencionou, mas nenhum dentista real da clínica corresponde |
+| `[id]` | um candidato claro |
+| `[id1, id2, …]` | vários plausíveis — a IA **não escolhe** |
+
+`[]` não é um quarto mecanismo: é o resultado natural da mesma lista quando nada
+corresponde.
+
+### Decisão do Core: uma única regra de contagem
+
+| Entrada | Decisão | Novo? |
+|---|---|---|
+| **ausente** | regra de zero/um/vários **aptos** de sempre (`dentistas-vinculos-v1.md` §5) | não |
+| **`[id]`** | **CASO 2 da seção 5, intacto**: vínculo → segue; sem vínculo → avaliação com ele; nem isso → `combinacao_indisponivel` | não |
+| **`[id1, id2, …]`** | não escolhe — `aguardando_escolha_dentista` com **somente esses** | sim |
+| **`[]`** | não escolhe — `aguardando_escolha_dentista` com os **aptos reais**, mais o fato de não ter localizado. Sem apto nenhum → `sem_dentista_disponivel`, como hoje | sim |
+
+**Os candidatos de `[N]` não são filtrados por aptidão.** Filtrar removeria justamente o
+profissional que o paciente pediu — o defeito que esta spec existe para eliminar. O turno
+seguinte resolve para um único candidato e o CASO 2 aplica a regra de vínculo normalmente,
+inclusive a substituição por avaliação.
+
+`aguardando_escolha_dentista` passa a poder carregar **um** elemento (hoje só ocorre com
+≥2). É honesto: *"não encontrei a Dra. Beatriz; temos o Dr. Carlos Turiak — pode ser com
+ele?"*
+
+### Fato mínimo para a redatora
+
+Um booleano, **derivado pelo Core**, nunca um sinal novo da IA:
+
+```ts
+preferencia_nao_localizada?: true;   // só quando dentistas_candidatos === []
+```
+
+`preferencia_nao_encontrada` **não volta como sinal da IA** (decisão explícita do Gabriel):
+`dentistas_candidatos: []` já carrega essa informação, e o Core deriva o fato a partir dela.
+
+### O que é REMOVIDO
+
+- **`dentista_id` sai do enum do schema enviado à OpenAI.** A IA deixa de ter como emiti-lo:
+  quem escreve esse campo passa a ser sempre o Core.
+- **A regra de instrução sobre `dentista_id`** (duas cláusulas hoje) é substituída por uma
+  sobre `dentistas_candidatos`.
+- **O parâmetro `dentistaIdPedido`** de `resolverDentistaEProcedimento` dá lugar à lista.
+
+**Não é removido:** `dentista_id` continua em `CAMPOS_PERMITIDOS` e em
+`CAMPOS_OPERACIONAIS_INTERPRETACAO` — o Core precisa persistí-lo, e a IA precisa vê-lo em
+`dados_atuais` como contexto do que já foi escolhido.
+
+> **Assimetria deliberada, com guarda.** O enum do schema (o que a IA **pode emitir**) deixa
+> de ser igual a `CAMPOS_PERMITIDOS` (o que **pode ser persistido**). O teste de drift criado
+> em 2026-08-09 passa a asserir a relação pretendida — enum = `CAMPOS_PERMITIDOS` menos os
+> campos que só o Core escreve — em vez de igualdade simples. Sem isso a divergência viraria
+> silenciosa.
+
+### Fora deste contrato
+
+Nada de fuzzy no Core, score, confidence, alias, regex, match textual ou evento novo. O
+Core apenas conta, confere integridade e escreve.

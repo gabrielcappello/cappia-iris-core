@@ -29,14 +29,28 @@ function rpcNuncaChamada(): ClienteRpcFalso {
   return new ClienteRpcFalso({});
 }
 
+/**
+ * Dublê do modelo. Desde 2026-08-09 (specs/dentista-semantico-v1.md secao 12)
+ * a IA NAO emite `dentista_id`: ela devolve `dentistas_candidatos`, e quem
+ * escreve o campo e o Core. `null` = o paciente nao mencionou profissional.
+ */
 function clienteModelo(procedimentoId: string, dentistaId?: string): ClienteModeloFalso {
   return new ClienteModeloFalso([
     {
       natureza_mensagem: 'pedido',
-      alteracoes: {
-        procedimento_id: { acao: 'informar', valor: procedimentoId },
-        ...(dentistaId !== undefined ? { dentista_id: { acao: 'informar', valor: dentistaId } } : {}),
-      },
+      alteracoes: { procedimento_id: { acao: 'informar', valor: procedimentoId } },
+      dentistas_candidatos: dentistaId !== undefined ? [dentistaId] : null,
+    },
+  ]);
+}
+
+/** Vários candidatos plausíveis -- a IA nao escolhe. */
+function clienteModeloCandidatos(procedimentoId: string, candidatos: string[]): ClienteModeloFalso {
+  return new ClienteModeloFalso([
+    {
+      natureza_mensagem: 'pedido',
+      alteracoes: { procedimento_id: { acao: 'informar', valor: procedimentoId } },
+      dentistas_candidatos: candidatos,
     },
   ]);
 }
@@ -619,4 +633,145 @@ test('aceitar_opcao junto de natureza=negacao NAO aplica -- sinais incompativeis
 
   const linha = tabelas.estado_conversa[0] as unknown as { dados: Record<string, string> };
   assert.equal(linha.dados.procedimento_id, PROCEDIMENTO, 'a oferta nao pode ser aplicada quando a mensagem e uma negacao');
+});
+
+// =====================================================================
+// Regra de contagem de dentistas_candidatos -- specs/dentista-semantico-v1.md
+// secao 12. Uma regra, quatro entradas: null / 1 / N / [].
+// =====================================================================
+
+test('CONTAGEM 1 -- um candidato claro: o Core persiste dentista_id e segue o CASO 2', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const { anaId } = semearClinica(tabelas, [PROCEDIMENTO], [PROCEDIMENTO]);
+
+  const resultado = await processar(clienteModeloCandidatos(PROCEDIMENTO, [anaId]), tabelas, 'limpeza com a Ana');
+
+  // Persistido pelo Core -- a IA nao emitiu `dentista_id`.
+  const linha = tabelas.estado_conversa[0] as unknown as { dados: Record<string, string> };
+  assert.equal(linha.dados.dentista_id, anaId);
+  // E nao caiu em escolha, apesar de haver dois aptos: a preferencia resolveu.
+  assert.equal(resultado.decisao.tipo, 'aguardando_data_horario');
+});
+
+test('CONTAGEM N -- varios plausiveis: apresenta SOMENTE esses, e nao persiste nada', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  // Tres ativos; a IA aponta duas "Vanessas". A terceira nao pode aparecer.
+  const carlosId = crypto.randomUUID();
+  const { anaId, brunoId } = semearClinica(tabelas, [PROCEDIMENTO], [PROCEDIMENTO], [
+    dentistaReal({ id: carlosId, nome: 'Carlos Turiak', procedimentos: itens([PROCEDIMENTO]) }),
+  ]);
+
+  const resultado = await processar(clienteModeloCandidatos(PROCEDIMENTO, [anaId, brunoId]), tabelas, 'quero com a Vanessa');
+
+  assert.equal(resultado.decisao.tipo, 'aguardando_escolha_dentista');
+  if (resultado.decisao.tipo !== 'aguardando_escolha_dentista') return;
+  assert.deepEqual(
+    resultado.decisao.dentistas.map((d) => d.dentista_id).sort(),
+    [anaId, brunoId].sort(),
+    'apresenta so os candidatos plausiveis, nunca todos os aptos'
+  );
+  assert.equal(resultado.decisao.preferencia_nao_localizada, undefined);
+
+  const linha = tabelas.estado_conversa[0] as unknown as { dados: Record<string, string> };
+  assert.equal(linha.dados.dentista_id, undefined, 'nada e escolhido antes de o paciente responder');
+});
+
+test('CONTAGEM N -- candidatos NAO sao filtrados por aptidao', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  // Ana faz o procedimento; Bruno nao faz nada. Os dois foram apontados.
+  // Filtrar removeria justamente quem o paciente pode ter querido.
+  const { anaId, brunoId } = semearClinica(tabelas, [PROCEDIMENTO], []);
+
+  const resultado = await processar(clienteModeloCandidatos(PROCEDIMENTO, [anaId, brunoId]), tabelas, 'quero com a Vanessa');
+
+  assert.equal(resultado.decisao.tipo, 'aguardando_escolha_dentista');
+  if (resultado.decisao.tipo !== 'aguardando_escolha_dentista') return;
+  assert.equal(resultado.decisao.dentistas.length, 2, 'o inapto continua na lista -- o CASO 2 trata dele no turno seguinte');
+});
+
+test('CONTAGEM 0 -- mencionou alguem inexistente: apresenta os APTOS e marca preferencia_nao_localizada', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const { anaId, brunoId } = semearClinica(tabelas, [PROCEDIMENTO], [PROCEDIMENTO]);
+
+  const resultado = await processar(clienteModeloCandidatos(PROCEDIMENTO, []), tabelas, 'quero com a Dra. Beatriz');
+
+  assert.equal(resultado.decisao.tipo, 'aguardando_escolha_dentista');
+  if (resultado.decisao.tipo !== 'aguardando_escolha_dentista') return;
+  assert.equal(resultado.decisao.preferencia_nao_localizada, true);
+  assert.deepEqual(resultado.decisao.dentistas.map((d) => d.dentista_id).sort(), [anaId, brunoId].sort());
+});
+
+test('CONTAGEM 0 com UM apto: ainda avisa que nao localizou -- nunca segue em silencio', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  // Este e o caminho VIVO: na clinica real todo procedimento tem um apto so.
+  const { anaId } = semearClinica(tabelas, [PROCEDIMENTO], []);
+
+  const resultado = await processar(clienteModeloCandidatos(PROCEDIMENTO, []), tabelas, 'quero com a Dra. Beatriz');
+
+  assert.equal(resultado.decisao.tipo, 'aguardando_escolha_dentista');
+  if (resultado.decisao.tipo !== 'aguardando_escolha_dentista') return;
+  assert.equal(resultado.decisao.preferencia_nao_localizada, true);
+  assert.deepEqual(resultado.decisao.dentistas.map((d) => d.dentista_id), [anaId]);
+});
+
+test('CONTAGEM 0 sem nenhum apto: cai no desfecho de sempre, sem inventar escolha', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  semearClinica(tabelas, [CONSULTA_AVALIACAO_ID], []);
+
+  const resultado = await processar(clienteModeloCandidatos(PROCEDIMENTO, []), tabelas, 'quero com a Dra. Beatriz');
+
+  assert.equal(resultado.decisao.tipo, 'sem_dentista_disponivel');
+});
+
+test('CONTAGEM N com ids invalidos: o que nao existe na clinica nao entra na lista', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const { anaId, brunoId } = semearClinica(tabelas, [PROCEDIMENTO], [PROCEDIMENTO]);
+  const forasteiro = crypto.randomUUID();
+
+  const resultado = await processar(
+    clienteModeloCandidatos(PROCEDIMENTO, [anaId, brunoId, forasteiro]),
+    tabelas,
+    'quero com a Vanessa'
+  );
+
+  assert.equal(resultado.decisao.tipo, 'aguardando_escolha_dentista');
+  if (resultado.decisao.tipo !== 'aguardando_escolha_dentista') return;
+  assert.equal(JSON.stringify(resultado.decisao).includes(forasteiro), false);
+  assert.equal(resultado.decisao.dentistas.length, 2);
+});
+
+test('CONTAGEM N que colapsa em um valido: segue o caminho normal, sem perguntar', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const { anaId } = semearClinica(tabelas, [PROCEDIMENTO], [PROCEDIMENTO]);
+  const forasteiro = crypto.randomUUID();
+
+  // Dois candidatos, mas um nao existe -- sobra um. Perguntar "escolha entre
+  // um" seria absurdo.
+  const resultado = await processar(clienteModeloCandidatos(PROCEDIMENTO, [anaId, forasteiro]), tabelas, 'com a Ana');
+
+  assert.notEqual(resultado.decisao.tipo, 'aguardando_escolha_dentista');
+});
+
+test('CONTAGEM null -- nao mencionou: regra de zero/um/varios APTOS, intacta', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  semearClinica(tabelas, [PROCEDIMENTO], [PROCEDIMENTO]);
+
+  const resultado = await processar(clienteModelo(PROCEDIMENTO), tabelas, 'quero uma limpeza');
+
+  assert.equal(resultado.decisao.tipo, 'aguardando_escolha_dentista');
+  if (resultado.decisao.tipo !== 'aguardando_escolha_dentista') return;
+  assert.equal(resultado.decisao.preferencia_nao_localizada, undefined);
+});
+
+test('uma mencao nova prevalece sobre um dentista ja escolhido antes', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const { anaId, brunoId } = semearClinica(tabelas, [PROCEDIMENTO], [PROCEDIMENTO]);
+  // Turno 1: escolheu a Ana.
+  await processar(clienteModeloCandidatos(PROCEDIMENTO, [anaId]), tabelas, 'limpeza com a Ana');
+
+  // Turno 2: diz "Vanessa", ambiguo entre os dois. O `dentista_id` antigo NAO
+  // pode prevalecer sobre a mencao atual.
+  const resultado = await processar(clienteModeloCandidatos(PROCEDIMENTO, [anaId, brunoId]), tabelas, 'na verdade com a Vanessa');
+
+  assert.equal(resultado.decisao.tipo, 'aguardando_escolha_dentista');
 });

@@ -26,6 +26,30 @@ export const CAMPOS_PERMITIDOS: readonly CampoDadosConversa[] = [
   'email',
 ];
 
+/**
+ * Campos que SO o Core escreve -- a IA nunca os emite em `alteracoes`
+ * (specs/dentista-semantico-v1.md secao 12).
+ *
+ * `dentista_id` entrou aqui em 2026-08-09: a interpretadora passou a devolver
+ * `dentistas_candidatos` (o conjunto de quem ela entendeu), e quem escolhe e
+ * persiste o id e o Core, pela regra de contagem. O campo continua
+ * persistivel e continua sendo enviado a IA em `dados_atuais` como contexto
+ * do que ja foi escolhido -- o que ele deixou de ser e EMITIVEL.
+ */
+export const CAMPOS_SO_DO_CORE: readonly CampoDadosConversa[] = ['dentista_id'];
+
+/**
+ * O que a IA pode emitir. DERIVADO de `CAMPOS_PERMITIDOS`, nunca uma segunda
+ * lista escrita a mao: duas listas manuais divergiriam em silencio no primeiro
+ * campo novo que alguem esquecesse de espelhar.
+ *
+ * A assimetria com `CAMPOS_PERMITIDOS` (o que pode ser PERSISTIDO) e
+ * deliberada e esta protegida por teste.
+ */
+export const CAMPOS_EMITIVEIS_PELA_IA: readonly CampoDadosConversa[] = CAMPOS_PERMITIDOS.filter(
+  (campo) => !CAMPOS_SO_DO_CORE.includes(campo)
+);
+
 export const ACOES_PERMITIDAS: readonly AcaoAlteracaoDados[] = ['informar', 'corrigir', 'remover'];
 export const PERIODOS_PERMITIDOS = ['manha', 'tarde', 'noite'];
 export const INTENCOES_PERMITIDAS = ['novo_agendamento'];

@@ -11,7 +11,7 @@ import {
 } from './cliente-modelo-openai.ts';
 import { INSTRUCOES_EXTRATOR } from './interpretacao-instrucoes.ts';
 import { CHAVES_OPCIONAIS_INTERPRETACAO } from './interpretacao-extrator.ts';
-import { CAMPOS_PERMITIDOS } from './aplicar-dados.ts';
+import { CAMPOS_PERMITIDOS, CAMPOS_SO_DO_CORE } from './aplicar-dados.ts';
 
 // --- dublês de fetch (todos falsos; nenhuma rede real em nenhum teste) ---
 
@@ -42,7 +42,8 @@ function respostaSucesso(
   alteracoesPortatil: unknown[],
   usage: Record<string, number> = { input_tokens: 1, output_tokens: 1 },
   naturezaMensagem: string = 'pedido',
-  eventosCandidatos: unknown[] = []
+  eventosCandidatos: unknown[] = [],
+  dentistasCandidatos: unknown = null
 ) {
   const corpo = {
     status: 'completed',
@@ -56,6 +57,7 @@ function respostaSucesso(
               natureza_mensagem: naturezaMensagem,
               alteracoes: alteracoesPortatil,
               eventos_candidatos: eventosCandidatos,
+              dentistas_candidatos: dentistasCandidatos,
             }),
           },
         ],
@@ -390,7 +392,7 @@ test('5: corpo HTTP realmente vazio gera resposta_vazia e permite no maximo um r
     const { fetchFalso, chamadas } = criarFetchFalso([() => respostaZeroBytes(), () => respostaSucesso([])]);
     const cliente = criarCliente({ fetch: fetchFalso });
     const resultado = await cliente.executar(entradaValida());
-    assert.deepEqual(resultado, { natureza_mensagem: 'pedido', alteracoes: {}, eventos_candidatos: [] });
+    assert.deepEqual(resultado, { natureza_mensagem: 'pedido', alteracoes: {}, eventos_candidatos: [], dentistas_candidatos: null });
     assert.equal(chamadas.length, 2);
   }
   // caso B: vazio duas vezes -> falha apos exatamente 2 chamadas
@@ -1109,6 +1111,7 @@ test('extra: executar() bem-sucedido devolve o mapa interno pronto para validarS
       cpf: { acao: 'remover' },
     },
     eventos_candidatos: [],
+    dentistas_candidatos: null,
   });
 });
 
@@ -1230,7 +1233,7 @@ test('correcao1b: com orcamento generoso, a revalidacao apos a espera nao bloque
   const { fetchFalso, chamadas } = criarFetchFalso([() => respostaErroHttp(503, {}), () => respostaSucesso([])]);
   const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs: 40, esperaEntreTentativasMs: 5, prazoTotalMs: 5000 });
   const resultado = await cliente.executar(entradaValida());
-  assert.deepEqual(resultado, { natureza_mensagem: 'pedido', alteracoes: {}, eventos_candidatos: [] });
+  assert.deepEqual(resultado, { natureza_mensagem: 'pedido', alteracoes: {}, eventos_candidatos: [], dentistas_candidatos: null });
   assert.equal(chamadas.length, 2);
 });
 
@@ -1350,6 +1353,7 @@ test('correcao3c: resposta rapida dentro do prazo continua sendo aceita normalme
     natureza_mensagem: 'pedido',
     alteracoes: { nome: { acao: 'informar', valor: 'Joao' } },
     eventos_candidatos: [],
+    dentistas_candidatos: null,
   });
 });
 
@@ -1870,6 +1874,7 @@ describe('testes que substituem globais (Date.now, JSON.parse, Date.parse) -- co
                   natureza_mensagem: 'pedido',
                   alteracoes: [{ campo: 'campo_desconhecido', acao: 'informar', valor: 'x' }],
                   eventos_candidatos: [],
+                  dentistas_candidatos: null,
                 }),
               },
             ],
@@ -2164,12 +2169,17 @@ test('fronteira: o enum de campos do schema ENVIADO a OpenAI e exatamente CAMPOS
   };
   const enumCampos = corpo.text.format.schema.properties.alteracoes.items.properties.campo.enum;
 
-  assert.ok(enumCampos.includes('dentista_id'));
   assert.equal(enumCampos.includes('dentista_texto'), false);
+  // ASSIMETRIA DELIBERADA (specs/dentista-semantico-v1.md secao 12): o enum e
+  // o que a IA pode EMITIR; CAMPOS_PERMITIDOS e o que pode ser PERSISTIDO.
+  // `dentista_id` continua persistivel, mas so o Core o escreve. A assercao e
+  // sobre a RELACAO pretendida -- nao sobre igualdade, e nunca contra uma
+  // segunda lista escrita a mao, que divergiria em silencio.
+  assert.equal(enumCampos.includes('dentista_id'), false, 'a IA nao pode mais emitir dentista_id');
   assert.deepEqual(
     [...enumCampos].sort(),
-    [...CAMPOS_PERMITIDOS].sort(),
-    'o enum do schema enviado divergiu de CAMPOS_PERMITIDOS -- o modelo ficaria obrigado a um campo que o Core nao aceita mais'
+    [...CAMPOS_PERMITIDOS].filter((c) => !CAMPOS_SO_DO_CORE.includes(c)).sort(),
+    'o enum do schema enviado divergiu de CAMPOS_PERMITIDOS menos os campos que so o Core escreve'
   );
 });
 
@@ -2212,6 +2222,7 @@ test('resposta com aceitar_opcao e referencia_textual null atravessa ate o resul
     natureza_mensagem: 'resposta',
     alteracoes: {},
     eventos_candidatos: [{ tipo: 'aceitar_opcao', referencia_textual: null }],
+    dentistas_candidatos: null,
   });
 });
 
@@ -2260,7 +2271,7 @@ test('eventos_candidatos ausente na resposta invalida -- o campo raiz e obrigato
       new Response(
         JSON.stringify({
           status: 'completed',
-          output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify({ natureza_mensagem: 'pedido', alteracoes: [] }) }] }],
+          output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify({ natureza_mensagem: 'pedido', alteracoes: [], dentistas_candidatos: null }) }] }],
           usage: { input_tokens: 1, output_tokens: 1 },
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } }

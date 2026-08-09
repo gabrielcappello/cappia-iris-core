@@ -1,4 +1,9 @@
-import { CAMPOS_PERMITIDOS, CONFIRMACOES_PERMITIDAS, INTENCOES_PERMITIDAS, PERIODOS_PERMITIDOS } from './aplicar-dados.ts';
+import {
+  CAMPOS_EMITIVEIS_PELA_IA,
+  CONFIRMACOES_PERMITIDAS,
+  INTENCOES_PERMITIDAS,
+  PERIODOS_PERMITIDOS,
+} from './aplicar-dados.ts';
 import { NATUREZAS_MENSAGEM_PERMITIDAS, TIPOS_EVENTO_CANDIDATO_PERMITIDOS } from './interpretacao-tipos.ts';
 
 // Unico lugar onde o contrato dado ao modelo (instrucoes + schema) e
@@ -20,8 +25,9 @@ Regras obrigatorias:
 - Horarios sao normalizados para o formato HH:MM em 24 horas sempre que a expressao for uma referencia de horario inequivoca mencionada pelo proprio paciente (ex.: "15h", "15 hrs", "15 horas", "as 15" e "quinze horas" tornam-se todos "15:00"; "15:30" permanece "15:30") — nunca invente um horario que o paciente nao mencionou, nunca infira um horario ausente a partir de outro dado (ex.: procedimento, periodo ou data nunca implicam horario). Em duvida real sobre qual horario foi mencionado, omita horario_texto — mesma regra de duvida real ja vigente para os demais campos.
 - Quando o paciente mencionar "hoje" ou "amanha" como a data desejada, preencha data_texto com esse texto exatamente como mencionado — mesmo quando a mensagem for uma pergunta (ex.: "Pode ser hoje?" preenche data_texto = "hoje"; "Pode ser amanha?" preenche data_texto = "amanha"). Uma pergunta sobre disponibilidade em uma data explicita como essa nao e "duvida real" — a data em si esta clara.
 - Quando "horarios_oferecidos" estiver presente, ele lista os horarios que ja foram apresentados ao paciente, na ordem exata em que apareceram. Interprete a mensagem atual como possivel escolha dentre esses horarios — por valor ("15", "15 hrs", "quinze horas" escolhem "15:00" quando ele esta na lista) ou por ordinal ("o segundo" escolhe o segundo item da lista) — e preencha horario_texto com o horario correspondente, no formato HH:MM. Em duvida real sobre qual horario o paciente quis dizer, omita horario_texto — nunca escolha um da lista por aproximacao. Uma mencao nova e explicita a outro horario ("na verdade prefiro 17:30") segue a regra normal de horario e nao fica restrita a lista.
-- "dentista_id" so pode receber um valor copiado LITERALMENTE do campo "dentista_id" de um item de "dentistas_disponiveis". Qualquer outro valor e proibido: nome do profissional, texto do paciente, dois ids juntos, id inventado. Se "dentistas_disponiveis" nao estiver no payload, "dentista_id" nunca aparece na resposta.
-- Para escolher esse id: entenda a quem o paciente se refere e compare com o nome exibido de cada item — pelo significado, nunca por semelhanca de escrita. Primeiro nome, sobrenome, ou nome com ou sem titulo identificam a mesma pessoa. Emita o id apenas quando UM unico item for claramente essa pessoa; se nenhum for, ou se dois ou mais forem plausiveis, omita "dentista_id" por completo.
+- "dentistas_candidatos" e sempre obrigatorio e responde a uma unica pergunta: quando o paciente menciona um profissional, a quem ele se refere entre os de "dentistas_disponiveis"? Use null quando ele NAO mencionar nenhum profissional. Quando mencionar, devolva a lista dos que sao plausiveis: um so quando a correspondencia for clara e unica; dois ou mais quando mais de um for igualmente plausivel; a lista vazia quando nenhum dos profissionais da clinica corresponder ao que ele disse. Voce NUNCA escolhe entre varios plausiveis — quem pergunta ao paciente e o sistema.
+- Cada item de "dentistas_candidatos" e um "dentista_id" copiado LITERALMENTE de "dentistas_disponiveis" — nunca um nome, nunca o texto do paciente, nunca um id inventado. Compare pelo significado, nunca por semelhanca de escrita: primeiro nome, sobrenome, ou nome com ou sem titulo identificam a mesma pessoa. Quando "dentistas_disponiveis" nao estiver no payload, "dentistas_candidatos" e sempre null.
+- Voce nunca emite "dentista_id": esse campo e escrito pelo sistema a partir de "dentistas_candidatos".
 - Quando "procedimentos_disponiveis" estiver presente, ele lista os procedimentos reais e ativos desta clinica, cada um com seu "procedimento_id" e o nome exibido. Entenda o que o paciente quer e preencha "procedimento_id" com o id correspondente da lista — pelo significado do que ele disse, nunca por semelhanca de escrita com o nome. Se o paciente demonstrar que nao sabe qual procedimento precisa, e a lista contiver uma consulta ou avaliacao, esse e o procedimento adequado. Em duvida real sobre qual dos procedimentos ele quer, omita "procedimento_id" — nunca escolha por aproximacao. Quando "procedimentos_disponiveis" nao estiver presente, nunca emita "procedimento_id".
 - Remocao de um dado so ocorre quando o paciente pedir explicitamente para apagar/desconsiderar aquele dado especificamente.
 - Emita intencao = novo_agendamento somente quando a janela atual expressar um pedido de marcar um novo atendimento; a mera mencao ou correcao de procedimento, dentista, data, periodo ou horario nao emite intencao.
@@ -42,7 +48,7 @@ Regras obrigatorias:
 - Alem de "alteracoes", classifique tambem "natureza_mensagem": o tipo da mensagem atual, sempre um destes valores, nunca mais de um: "saudacao" (cumprimento puro, sem mais nenhum conteudo), "duvida" (pergunta ou comentario fora do vocabulario de agendamento — nunca responda como se fosse um profissional de saude, so classifique), "pedido" (a mensagem avanca o agendamento: procedimento, dentista, data, periodo ou horario), "resposta" (reage a algo que foi perguntado, ex.: escolha de horario, confirmacao, dado cadastral), "correcao" (corrige um dado ja informado antes), "negacao" (recusa ou desistencia explicita, sem pedir outra coisa no lugar), "nao_compreendida" (nao foi possivel classificar com seguranca em nenhuma das categorias acima). Em duvida real entre duas categorias, classifique como "nao_compreendida" — nunca adivinhe. "natureza_mensagem" e "alteracoes" sao preenchidos sempre juntos, na mesma resposta.
 - Responda estritamente no formato do schema fornecido — nenhuma propriedade alem de "natureza_mensagem" e "alteracoes" no nivel principal, nenhuma propriedade alem de "acao"/"valor" (ou somente "acao" para remover) dentro de cada alteracao.
 
-Campos permitidos: ${CAMPOS_PERMITIDOS.join(', ')}.
+Campos permitidos: ${CAMPOS_EMITIVEIS_PELA_IA.join(', ')}.
 Valores permitidos para periodo: ${PERIODOS_PERMITIDOS.join(', ')}.
 Valores permitidos para intencao: ${INTENCOES_PERMITIDAS.join(', ')}.
 Valores permitidos para confirmacao: ${CONFIRMACOES_PERMITIDAS.join(', ')}.
@@ -67,9 +73,17 @@ function schemaValorCampo(campo: string): object {
 export const SCHEMA_SAIDA_INTERPRETACAO: object = {
   type: 'object',
   additionalProperties: false,
-  required: ['natureza_mensagem', 'alteracoes', 'eventos_candidatos'],
+  required: ['natureza_mensagem', 'alteracoes', 'eventos_candidatos', 'dentistas_candidatos'],
   properties: {
     natureza_mensagem: { type: 'string', enum: [...NATUREZAS_MENSAGEM_PERMITIDAS] },
+    // Quarto campo raiz (specs/dentista-semantico-v1.md secao 12). `null` = o
+    // paciente nao mencionou profissional; `[]` = mencionou e nenhum
+    // corresponde. Os dois significam coisas diferentes, por isso nullable em
+    // vez de opcional.
+    dentistas_candidatos: {
+      type: ['array', 'null'],
+      items: { type: 'string', minLength: 1 },
+    },
     // Terceiro campo raiz (specs/eventos-conversacionais-v1.md, fatia minima
     // de 2026-08-09). Obrigatorio e possivelmente vazio.
     eventos_candidatos: {
@@ -88,7 +102,7 @@ export const SCHEMA_SAIDA_INTERPRETACAO: object = {
       type: 'object',
       additionalProperties: false,
       properties: Object.fromEntries(
-        CAMPOS_PERMITIDOS.map((campo) => [
+        CAMPOS_EMITIVEIS_PELA_IA.map((campo) => [
           campo,
           {
             oneOf: [

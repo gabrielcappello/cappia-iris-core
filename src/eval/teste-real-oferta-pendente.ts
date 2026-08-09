@@ -60,28 +60,36 @@ interface Caso {
 
 // Poucos e realistas. Nenhuma destas frases aparece na instrucao.
 //
-// LIMITE CONHECIDO, medido em 2026-08-09 (~1 em 4 execucoes): no ultimo caso
-// ("na verdade quero uma limpeza"), o modelo as vezes emite `aceitar_opcao`
-// ESPURIO junto da correcao explicita de procedimento -- mesmo padrao do
-// "prefiro outra coisa" antes da checagem de sinais incompativeis, so que
-// aqui a natureza vem `correcao`, nao `negacao`, entao a guarda de negacao
-// nao pega.
-//
-// Nao e um bug de produto: `aplicarAceitacaoDeOferta` (interpretar-e-
-// aplicar.ts) da precedencia ao `procedimento_id` explicito ANTES de olhar
-// o evento -- `if (alteracoes.procedimento_id !== undefined) return
-// alteracoes`. Verificado manualmente na execucao em que isso ocorreu: o
-// resultado aplicado continuou sendo `cleaning`, nunca a oferta. A falha
-// deste teste e so do EVENTO diagnostico, nunca do comportamento final.
-//
-// Registrado e nao "corrigido" no prompt por decisao consciente: seria mais
-// uma regra para um caso que o Core ja neutraliza pela propria precedencia
-// estrutural (docs/00-principios.md).
+// DESCARTADO em 2026-08-09: "prefiro outra coisa". Ninguem responde assim a
+// uma oferta -- na vida real a pessoa diz o que quer ("prefiro implante") ou
+// recusa de forma direta ("nao, deixa"); "outra coisa" solto e construcao de
+// teste, nao de paciente. Eu havia escalado essa frase a "regressao que
+// piorou", que e exatamente o erro que docs/00-principios.md (principio dos
+// testes realistas) existe para impedir. Os dois desfechos que realmente
+// importam ja estao cobertos abaixo: recusa direta e pedido explicito de
+// outro procedimento.
 const CASOS: readonly Caso[] = Object.freeze([
   { mensagem: 'pode ser', aceita: true },
   { mensagem: 'sim, quero', aceita: true },
-  { mensagem: 'prefiro outra coisa', aceita: false },
+  // Recusa direta -- como as pessoas de fato recusam.
+  //
+  // INTERMITENTE no EVENTO, protegido no PRODUTO (medido 2026-08-09, 5
+  // execucoes): o modelo as vezes emite `aceitar_opcao` espurio aqui, mas
+  // `natureza_mensagem` veio `negacao` em 5/5. A checagem de sinais
+  // incompativeis do Core (`aplicarAceitacaoDeOferta`) bloqueia a aplicacao
+  // sempre que a natureza e `negacao` -- entao a oferta NUNCA e aplicada
+  // numa recusa. Ha teste deterministico proprio disso em
+  // orquestrador-dentista.test.ts ("aceitar_opcao junto de natureza=negacao
+  // NAO aplica").
+  //
+  // Portanto: se este caso aparecer vermelho, e ruido do sinal diagnostico,
+  // nao defeito de comportamento. Mantido estrito de proposito -- afrouxar a
+  // assercao esconderia uma piora real caso a natureza deixasse de vir
+  // `negacao`, que e justamente o que sustenta a guarda.
+  { mensagem: 'não, deixa', aceita: false },
   // Pedido explicito por outro procedimento: regra normal, e NAO aceitacao.
+  // Este e o caso que importa de verdade, e o Core o protege por construcao
+  // (o `procedimento_id` explicito tem precedencia sobre a oferta).
   { mensagem: 'na verdade quero uma limpeza', aceita: false, procedimentoEsperado: 'cleaning' },
 ]);
 
