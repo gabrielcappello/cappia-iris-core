@@ -8,7 +8,7 @@
 // de ordem. Todos os valores sao SINTETICOS.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { comporVisaoEfetivaCadastro } from './cadastro-paciente.ts';
+import { calcularCadastroFaltante, comporVisaoEfetivaCadastro } from './cadastro-paciente.ts';
 import type { CadastroPaciente } from './tipos.ts';
 
 const FICHA: CadastroPaciente = {
@@ -86,4 +86,56 @@ test('a funcao e pura: nao muta a ficha nem os dados da conversa', () => {
 test('valores sao aparados: espaco em volta nunca chega a visao efetiva', () => {
   const efetiva = comporVisaoEfetivaCadastro({ cpf: '  11144477735  ' }, { nome: '  Sintetico Dois  ' });
   assert.deepEqual(efetiva, { nome: 'Sintetico Dois', cpf: '11144477735' });
+});
+
+// --- calcularCadastroFaltante (specs/cadastro-conversacional-v1.md secao 2) ---
+
+const COMPLETO: CadastroPaciente = {
+  nome: 'Belarmina Toscano Furtado',
+  cpf: '52998224725',
+  data_nascimento: '1974-03-19',
+};
+
+test('faltantes: paciente completo nao interrompe -- lista vazia', () => {
+  assert.deepEqual(calcularCadastroFaltante(COMPLETO, false), []);
+});
+
+test('faltantes: paciente novo (nada conhecido) pede os tres obrigatorios', () => {
+  assert.deepEqual(calcularCadastroFaltante({}, false), ['nome', 'cpf', 'data_nascimento']);
+});
+
+test('faltantes: existente incompleto pede SOMENTE o que falta', () => {
+  // O caso que o Gabriel citou: ja tem nome e CPF, falta so o nascimento.
+  assert.deepEqual(
+    calcularCadastroFaltante({ nome: 'Belarmina Toscano Furtado', cpf: '52998224725' }, false),
+    ['data_nascimento']
+  );
+});
+
+test('faltantes: ordem canonica e estavel, independente da ordem das chaves', () => {
+  const emOutraOrdem: CadastroPaciente = { email: 'a@b.test', data_nascimento: '', cpf: '', nome: '' };
+  assert.deepEqual(calcularCadastroFaltante(emOutraOrdem, true), ['nome', 'cpf', 'data_nascimento']);
+});
+
+test('faltantes: email so entra quando a clinica exige', () => {
+  assert.deepEqual(calcularCadastroFaltante(COMPLETO, false), [], 'sem exigencia, email nao falta');
+  assert.deepEqual(calcularCadastroFaltante(COMPLETO, true), ['email'], 'com exigencia, email falta');
+  assert.deepEqual(calcularCadastroFaltante({ ...COMPLETO, email: 'a@b.test' }, true), []);
+});
+
+test('faltantes: valor vazio ou so espacos conta como ausente', () => {
+  assert.deepEqual(calcularCadastroFaltante({ nome: '   ', cpf: '', data_nascimento: '1974-03-19' }, false), [
+    'nome',
+    'cpf',
+  ]);
+});
+
+test('faltantes: opera sobre a VISAO EFETIVA -- dado da conversa completa a ficha', () => {
+  // Ficha so com nome; a conversa trouxe CPF e nascimento. Nada mais falta,
+  // mesmo que nada tenha sido persistido ainda.
+  const efetiva = comporVisaoEfetivaCadastro(
+    { nome: 'Belarmina Toscano Furtado' },
+    { cpf: '52998224725', data_nascimento: '1974-03-19' }
+  );
+  assert.deepEqual(calcularCadastroFaltante(efetiva, false), []);
 });

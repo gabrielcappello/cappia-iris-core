@@ -22,12 +22,58 @@ function opcao(overrides: Partial<OpcaoHorario> = {}): OpcaoHorario {
 
 const CAMPOS_SENSIVEIS_PROIBIDOS = ['telefone', 'cpf', 'nome', 'email', 'paciente_id', 'clinica_id', 'agendamento_id'];
 
+// A checagem e pela CHAVE (`"campo":`), nunca pelo token solto.
+//
+// Refinado em 2026-08-10: antes procurava `"campo"` em qualquer posicao do
+// JSON, o que passou a acusar falso positivo quando `dados_faltantes` virou
+// itemizado (specs/cadastro-conversacional-v1.md secao 8) e passou a conter
+// os NOMES dos campos que faltam -- `["nome","cpf"]`.
+//
+// A distincao e a mesma que o projeto ja tornou canonica em
+// `campos_cadastrais_preenchidos` (interpretacao-ia.md, "Entrada e PII"):
+// dizer QUAIS campos existem/faltam nao revela nada; carregar o VALOR revela.
+// Uma chave `"nome":` sempre carrega um valor e continua proibida -- se
+// alguem acrescentasse `nome: 'Fernanda'` aos fatos, esta guarda pegaria
+// exatamente como antes.
+//
+// O teste logo abaixo cobre o outro lado: `dados_faltantes` so pode conter
+// nomes do vocabulario fechado, nunca um valor.
 function assertNuncaContemFraseProntaOuId(fatos: FatosAutorizados) {
   const serializado = JSON.stringify(fatos);
   for (const campo of CAMPOS_SENSIVEIS_PROIBIDOS) {
-    assert.ok(!serializado.includes(`"${campo}"`), `fatos nunca deveriam conter a chave ${campo}`);
+    assert.ok(!serializado.includes(`"${campo}":`), `fatos nunca deveriam conter a chave ${campo}`);
   }
 }
+
+const CAMPOS_FALTANTES_PERMITIDOS = [
+  'procedimento',
+  'data',
+  'horario',
+  'nome',
+  'cpf',
+  'data_nascimento',
+  'email',
+];
+
+test('PII: dados_faltantes carrega somente NOMES de campo do vocabulario fechado, nunca um valor', () => {
+  // Um cadastro completo de PII sintetica: se algum valor escorregasse para
+  // dados_faltantes, apareceria aqui.
+  const decisoes: DecisaoOrquestrador[] = [
+    { tipo: 'cadastro_necessario', campos_faltantes: ['nome', 'cpf', 'data_nascimento', 'email'] },
+    { tipo: 'cadastro_necessario', campos_faltantes: ['cpf'] },
+    { tipo: 'aguardando_procedimento' },
+  ];
+
+  for (const decisao of decisoes) {
+    const fatos = derivarFatosAutorizados(decisao);
+    for (const campo of fatos.dados_faltantes ?? []) {
+      assert.ok(
+        CAMPOS_FALTANTES_PERMITIDOS.includes(campo),
+        `dados_faltantes so pode conter nome de campo do vocabulario fechado, veio '${campo}'`
+      );
+    }
+  }
+});
 
 // --- Mapeamento exaustivo: um caso por tipo, os 19 ---
 
@@ -56,7 +102,7 @@ test('mapeamento: os 18 tipos produzem um objetivo, nenhum lanca', () => {
       resultado: { tipo: 'sem_disponibilidade' },
     },
     { tipo: 'aguardando_confirmacao', procedimento_id: 'p1', dentista_id: 'd1', opcao: opcao() },
-    { tipo: 'cadastro_necessario' },
+    { tipo: 'cadastro_necessario', campos_faltantes: ['nome'] },
     {
       tipo: 'reserva_criada',
       agendamento_id: 'a1',

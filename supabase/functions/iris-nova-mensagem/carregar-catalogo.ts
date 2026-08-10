@@ -52,7 +52,13 @@ export async function carregarCatalogo(
 
   return {
     tipo: 'carregado',
-    catalogo: { procedimentos, dentistas, vinculos, configuracoesDuracao },
+    catalogo: {
+      procedimentos,
+      dentistas,
+      vinculos,
+      configuracoesDuracao,
+      exigirEmail: derivarExigirEmail(clinica.automatizacoes),
+    },
   };
 }
 
@@ -60,16 +66,42 @@ export async function carregarCatalogo(
 
 interface ClinicaCarregada {
   dentistas: unknown;
+  automatizacoes: unknown;
 }
 
 async function buscarClinicaComDentistas(
   cliente: ClienteBancoDados,
   clinicaId: string
 ): Promise<ClinicaCarregada | null> {
-  const { data, error } = await cliente.from('clinicas').select('dentistas').eq('id', clinicaId).maybeSingle();
+  // `automatizacoes` entrou em 2026-08-10 (specs/cadastro-conversacional-v1.md
+  // secao 2): e de onde sai `solicitar_email`. Somado ao SELECT que ja existia
+  // -- nenhuma consulta nova, nenhuma coluna nova.
+  const { data, error } = await cliente
+    .from('clinicas')
+    .select('dentistas, automatizacoes')
+    .eq('id', clinicaId)
+    .maybeSingle();
   if (error) throw new Error(`falha ao buscar clinica: ${error.message}`);
   if (!data) return null;
-  return { dentistas: (data as Record<string, unknown>).dentistas };
+  const linha = data as Record<string, unknown>;
+  return { dentistas: linha.dentistas, automatizacoes: linha.automatizacoes };
+}
+
+/**
+ * `clinicas.automatizacoes.solicitar_email` -- a MESMA chave que o pipeline
+ * legado ja usa (cappia_confirmar_acao_pendente). Nao existe coluna
+ * `exigir_email`, por decisao do Gabriel: criar outra representacao da mesma
+ * regra de produto seria duplicacao.
+ *
+ * FALHA PARA `false` de proposito: ausente, malformada ou nao-booleana
+ * significa "e-mail nao exigido". A obrigacao precisa ser AFIRMATIVA -- uma
+ * clinica nunca passa a exigir e-mail por causa de um jsonb corrompido.
+ */
+function derivarExigirEmail(automatizacoes: unknown): boolean {
+  if (automatizacoes === null || typeof automatizacoes !== 'object' || Array.isArray(automatizacoes)) {
+    return false;
+  }
+  return (automatizacoes as Record<string, unknown>).solicitar_email === true;
 }
 
 // --- Catalogo global de procedimentos (procedimentos_catalogo, sem clinica_id) ---

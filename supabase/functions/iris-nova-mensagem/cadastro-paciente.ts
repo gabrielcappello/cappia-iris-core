@@ -26,6 +26,7 @@
 // fronteira do modelo (specs/interpretacao-ia.md, "Entrada e PII").
 
 import { CAMPOS_CADASTRAIS_INTERPRETACAO } from './interpretacao-tipos.ts';
+import type { CampoCadastralInterpretacao } from './interpretacao-tipos.ts';
 import type { CadastroPaciente } from './tipos.ts';
 
 /**
@@ -61,4 +62,35 @@ function normalizar(valor: string | undefined): string | undefined {
   if (typeof valor !== 'string') return undefined;
   const limpo = valor.trim();
   return limpo === '' ? undefined : limpo;
+}
+
+/**
+ * Campos cadastrais OBRIGATORIOS que ainda faltam, na ordem canonica
+ * (specs/cadastro-conversacional-v1.md secao 2).
+ *
+ * Brasil V1: `nome`, `cpf` e `data_nascimento` sao sempre obrigatorios;
+ * `email` so quando a clinica exige (`clinicas.automatizacoes.solicitar_email`).
+ *
+ * Opera sobre a VISAO EFETIVA, entao campo ja conhecido nunca e pedido de
+ * novo -- venha ele da ficha persistida ou desta conversa. Os tres cenarios
+ * saem daqui como consequencia, sem regra propria:
+ *
+ * - paciente existente completo -> `[]` -> o cadastro nao interrompe o
+ *   agendamento;
+ * - paciente existente incompleto -> so o que falta;
+ * - paciente novo -> so o que falta.
+ *
+ * "Faltante" significa AUSENTE, e so isso. Valor invalido nunca chega a
+ * `dados` (validar-cadastro.ts), entao nao existe um terceiro estado
+ * "preenchido porem invalido" para tratar aqui.
+ */
+export function calcularCadastroFaltante(
+  visaoEfetiva: CadastroPaciente,
+  exigirEmail: boolean
+): CampoCadastralInterpretacao[] {
+  const obrigatorios: CampoCadastralInterpretacao[] = exigirEmail
+    ? ['nome', 'cpf', 'data_nascimento', 'email']
+    : ['nome', 'cpf', 'data_nascimento'];
+
+  return obrigatorios.filter((campo) => normalizar(visaoEfetiva[campo]) === undefined);
 }

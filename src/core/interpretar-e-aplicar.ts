@@ -6,7 +6,9 @@ import {
   validarMensagensAtuais,
   validarSnapshotOficial,
 } from './interpretacao-extrator.ts';
+import { CAMPOS_CADASTRAIS_INTERPRETACAO } from './interpretacao-tipos.ts';
 import { preAplicar } from './pre-aplicacao.ts';
+import { normalizarCampoCadastral } from './validar-cadastro.ts';
 import type {
   AlteracoesDados,
   CadastroPaciente,
@@ -16,6 +18,7 @@ import type {
   ResultadoAplicarDados,
 } from './tipos.ts';
 import type {
+  CampoCadastralInterpretacao,
   ClienteModeloEstruturado,
   Conflito,
   EventoCandidatoIA,
@@ -80,6 +83,13 @@ export interface InterpretarEAplicarInput extends ContextoConversa {
    * (comporVisaoEfetivaCadastro, em cadastro-paciente.ts).
    */
   cadastro_paciente?: CadastroPaciente;
+  /**
+   * Data de hoje (YYYY-MM-DD) do `instante_atual` ja injetado no orquestrador.
+   * Usada SOMENTE para recusar data de nascimento futura -- este modulo, como
+   * resolverTemporal e resolverDisponibilidade, nunca chama Date.now().
+   * Ausente, a checagem de futuro e pulada; as demais continuam valendo.
+   */
+  data_referencia?: string;
 }
 
 /**
@@ -174,6 +184,51 @@ function aplicarCandidatoUnicoDeDentista(
   };
 }
 
+/**
+ * Descarta valor cadastral que nao passa na validacao deterministica
+ * (specs/cadastro-conversacional-v1.md secao 4).
+ *
+ * Roda ANTES de `preAplicar`, no mesmo padrao das duas transformacoes acima:
+ * funcao pura sobre `alteracoes`, sem banco e sem excecao. Nunca lanca de
+ * proposito -- um CPF malformado nao pode derrubar a mensagem inteira, e
+ * `validarAlteracoes` (aplicar-dados.ts) lancaria.
+ *
+ * Duas coisas acontecem aqui, e so aqui:
+ *
+ * - NORMALIZACAO: o valor aplicado e o conferido (CPF so com digitos, nome
+ *   com espacos colapsados), nunca o texto cru que a IA devolveu;
+ * - DESCARTE: valor invalido some da lista. O campo continua faltante e volta
+ *   a ser pedido no turno seguinte -- nao existe estado persistido de
+ *   "invalido", nem contador de tentativas, nem mensagem de erro dedicada.
+ *   Isso mantem uma regra so em todo o sistema: faltante = ausente.
+ *
+ * `remover` passa intacto: apagar um campo nao tem valor a validar.
+ */
+function descartarCadastroInvalido(alteracoes: AlteracoesDados, dataReferencia: string | undefined): AlteracoesDados {
+  const resultado: AlteracoesDados = {};
+
+  for (const [campo, alteracao] of Object.entries(alteracoes)) {
+    if (!CAMPOS_CADASTRAIS_INTERPRETACAO.includes(campo as CampoCadastralInterpretacao)) {
+      resultado[campo] = alteracao;
+      continue;
+    }
+    if (alteracao.acao === 'remover') {
+      resultado[campo] = alteracao;
+      continue;
+    }
+
+    const normalizado = normalizarCampoCadastral(
+      campo as CampoCadastralInterpretacao,
+      alteracao.valor as string,
+      dataReferencia
+    );
+    if (normalizado === undefined) continue; // invalido: descartado em silencio.
+    resultado[campo] = { ...alteracao, valor: normalizado };
+  }
+
+  return resultado;
+}
+
 const CHAVES_ENTRADA_INTEGRADA = ['conversa_id', 'clinica_id', 'telefone_normalizado', 'mensagens_atuais'] as const;
 const CHAVES_OPCIONAIS_INTEGRADA = [
   'horarios_oferecidos',
@@ -183,6 +238,7 @@ const CHAVES_OPCIONAIS_INTEGRADA = [
   'dentistas_disponiveis',
   'oferta_procedimento_pendente',
   'cadastro_paciente',
+  'data_referencia',
 ] as const;
 
 /**
@@ -273,8 +329,14 @@ export async function interpretarEAplicar(
     snapshotOficial
   );
 
+  // 5d. VALIDACAO CADASTRAL -- o Core confere o que a IA extraiu
+  // (specs/cadastro-conversacional-v1.md secao 4). Valor invalido e
+  // descartado aqui, antes de virar dado da conversa; valor valido segue
+  // NORMALIZADO.
+  const alteracoesValidadas = descartarCadastroInvalido(alteracoesFinais, entrada.data_referencia);
+
   // 6. pre-aplicacao deterministica usando o mesmo snapshot.
-  const preAplicacao = preAplicar(snapshotOficial, alteracoesFinais);
+  const preAplicacao = preAplicar(snapshotOficial, alteracoesValidadas);
   const conflitos: Conflito[] = [...preAplicacao.conflitos];
   let alteracoesAplicaveis = { ...preAplicacao.alteracoes_aplicaveis };
 

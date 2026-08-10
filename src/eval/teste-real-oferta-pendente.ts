@@ -90,6 +90,22 @@ const CASOS: readonly Caso[] = Object.freeze([
   // Pedido explicito por outro procedimento: regra normal, e NAO aceitacao.
   // Este e o caso que importa de verdade, e o Core o protege por construcao
   // (o `procedimento_id` explicito tem precedencia sobre a oferta).
+  //
+  // INTERMITENTE no EVENTO, protegido no PRODUTO (medido 2026-08-10, 4
+  // execucoes durante o fechamento de cadastro-conversacional-v1 -- este
+  // caso NAO foi tocado por aquela subetapa, a intermitencia e anterior e so
+  // passou a ser medida agora): 1x veio 4/4, 3x o modelo emitiu
+  // `aceitar_opcao` espurio aqui tambem. Em TODAS as 4 execucoes,
+  // `procedimento_id` saiu correto (`cleaning`) -- porque
+  // `aplicarAceitacaoDeOferta` devolve `alteracoes` sem aplicar a oferta
+  // sempre que `alteracoes.procedimento_id !== undefined`, ANTES de olhar
+  // para o evento. O pedido explicito vence por construcao, entao o valor
+  // espurio do evento nunca chega ao dado persistido.
+  //
+  // Portanto: se este caso aparecer vermelho, e ruido do sinal diagnostico
+  // (o mesmo padrao ja documentado acima para "nao, deixa"), nao defeito de
+  // comportamento. Mantido estrito pelo mesmo motivo: afrouxar esconderia
+  // uma piora real caso a precedencia do procedimento_id deixasse de valer.
   { mensagem: 'na verdade quero uma limpeza', aceita: false, procedimentoEsperado: 'cleaning' },
 ]);
 

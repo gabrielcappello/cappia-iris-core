@@ -370,7 +370,7 @@ test('derivacao: toda decisao produz exatamente uma acao conhecida, nunca undefi
     { tipo: 'sem_dentista_disponivel', procedimento_oferecido: 'consultation_evaluation' },
     { tipo: 'combinacao_indisponivel', dentista_nome_exibido: 'Dr. Bruno Lima' },
     { tipo: 'duracao_nao_configurada' },
-    { tipo: 'cadastro_necessario' },
+    { tipo: 'cadastro_necessario', campos_faltantes: ['nome'] },
     { tipo: 'reserva_conflito' },
     { tipo: 'aguardando_confirmacao', procedimento_id: 'cleaning', dentista_id: 'dentista-1', opcao: opcao(540) },
   ];

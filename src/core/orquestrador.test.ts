@@ -47,9 +47,35 @@ function semearConversa(tabelas: TabelasFalsas, clinicaId: string) {
   });
 }
 
+// Paciente cadastrado COMPLETO (specs/cadastro-conversacional-v1.md secao 2):
+// desde 2026-08-10, "existe uma linha de paciente" nao basta para reservar --
+// os obrigatorios (nome, CPF, nascimento) precisam estar preenchidos, senao o
+// fluxo para no cadastro. Os testes de reserva usam esta funcao justamente
+// para NAO cair no cadastro; quem precisa de paciente incompleto usa
+// `semearPacienteIncompleto`.
+//
+// Valores sinteticos; o CPF e valido de proposito (mesmo que a leitura da
+// ficha nao revalide) para nao plantar um dado impossivel nos fixtures.
 function semearPaciente(tabelas: TabelasFalsas, clinicaId: string): string {
   const pacienteId = crypto.randomUUID();
-  tabelas.pacientes.push({ id: pacienteId, clinica_id: clinicaId, telefone_normalizado: TELEFONE });
+  tabelas.pacientes.push({
+    id: pacienteId,
+    clinica_id: clinicaId,
+    telefone_normalizado: TELEFONE,
+    nome: 'Marilda Sinval Quadros',
+    documento: '52998224725',
+    data_nascimento: '1979-06-23',
+  });
+  return pacienteId;
+}
+
+function semearPacienteIncompleto(
+  tabelas: TabelasFalsas,
+  clinicaId: string,
+  cadastro: Record<string, unknown>
+): string {
+  const pacienteId = crypto.randomUUID();
+  tabelas.pacientes.push({ id: pacienteId, clinica_id: clinicaId, telefone_normalizado: TELEFONE, ...cadastro });
   return pacienteId;
 }
 
@@ -466,7 +492,12 @@ test('confirmado mas paciente nao cadastrado: cadastro_necessario, nunca reserva
     instante_atual: INSTANTE_ATUAL,
   });
 
-  assert.deepEqual(resultado.decisao, { tipo: 'cadastro_necessario' });
+  // Paciente novo: faltam os tres obrigatorios de Brasil V1. `email` NAO entra
+  // porque esta clinica nao tem solicitar_email ligado.
+  assert.deepEqual(resultado.decisao, {
+    tipo: 'cadastro_necessario',
+    campos_faltantes: ['nome', 'cpf', 'data_nascimento'],
+  });
   assert.equal(clienteRpc.chamadas.length, 0);
 });
 

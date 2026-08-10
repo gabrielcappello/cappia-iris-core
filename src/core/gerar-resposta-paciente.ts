@@ -28,6 +28,7 @@
 // esta configurada.
 
 import type { DecisaoOrquestrador } from './orquestrador-tipos.ts';
+import type { CampoCadastralInterpretacao } from './interpretacao-tipos.ts';
 import type { OpcaoHorario, ResultadoDisponibilidade } from './disponibilidade-tipos.ts';
 import type {
   MotivoErroConfiguracaoTemporal,
@@ -99,7 +100,15 @@ export function gerarRespostaPaciente(decisao: DecisaoOrquestrador): string {
         : `Encontrei mais de um profissional para esse atendimento: ${nomes}. Qual você prefere?`;
     }
     case 'cadastro_necessario':
-      return 'Para confirmar esse agendamento, preciso completar seu cadastro antes. Pode me passar seu nome completo?';
+      // Fallback deterministico: pede EXATAMENTE o que falta, nunca uma lista
+      // fixa (specs/cadastro-conversacional-v1.md secao 8). O texto natural e
+      // da redatora; isto so entra quando ela falha ou e reprovada.
+      return `Para confirmar esse agendamento, preciso completar seu cadastro antes. Pode me passar ${listarCamposEmPortugues(decisao.campos_faltantes)}?`;
+
+    case 'cpf_ja_cadastrado':
+      // Nao explica de quem e o CPF, nao propoe trocar telefone, nao promete
+      // resolver: desfecho simples, encaminhado a recepcao (spec secao 7).
+      return 'Esse CPF ja consta no cadastro de outro contato aqui na clinica. Vou pedir para a recepcao te ajudar a resolver isso.';
     case 'sem_dentista_disponivel':
       // A pergunta so e feita quando a alternativa EXISTE de verdade
       // (`procedimento_oferecido` presente). Ate 2026-08-09 ela era feita
@@ -305,4 +314,23 @@ export function formatarMinutos(minutos: number): string {
   const hora = Math.floor(minutos / 60);
   const minuto = minutos % 60;
   return `${String(hora).padStart(2, '0')}:${String(minuto).padStart(2, '0')}`;
+}
+
+// Nome de cada campo cadastral como uma pessoa diria em voz alta -- o
+// paciente nunca ve `data_nascimento` (specs/cadastro-conversacional-v1.md
+// secao 8).
+const NOME_LEGIVEL_CAMPO_CADASTRAL: Readonly<Record<CampoCadastralInterpretacao, string>> = {
+  nome: 'seu nome',
+  cpf: 'seu CPF',
+  data_nascimento: 'sua data de nascimento',
+  email: 'seu e-mail',
+};
+
+// "seu nome", "seu nome e seu CPF", "seu nome, seu CPF e sua data de
+// nascimento" -- vírgulas ate o penultimo, "e" antes do ultimo.
+function listarCamposEmPortugues(campos: readonly CampoCadastralInterpretacao[]): string {
+  const nomes = campos.map((campo) => NOME_LEGIVEL_CAMPO_CADASTRAL[campo]);
+  if (nomes.length === 0) return 'seus dados de cadastro'; // inalcancavel: a decisao so existe com campo faltante.
+  if (nomes.length === 1) return nomes[0];
+  return `${nomes.slice(0, -1).join(', ')} e ${nomes[nomes.length - 1]}`;
 }

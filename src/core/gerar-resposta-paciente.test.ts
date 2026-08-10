@@ -421,7 +421,7 @@ test('aguardando_escolha_dentista: pergunta especificamente pelos nomes exibidos
 });
 
 test('cadastro_necessario: pede dado de cadastro, nunca soa como falha tecnica', () => {
-  const texto = gerarRespostaPaciente({ tipo: 'cadastro_necessario' });
+  const texto = gerarRespostaPaciente({ tipo: 'cadastro_necessario', campos_faltantes: ['nome'] });
   assert.ok(!/problema t[eé]cnico/i.test(texto));
 });
 
@@ -477,7 +477,7 @@ test('exaustividade: todos os 18 tipos de DecisaoOrquestrador produzem texto nao
       resultado: { tipo: 'sem_disponibilidade' },
     },
     { tipo: 'aguardando_confirmacao', procedimento_id: 'p1', dentista_id: 'd1', opcao: opcao() },
-    { tipo: 'cadastro_necessario' },
+    { tipo: 'cadastro_necessario', campos_faltantes: ['nome'] },
     { tipo: 'reserva_criada', agendamento_id: 'a1', dentista_id: 'd1', procedimento_id: 'p1', duracao_min: 40, data: '2026-08-05', horario: '09:00' },
     { tipo: 'reserva_conflito' },
     { tipo: 'reserva_falhou', motivo: 'erro_tecnico' },

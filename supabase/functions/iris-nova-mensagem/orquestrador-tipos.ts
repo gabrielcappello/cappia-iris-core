@@ -6,7 +6,7 @@
 import type { ProcedimentoOficial } from './procedimento-tipos.ts';
 import type { DentistaApto, DentistaOficial, ResultadoResolucaoDentista, VinculoDentistaProcedimento } from './dentista-tipos.ts';
 import type { ConfiguracaoDuracao, ResultadoResolucaoDuracao } from './duracao-tipos.ts';
-import type { Conflito, NaturezaMensagem } from './interpretacao-tipos.ts';
+import type { CampoCadastralInterpretacao, Conflito, NaturezaMensagem } from './interpretacao-tipos.ts';
 import type { InstanteAtual, OpcaoHorario, ResultadoDisponibilidade } from './disponibilidade-tipos.ts';
 import type { ResultadoResolucaoTemporal } from './temporal-tipos.ts';
 import type { MotivoErroReserva } from './reservar-agendamento.ts';
@@ -24,6 +24,13 @@ export interface CatalogoClinica {
   dentistas: readonly DentistaOficial[];
   vinculos: readonly VinculoDentistaProcedimento[];
   configuracoesDuracao: readonly ConfiguracaoDuracao[];
+  /**
+   * `clinicas.automatizacoes.solicitar_email` (specs/cadastro-conversacional-v1.md
+   * secao 2). Quando `true`, o e-mail entra nos obrigatorios do cadastro.
+   * Ausente ou malformada no banco ⇒ `false`: a obrigacao precisa ser
+   * afirmativa.
+   */
+  exigirEmail: boolean;
 }
 
 export interface EntradaOrquestrador {
@@ -145,10 +152,25 @@ export type DecisaoOrquestrador =
   // ja devolveu horario_exato_disponivel), mas ainda nao disse "sim" -- nunca
   // reserva sem essa confirmacao explicita (campo `confirmacao`, dados.ts).
   | { tipo: 'aguardando_confirmacao'; procedimento_id: string; dentista_id: string; opcao: OpcaoHorario }
-  // Confirmado, horario livre, mas o telefone nao corresponde a nenhum
-  // paciente cadastrado -- cappia_reservar_agendamento exige paciente_id;
-  // cadastro de paciente novo fica fora desta etapa, por decisao do Gabriel.
-  | { tipo: 'cadastro_necessario' }
+  // Confirmado e horario livre, mas faltam dados cadastrais obrigatorios
+  // (specs/cadastro-conversacional-v1.md secoes 1 e 2).
+  //
+  // Vale para paciente NOVO e para paciente EXISTENTE INCOMPLETO -- o gatilho
+  // deixou de ser "nao ha paciente" e passou a ser "falta dado". Paciente
+  // existente e completo nunca cai aqui: o cadastro nao interrompe o
+  // agendamento dele.
+  //
+  // `campos_faltantes` e itemizado e sai da VISAO EFETIVA (ficha + conversa),
+  // entao nunca inclui algo que ja se sabe. O Core autoriza QUAIS campos
+  // faltam; a redatora e quem formula a pergunta -- nao existe sequencia
+  // rigida de textos.
+  | { tipo: 'cadastro_necessario'; campos_faltantes: readonly CampoCadastralInterpretacao[] }
+  // A persistencia recusou por CPF ja usado por outro telefone nesta clinica
+  // (specs/cadastro-conversacional-v1.md secao 7). Desfecho simples e
+  // terminal: nao duplica paciente, nao atualiza telefone, nao investiga de
+  // quem e o CPF. Toda a logica de transferencia de telefone
+  // (persistencia-v1.md secoes 6 e 7) continua fora de escopo.
+  | { tipo: 'cpf_ja_cadastrado' }
   | {
       tipo: 'reserva_criada';
       agendamento_id: string;

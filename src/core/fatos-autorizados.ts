@@ -12,7 +12,20 @@
 import { formatarData, formatarMinutos } from './gerar-resposta-paciente.ts';
 import type { DecisaoOrquestrador } from './orquestrador-tipos.ts';
 
-export type CampoFaltante = 'procedimento' | 'data' | 'horario' | 'cadastro';
+/**
+ * ITEMIZADO desde 2026-08-10 (specs/cadastro-conversacional-v1.md secao 8): o
+ * valor monolitico `'cadastro'` saiu. Ele dizia apenas "falta cadastro", sem
+ * dizer o que falta -- e a redatora nao tinha como pedir so o que ainda nao se
+ * sabe. Os quatro campos cadastrais entram no lugar dele.
+ */
+export type CampoFaltante =
+  | 'procedimento'
+  | 'data'
+  | 'horario'
+  | 'nome'
+  | 'cpf'
+  | 'data_nascimento'
+  | 'email';
 
 /**
  * ATENCAO (achado da implementacao, 2026-08-06): a spec aprovada previa
@@ -43,6 +56,7 @@ export type ObjetivoResposta =
   | 'pedir_cadastro' // 2026-08-06 -- cadastro_necessario nao cabia em nenhum dos 14 originais.
   | 'informar_sem_profissional' // 2026-08-06 -- sem_dentista_disponivel, idem.
   | 'informar_combinacao_indisponivel' // 2026-08-09 -- combinacao_indisponivel (specs/dentista-semantico-v1.md).
+  | 'informar_cpf_ja_cadastrado' // 2026-08-10 -- specs/cadastro-conversacional-v1.md secao 7.
   | 'informar_substituicao_por_avaliacao'; // 2026-08-09 -- o procedimento cedeu para preservar o dentista escolhido.
 
 export interface FatosAutorizados {
@@ -198,7 +212,13 @@ function derivarPorDecisao(decisao: DecisaoOrquestrador): FatosAutorizados {
       };
 
     case 'cadastro_necessario':
-      return { objetivo: 'pedir_cadastro', dados_faltantes: ['cadastro'] };
+      // O Core autoriza QUAIS campos faltam; a redatora e quem formula a
+      // pergunta, no tom reciproco de sempre. Nao existe sequencia rigida de
+      // textos nem uma pergunta fixa por campo.
+      return { objetivo: 'pedir_cadastro', dados_faltantes: [...decisao.campos_faltantes] };
+
+    case 'cpf_ja_cadastrado':
+      return { objetivo: 'informar_cpf_ja_cadastrado' };
 
     case 'reserva_criada':
       return {

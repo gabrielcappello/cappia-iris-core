@@ -94,6 +94,15 @@ export function derivarAcaoContextoHorarios(decisao: DecisaoOrquestrador): AcaoC
     case 'saudacao':
     case 'duvida_livre':
     case 'mensagem_nao_compreendida':
+    // PRESERVAR desde 2026-08-10 (specs/cadastro-conversacional-v1.md secao 5).
+    // Era `limpar`. A coleta de cadastro leva mais de um turno; limpando aqui,
+    // a proposta que o paciente JA CONFIRMOU desaparecia e o slot teria de ser
+    // re-derivado a cada turno.
+    //
+    // Preservar NAO reserva, NAO bloqueia e NAO garante o horario: a reserva
+    // continua sendo a autoridade final e detecta `horario_ocupado`
+    // normalmente se ele for tomado durante a coleta.
+    case 'cadastro_necessario':
       return { tipo: 'preservar' };
 
     case 'clinica_sem_catalogo':
@@ -105,7 +114,7 @@ export function derivarAcaoContextoHorarios(decisao: DecisaoOrquestrador): AcaoC
     case 'duracao_nao_configurada':
     case 'erro_configuracao_duracao':
     case 'aguardando_data_horario':
-    case 'cadastro_necessario':
+    case 'cpf_ja_cadastrado':
     case 'reserva_criada':
     case 'reserva_conflito':
     case 'reserva_falhou':

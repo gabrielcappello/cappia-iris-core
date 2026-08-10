@@ -7,9 +7,13 @@ import { resolverTemporal } from './resolver-temporal.ts';
 import { carregarEntradaDisponibilidade } from './carregar-disponibilidade.ts';
 import { carregarCatalogo } from './carregar-catalogo.ts';
 import { reservarAgendamento } from './reservar-agendamento.ts';
+import { persistirPaciente } from './persistir-paciente.ts';
+import { calcularCadastroFaltante, comporVisaoEfetivaCadastro } from './cadastro-paciente.ts';
 import { derivarAcaoContextoHorarios, gravarContextoHorarios } from './contexto-horarios.ts';
 import { historicoValidoParaEnvio } from './historico-conversa.ts';
-import type { ClienteBancoDados } from './tipos.ts';
+import { ErroRpcTecnico } from './erros.ts';
+import { CAMPOS_CADASTRAIS_INTERPRETACAO } from './interpretacao-tipos.ts';
+import type { CadastroPaciente, ClienteBancoDados } from './tipos.ts';
 import type { ClienteModeloEstruturado, NaturezaMensagem } from './interpretacao-tipos.ts';
 import type { ClienteRpc } from './mensagens-recebidas-tipos.ts';
 import type { InstanteAtual, ModoConsulta, OpcaoHorario } from './disponibilidade-tipos.ts';
@@ -119,6 +123,10 @@ export async function processarMensagem(
     ...(Object.keys(identificacao.paciente.cadastro).length > 0
       ? { cadastro_paciente: identificacao.paciente.cadastro }
       : {}),
+    // Hoje, para recusar data de nascimento futura na validacao cadastral
+    // (specs/cadastro-conversacional-v1.md secao 4). Vem do instante ja
+    // injetado -- nem o orquestrador nem a validacao leem relogio.
+    data_referencia: entrada.instante_atual.data,
   });
 
   // `atualizado_em` EXATO do estado sobre o qual a decisao desta mensagem
@@ -189,7 +197,8 @@ export async function processarMensagem(
     dados,
     catalogoCarregado.catalogo,
     entrada.instante_atual,
-    interpretacao.dentistas_candidatos
+    interpretacao.dentistas_candidatos,
+    identificacao.paciente.cadastro
   );
 
   return await finalizar(resultadoDecisao.decisao, resultadoDecisao.substituicao);
@@ -255,7 +264,8 @@ async function decidir(
   dados: Record<string, string | undefined>,
   catalogo: CatalogoClinica,
   instanteAtual: InstanteAtual,
-  dentistasCandidatos: string[] | null
+  dentistasCandidatos: string[] | null,
+  cadastroFicha: CadastroPaciente
 ): Promise<{ decisao: DecisaoOrquestrador; substituicao?: { dentista_nome_exibido: string } }> {
   // INTEGRIDADE, NUNCA INTERPRETACAO (specs/procedimento-semantico-v1.md
   // secao 4). Quem entendeu o pedido do paciente foi a IA, que devolveu um
@@ -364,7 +374,10 @@ async function decidir(
             resolucaoDentista.dentistaId,
             resultadoDuracao.duracao_min,
             carregado.resultado.opcao,
-            dados.confirmacao
+            dados.confirmacao,
+            cadastroFicha,
+            comporVisaoEfetivaCadastro(cadastroFicha, dados),
+            catalogo.exigirEmail
           )
         );
       }
@@ -400,6 +413,17 @@ async function decidir(
  * recalcula procedimento/dentista/duracao/horario -- todos os quatro
  * chegam exatamente como ja resolvidos por decidir(), sem nova consulta.
  */
+/**
+ * A conversa trouxe algo que a ficha ainda nao tem (ou tem diferente)?
+ *
+ * Evita escrita inutil: paciente existente, completo e sem nada novo nesta
+ * conversa nao precisa de UPDATE nenhum -- o `paciente_id` da identificacao
+ * segue direto para a reserva (specs/cadastro-conversacional-v1.md secao 6).
+ */
+function cadastroDivergeDaFicha(visaoEfetiva: CadastroPaciente, ficha: CadastroPaciente): boolean {
+  return CAMPOS_CADASTRAIS_INTERPRETACAO.some((campo) => visaoEfetiva[campo] !== ficha[campo]);
+}
+
 async function decidirConfirmacaoOuReserva(
   clienteRpc: ClienteRpc,
   clinicaId: string,
@@ -409,7 +433,10 @@ async function decidirConfirmacaoOuReserva(
   dentistaId: string,
   duracaoMin: number,
   opcao: OpcaoHorario,
-  confirmacao: string | undefined
+  confirmacao: string | undefined,
+  cadastroFicha: CadastroPaciente,
+  visaoEfetiva: CadastroPaciente,
+  exigirEmail: boolean
 ): Promise<DecisaoOrquestrador> {
   // Regra absoluta: nunca reservar sem confirmacao explicita ('sim',
   // vocabulario fechado ja validado por aplicar-dados.ts). Ausencia ou
@@ -418,19 +445,65 @@ async function decidirConfirmacaoOuReserva(
     return { tipo: 'aguardando_confirmacao', procedimento_id: procedimentoId, dentista_id: dentistaId, opcao };
   }
 
-  // cappia_reservar_agendamento exige paciente_id (nao tem default) -- sem
-  // paciente ja cadastrado pelo telefone, nao ha o que reservar. Cadastro de
-  // paciente novo fica fora desta etapa, por decisao do Gabriel.
-  if (pacienteId === null) {
-    return { tipo: 'cadastro_necessario' };
+  // CADASTRO -- depois da confirmacao do horario, nunca antes
+  // (specs/cadastro-conversacional-v1.md secao 1; novo-agendamento.md secao 12).
+  //
+  // O gatilho e "falta dado", nao "nao ha paciente": um paciente existente com
+  // cadastro incompleto tambem para aqui, e um paciente existente e completo
+  // nunca e interrompido.
+  const faltantes = calcularCadastroFaltante(visaoEfetiva, exigirEmail);
+  if (faltantes.length > 0) {
+    return { tipo: 'cadastro_necessario', campos_faltantes: faltantes };
   }
 
+  // Cadastro completo: garantir paciente_id antes da reserva. Persistir
+  // somente quando ha o que persistir -- paciente novo, ou paciente existente
+  // cujo cadastro esta diferente do que a conversa ja sabe. Paciente existente,
+  // completo e sem nada novo segue direto, sem escrita nenhuma.
+  let pacienteIdParaReserva: string;
+  if (pacienteId === null || cadastroDivergeDaFicha(visaoEfetiva, cadastroFicha)) {
+    const persistencia = await persistirPaciente(clienteRpc, {
+      clinica_id: clinicaId,
+      telefone_normalizado: telefoneNormalizado,
+      // Sempre presente: `calcularCadastroFaltante` acabou de garantir que
+      // nenhum obrigatorio falta, e `nome` e obrigatorio em toda chamada.
+      nome: visaoEfetiva.nome as string,
+      ...(visaoEfetiva.cpf !== undefined ? { cpf: visaoEfetiva.cpf } : {}),
+      ...(visaoEfetiva.data_nascimento !== undefined ? { data_nascimento: visaoEfetiva.data_nascimento } : {}),
+      ...(visaoEfetiva.email !== undefined ? { email: visaoEfetiva.email } : {}),
+    });
+
+    if (persistencia.tipo === 'cpf_ja_cadastrado') {
+      // Unico desfecho conversacional proprio da persistencia nesta etapa.
+      // Nao duplica, nao atualiza telefone, nao investiga.
+      return { tipo: 'cpf_ja_cadastrado' };
+    }
+    if (persistencia.tipo === 'falhou') {
+      // INVARIANTE DO CORE VIOLADA (spec secao 9): clinica_id_ausente,
+      // telefone_normalizado_ausente e nome_ausente sao inalcancaveis se o
+      // fluxo estiver correto -- chegar aqui e bug interno, nao situacao do
+      // paciente. Falha fechado pelo mecanismo tecnico ja existente, em vez
+      // de virar decisao conversacional ou de seguir para a reserva com
+      // estado inconsistente.
+      throw new ErroRpcTecnico('cappia_persistir_paciente', `invariante_violada:${persistencia.motivo}`);
+    }
+
+    pacienteIdParaReserva = persistencia.paciente_id;
+  } else {
+    // Ramo alcancado somente quando `pacienteId` nao e nulo (a condicao acima
+    // ja o teria capturado) -- paciente existente, completo e sem nada novo.
+    pacienteIdParaReserva = pacienteId;
+  }
+
+  // Encadeamento direto: nao ha decisao humana pendente entre cadastrar e
+  // reservar, entao o mesmo processamento continua. A logica de reserva abaixo
+  // nao foi alterada -- so passou a receber o id recem-obtido.
   const horario = minutosParaHHMM(opcao.inicio_min);
   const resultadoReserva = await reservarAgendamento(clienteRpc, {
     clinica_id: clinicaId,
     procedimento_id: procedimentoId,
     dentista_id: dentistaId,
-    paciente_id: pacienteId,
+    paciente_id: pacienteIdParaReserva,
     data: opcao.data,
     horario,
     telefone_normalizado: telefoneNormalizado,
