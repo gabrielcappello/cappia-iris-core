@@ -111,6 +111,14 @@ export async function processarMensagem(
     ...(identificacao.conversa.contexto_horarios?.oferta_procedimento_pendente !== undefined
       ? { oferta_procedimento_pendente: identificacao.conversa.contexto_horarios.oferta_procedimento_pendente }
       : {}),
+    // Cadastro ja persistido do paciente, quando ele existe e tem algum dado.
+    // Serve para a Iris nao pedir de novo o que ja esta na ficha: entra
+    // somente na derivacao de `campos_cadastrais_preenchidos` (presenca,
+    // nunca valor). Chave AUSENTE quando nao ha nada cadastrado -- nunca `{}`,
+    // mesma disciplina das demais chaves opcionais acima.
+    ...(Object.keys(identificacao.paciente.cadastro).length > 0
+      ? { cadastro_paciente: identificacao.paciente.cadastro }
+      : {}),
   });
 
   // `atualizado_em` EXATO do estado sobre o qual a decisao desta mensagem

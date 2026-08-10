@@ -384,3 +384,120 @@ test('teste-vinculo4: reconsulta apos update concorrente com linha estruturalmen
     }
   );
 });
+
+// --- Cadastro do paciente carregado na identificacao (2026-08-09) ---
+//
+// Contrato: specs/interpretacao-ia.md ("Entrada e PII", segunda origem) e a
+// decisao do Gabriel de 2026-08-09. `pacientes.documento` (coluna fisica) e
+// lido como `cpf` (conceito de dominio) NESTE unico ponto de leitura.
+//
+// Todos os valores abaixo sao SINTETICOS -- nenhum dado real de paciente.
+
+function semearPacienteComCadastro(
+  tabelas: TabelasFalsas,
+  clinicaId: string,
+  telefoneNormalizado: string,
+  cadastro: Record<string, unknown>
+) {
+  const paciente = { id: crypto.randomUUID(), clinica_id: clinicaId, telefone_normalizado: telefoneNormalizado, ...cadastro };
+  tabelas.pacientes.push(paciente);
+  return paciente;
+}
+
+test('cadastro: paciente existente carrega nome, cpf, nascimento e email', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const clinica = semearClinica(tabelas, INSTANCIA_A);
+  semearPacienteComCadastro(tabelas, clinica.id, TELEFONE_VALIDO, {
+    nome: 'Idalina Prudencio Vasconcelos',
+    documento: '52998224725',
+    data_nascimento: '1974-03-19',
+    email: 'idalina.vasconcelos@exemplo-sintetico.test',
+  });
+
+  const resultado = await identificarConversa(new ClienteFalso(tabelas), {
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA_A,
+    telefone_normalizado: TELEFONE_VALIDO,
+  });
+
+  assert.deepEqual(resultado.paciente.cadastro, {
+    nome: 'Idalina Prudencio Vasconcelos',
+    cpf: '52998224725',
+    data_nascimento: '1974-03-19',
+    email: 'idalina.vasconcelos@exemplo-sintetico.test',
+  });
+});
+
+test('cadastro: a coluna fisica `documento` vira `cpf` no dominio, e `documento` nao vaza', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const clinica = semearClinica(tabelas, INSTANCIA_A);
+  semearPacienteComCadastro(tabelas, clinica.id, TELEFONE_VALIDO, { nome: 'Reinaldo Bittencourt', documento: '11144477735' });
+
+  const resultado = await identificarConversa(new ClienteFalso(tabelas), {
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA_A,
+    telefone_normalizado: TELEFONE_VALIDO,
+  });
+
+  assert.equal(resultado.paciente.cadastro.cpf, '11144477735');
+  // O nome fisico da coluna nao existe no dominio -- se aparecesse aqui,
+  // haveria duas fontes para o mesmo conceito.
+  assert.ok(!Object.prototype.hasOwnProperty.call(resultado.paciente.cadastro, 'documento'));
+});
+
+test('cadastro: coluna nula, ausente ou so espacos vira CHAVE AUSENTE, nunca null', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const clinica = semearClinica(tabelas, INSTANCIA_A);
+  semearPacienteComCadastro(tabelas, clinica.id, TELEFONE_VALIDO, {
+    nome: 'Osvaldina Nepomuceno',
+    documento: null,
+    data_nascimento: '   ',
+    // `email` deliberadamente ausente da linha, nao apenas nulo.
+  });
+
+  const resultado = await identificarConversa(new ClienteFalso(tabelas), {
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA_A,
+    telefone_normalizado: TELEFONE_VALIDO,
+  });
+
+  assert.deepEqual(resultado.paciente.cadastro, { nome: 'Osvaldina Nepomuceno' });
+  // Chave ausente, nunca `null`: um espalhamento `{...cadastro, ...outros}`
+  // com `null` explicito sobrescreveria valor real por nada.
+  assert.deepEqual(Object.keys(resultado.paciente.cadastro), ['nome']);
+});
+
+test('cadastro: paciente inexistente devolve cadastro vazio, nunca undefined', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  semearClinica(tabelas, INSTANCIA_A);
+
+  const resultado = await identificarConversa(new ClienteFalso(tabelas), {
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA_A,
+    telefone_normalizado: TELEFONE_VALIDO,
+  });
+
+  assert.equal(resultado.paciente.encontrado, false);
+  assert.deepEqual(resultado.paciente.cadastro, {});
+});
+
+test('cadastro: isolamento por clinica -- mesmo telefone em outra clinica nao carrega cadastro', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const clinicaA = semearClinica(tabelas, INSTANCIA_A);
+  const clinicaB = semearClinica(tabelas, INSTANCIA_B);
+  // O paciente existe SO na clinica B, com o MESMO telefone.
+  semearPacienteComCadastro(tabelas, clinicaB.id, TELEFONE_VALIDO, {
+    nome: 'Nao Deve Vazar Para A Clinica A',
+    documento: '52998224725',
+  });
+
+  const resultado = await identificarConversa(new ClienteFalso(tabelas), {
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA_A,
+    telefone_normalizado: TELEFONE_VALIDO,
+  });
+
+  assert.equal(resultado.clinica_id, clinicaA.id);
+  assert.equal(resultado.paciente.encontrado, false);
+  assert.deepEqual(resultado.paciente.cadastro, {});
+});

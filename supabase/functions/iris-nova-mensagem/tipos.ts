@@ -79,11 +79,39 @@ export interface ParConversa {
 // "nenhum turno anterior" e sempre `null`.
 export type HistoricoConversa = ParConversa[];
 
+/**
+ * Dados cadastrais JA PERSISTIDOS do paciente, lidos da tabela `pacientes`.
+ *
+ * `cpf` e o nome do conceito no dominio; a coluna fisica correspondente e
+ * `pacientes.documento`. A traducao acontece em UM unico ponto de leitura
+ * (buscarPaciente, em identificacao.ts), espelhando o unico ponto de escrita
+ * (`cpf -> p_documento`, em persistir-paciente.ts). Nao existe coluna `cpf`
+ * nem segunda fonte de verdade.
+ *
+ * Campo NULO no banco vira chave AUSENTE aqui, nunca `null` -- mesma
+ * disciplina de `historico_recente` e `procedimentos_disponiveis`: a
+ * ausencia se representa pela falta da chave, para que um espalhamento
+ * (`{ ...cadastro, ...outros }`) nunca sobrescreva um valor real com `null`.
+ */
+export interface CadastroPaciente {
+  nome?: string;
+  cpf?: string;
+  data_nascimento?: string;
+  email?: string;
+}
+
 export interface ResultadoIdentificacao {
   clinica_id: string;
   paciente: {
     encontrado: boolean;
     id: string | null;
+    /**
+     * Cadastro oficial ja persistido. `{}` quando o paciente nao existe ou
+     * quando existe sem nenhum dado cadastral preenchido -- os dois casos sao
+     * indistinguiveis aqui de proposito, porque `encontrado`/`id` ja
+     * respondem "existe?" e este campo responde apenas "o que se sabe dele".
+     */
+    cadastro: CadastroPaciente;
   };
   conversa: {
     id: string;

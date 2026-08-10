@@ -462,3 +462,162 @@ test('INT-12 (HTTP): preenchimento parcial chega corretamente ao corpo', async (
 
   assert.deepEqual(payloadHttp.campos_cadastrais_preenchidos, ['nome', 'email']);
 });
+
+// =====================================================================
+// INT-11/INT-12 -- SEGUNDA ORIGEM de dado cadastral (2026-08-09)
+// =====================================================================
+//
+// Ate esta data existia uma unica origem de valor cadastral: o snapshot de
+// `estado_conversa.dados`. A subetapa "integracao do Core com paciente"
+// acrescentou a ficha ja persistida em `pacientes`, que chega ao extrator
+// como `cadastro_paciente`.
+//
+// O contrato de PII vale IGUAL para as duas origens: a IA continua recebendo
+// somente `campos_cadastrais_preenchidos` (presenca), nunca os valores. Sem
+// os testes abaixo, o contrato estaria provado so para o caminho antigo.
+//
+// Os valores da ficha sao DIFERENTES dos do snapshot de proposito -- se o
+// vazamento viesse da origem nova, buscar pelos valores antigos daria falso
+// negativo.
+
+const NOME_FICHA = 'Hermenegildo Vasconcelos Tavares';
+const CPF_FICHA = '11144477735';
+const NASCIMENTO_FICHA = '1962-11-07';
+const EMAIL_FICHA = 'hermenegildo.tavares@outro-sintetico.test';
+
+const CADASTRO_DA_FICHA = {
+  nome: NOME_FICHA,
+  cpf: CPF_FICHA,
+  data_nascimento: NASCIMENTO_FICHA,
+  email: EMAIL_FICHA,
+};
+
+const FORMAS_DERIVADAS_PROIBIDAS_FICHA = [
+  NOME_FICHA,
+  NOME_FICHA.toLowerCase(),
+  NOME_FICHA.split(' ')[0],
+  'Hermenegildo',
+  'Tavares',
+  CPF_FICHA,
+  '111.444.777-35',
+  '***.***.***-35',
+  CPF_FICHA.slice(-4),
+  NASCIMENTO_FICHA,
+  '07/11/1962',
+  '1962',
+  EMAIL_FICHA,
+  EMAIL_FICHA.split('@')[0],
+  'outro-sintetico.test',
+];
+
+test('INT-11 (ficha): nenhum valor vindo de `pacientes` chega ao payload do modelo', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  // Conversa SEM nenhum dado cadastral: tudo o que a Iris sabe vem da ficha.
+  const conversa = semearEstado(tabelas, { intencao: 'novo_agendamento' });
+  const clienteBanco = new ClienteFalso(tabelas);
+  const clienteModelo = new ClienteModeloFalso([{ natureza_mensagem: 'pedido', alteracoes: {} }]);
+
+  await interpretarEAplicar(clienteModelo, clienteBanco, {
+    conversa_id: conversa.id,
+    clinica_id: CLINICA_ID,
+    telefone_normalizado: TELEFONE_SINTETICO,
+    mensagens_atuais: ['quero marcar uma limpeza'],
+    cadastro_paciente: CADASTRO_DA_FICHA,
+  });
+
+  const payloadSerializado = JSON.stringify(clienteModelo.chamadas[0].payload);
+  for (const forma of FORMAS_DERIVADAS_PROIBIDAS_FICHA) {
+    assert.ok(
+      !payloadSerializado.includes(forma),
+      'valor cadastral vindo da ficha do paciente nao pode aparecer no payload, nem em forma derivada'
+    );
+  }
+});
+
+test('INT-12 (ficha): a ficha SO se manifesta como campos_cadastrais_preenchidos', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const conversa = semearEstado(tabelas, { intencao: 'novo_agendamento' });
+  const clienteBanco = new ClienteFalso(tabelas);
+  const clienteModelo = new ClienteModeloFalso([{ natureza_mensagem: 'pedido', alteracoes: {} }]);
+
+  await interpretarEAplicar(clienteModelo, clienteBanco, {
+    conversa_id: conversa.id,
+    clinica_id: CLINICA_ID,
+    telefone_normalizado: TELEFONE_SINTETICO,
+    mensagens_atuais: ['oi'],
+    cadastro_paciente: CADASTRO_DA_FICHA,
+  });
+
+  const { payload } = clienteModelo.chamadas[0];
+
+  // A informacao UTIL passou: a Iris sabe que nao precisa pedir esses dados.
+  assert.deepEqual(payload.campos_cadastrais_preenchidos, ['nome', 'cpf', 'data_nascimento', 'email']);
+  // E nenhum valor acompanhou. `dados_atuais` continua so operacional.
+  assert.deepEqual(payload.dados_atuais, { intencao: 'novo_agendamento' });
+  // A chave da origem nova nunca e repassada adiante.
+  assert.ok(!Object.prototype.hasOwnProperty.call(payload, 'cadastro_paciente'));
+});
+
+test('INT-12 (ficha): ficha parcial produz indicador parcial, sem inventar presenca', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const conversa = semearEstado(tabelas, {});
+  const clienteBanco = new ClienteFalso(tabelas);
+  const clienteModelo = new ClienteModeloFalso([{ natureza_mensagem: 'pedido', alteracoes: {} }]);
+
+  await interpretarEAplicar(clienteModelo, clienteBanco, {
+    conversa_id: conversa.id,
+    clinica_id: CLINICA_ID,
+    telefone_normalizado: TELEFONE_SINTETICO,
+    mensagens_atuais: ['oi'],
+    cadastro_paciente: { nome: NOME_FICHA, cpf: CPF_FICHA },
+  });
+
+  const { payload } = clienteModelo.chamadas[0];
+  assert.deepEqual(payload.campos_cadastrais_preenchidos, ['nome', 'cpf']);
+});
+
+test('INT-12 (ficha): conversa e ficha se somam -- a uniao das duas origens e indicada', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  // A conversa tem e-mail; a ficha tem nome e CPF. A Iris precisa saber que
+  // os tres ja existem -- senao pede de novo algo que ja tem.
+  const conversa = semearEstado(tabelas, { email: EMAIL_SINTETICO });
+  const clienteBanco = new ClienteFalso(tabelas);
+  const clienteModelo = new ClienteModeloFalso([{ natureza_mensagem: 'pedido', alteracoes: {} }]);
+
+  await interpretarEAplicar(clienteModelo, clienteBanco, {
+    conversa_id: conversa.id,
+    clinica_id: CLINICA_ID,
+    telefone_normalizado: TELEFONE_SINTETICO,
+    mensagens_atuais: ['oi'],
+    cadastro_paciente: { nome: NOME_FICHA, cpf: CPF_FICHA },
+  });
+
+  const { payload } = clienteModelo.chamadas[0];
+  assert.deepEqual(payload.campos_cadastrais_preenchidos, ['nome', 'cpf', 'email']);
+
+  // Nem o valor da ficha nem o da conversa aparecem.
+  const serializado = JSON.stringify(payload);
+  assert.ok(!serializado.includes(NOME_FICHA));
+  assert.ok(!serializado.includes(CPF_FICHA));
+  assert.ok(!serializado.includes(EMAIL_SINTETICO));
+});
+
+test('INT-12 (ficha): a ficha NAO e copiada para estado_conversa.dados', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const conversa = semearEstado(tabelas, { intencao: 'novo_agendamento' });
+  const clienteBanco = new ClienteFalso(tabelas);
+  const clienteModelo = new ClienteModeloFalso([{ natureza_mensagem: 'pedido', alteracoes: {} }]);
+
+  await interpretarEAplicar(clienteModelo, clienteBanco, {
+    conversa_id: conversa.id,
+    clinica_id: CLINICA_ID,
+    telefone_normalizado: TELEFONE_SINTETICO,
+    mensagens_atuais: ['oi'],
+    cadastro_paciente: CADASTRO_DA_FICHA,
+  });
+
+  // Nenhuma segunda fonte persistida: `dados` continua exatamente como
+  // estava. Semear a ficha aqui faria um `informar` posterior do paciente
+  // ser descartado em silencio por calcularNovosDados.
+  assert.deepEqual(tabelas.estado_conversa[0].dados, { intencao: 'novo_agendamento' });
+});

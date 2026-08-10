@@ -9,6 +9,7 @@ import {
 import { preAplicar } from './pre-aplicacao.ts';
 import type {
   AlteracoesDados,
+  CadastroPaciente,
   ClienteBancoDados,
   ContextoConversa,
   ParConversa,
@@ -66,6 +67,19 @@ export interface InterpretarEAplicarInput extends ContextoConversa {
    * -- o procedimento aceito passa pela validacao de integridade de sempre.
    */
   oferta_procedimento_pendente?: { procedimento_id: string };
+  /**
+   * Cadastro JA PERSISTIDO do paciente (identificacao.ts). SEGUNDA ORIGEM de
+   * dado cadastral, ao lado do snapshot da conversa.
+   *
+   * Entra APENAS na derivacao de `campos_cadastrais_preenchidos` -- presenca,
+   * nunca valor. Nenhum valor daqui atravessa a fronteira do modelo
+   * (specs/interpretacao-ia.md, "Entrada e PII").
+   *
+   * NAO e copiado para `estado_conversa.dados`: a composicao acontece em
+   * memoria, e o que o paciente disse nesta conversa prevalece sobre a ficha
+   * (comporVisaoEfetivaCadastro, em cadastro-paciente.ts).
+   */
+  cadastro_paciente?: CadastroPaciente;
 }
 
 /**
@@ -168,6 +182,7 @@ const CHAVES_OPCIONAIS_INTEGRADA = [
   'procedimentos_disponiveis',
   'dentistas_disponiveis',
   'oferta_procedimento_pendente',
+  'cadastro_paciente',
 ] as const;
 
 /**
@@ -220,7 +235,12 @@ export async function interpretarEAplicar(
       entrada.historico_recente,
       entrada.procedimentos_disponiveis,
       entrada.dentistas_disponiveis,
-      entrada.oferta_procedimento_pendente !== undefined ? true : undefined
+      entrada.oferta_procedimento_pendente !== undefined ? true : undefined,
+      // Segunda origem de dado cadastral (a ficha em `pacientes`). Vai
+      // inteira para dentro de construirEntradaMinimizada, que extrai
+      // PRESENCA e descarta os valores -- nenhum valor cadastral, de
+      // qualquer origem, chega ao modelo.
+      entrada.cadastro_paciente
     )
   );
 

@@ -6,6 +6,7 @@ import {
   INTENCOES_PERMITIDAS,
   PERIODOS_PERMITIDOS,
 } from './aplicar-dados.ts';
+import { comporVisaoEfetivaCadastro } from './cadastro-paciente.ts';
 import { EntradaInvalidaError, InterpretacaoInvalidaError } from './erros.ts';
 import { INSTRUCOES_EXTRATOR, SCHEMA_SAIDA_INTERPRETACAO } from './interpretacao-instrucoes.ts';
 import {
@@ -14,7 +15,7 @@ import {
   NATUREZAS_MENSAGEM_PERMITIDAS,
   TIPOS_EVENTO_CANDIDATO_PERMITIDOS,
 } from './interpretacao-tipos.ts';
-import type { AcaoAlteracaoDados, CampoDadosConversa, ParConversa } from './tipos.ts';
+import type { AcaoAlteracaoDados, CadastroPaciente, CampoDadosConversa, ParConversa } from './tipos.ts';
 import type {
   CampoCadastralInterpretacao,
   CampoOperacionalInterpretacao,
@@ -83,6 +84,16 @@ export async function extrairAlteracoes(
  * PII: os campos operacionais seguem por valor; os campos cadastrais
  * viram apenas a indicacao de PRESENCA. Nenhum valor cadastral -- bruto,
  * formatado, normalizado, truncado ou mascarado -- atravessa esta funcao.
+ *
+ * `cadastroPaciente` (2026-08-09) e a SEGUNDA ORIGEM de dado cadastral: a
+ * ficha ja persistida em `pacientes`. Ela entra APENAS na derivacao de
+ * presenca -- `dados_atuais` continua saindo exclusivamente do snapshot da
+ * conversa, e continua sem nenhum campo cadastral. Sem ela, um paciente ja
+ * cadastrado comecava a conversa com `campos_cadastrais_preenchidos: []` e a
+ * Iris pedia de novo dado que ja estava na ficha.
+ *
+ * A precedencia (conversa vence ficha) fica em comporVisaoEfetivaCadastro --
+ * aqui so se consome o resultado.
  */
 export function construirEntradaMinimizada(
   mensagensAtuais: string[],
@@ -92,12 +103,15 @@ export function construirEntradaMinimizada(
   historicoRecente?: ParConversa[],
   procedimentosDisponiveis?: { procedimento_id: string; nome_pt: string }[],
   dentistasDisponiveis?: { dentista_id: string; nome_exibido: string }[],
-  ofertaProcedimentoPendente?: true
+  ofertaProcedimentoPendente?: true,
+  cadastroPaciente?: CadastroPaciente
 ): EntradaInterpretacao {
   return {
     mensagens_atuais: [...mensagensAtuais],
     dados_atuais: selecionarCamposOperacionais(snapshotOficial),
-    campos_cadastrais_preenchidos: derivarCamposCadastraisPreenchidos(snapshotOficial),
+    campos_cadastrais_preenchidos: derivarCamposCadastraisPreenchidos(
+      comporVisaoEfetivaCadastro(cadastroPaciente, snapshotOficial)
+    ),
     ...(horariosOferecidos !== undefined ? { horarios_oferecidos: [...horariosOferecidos] } : {}),
     ...(propostaPendente !== undefined ? { proposta_pendente: propostaPendente } : {}),
     ...(procedimentosDisponiveis !== undefined ? { procedimentos_disponiveis: [...procedimentosDisponiveis] } : {}),
@@ -128,10 +142,10 @@ function selecionarCamposOperacionais(
  * ausente. A ordem segue a lista canonica, para ser deterministica.
  */
 export function derivarCamposCadastraisPreenchidos(
-  snapshotOficial: Partial<Record<string, string>>
+  origem: Partial<Record<CampoCadastralInterpretacao, string>>
 ): CampoCadastralInterpretacao[] {
   return CAMPOS_CADASTRAIS_INTERPRETACAO.filter((campo) => {
-    const valor = snapshotOficial[campo];
+    const valor = origem[campo];
     return typeof valor === 'string' && valor.trim() !== '';
   });
 }

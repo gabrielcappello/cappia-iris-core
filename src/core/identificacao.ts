@@ -3,6 +3,7 @@ import { telefoneNormalizadoValido } from './telefone.ts';
 import { validarContextoHorarios } from './contexto-horarios.ts';
 import { validarHistoricoConversa } from './historico-conversa.ts';
 import type {
+  CadastroPaciente,
   ClienteBancoDados,
   ContextoHorarios,
   EstadoConversa,
@@ -110,6 +111,7 @@ export async function identificarConversa(
     paciente: {
       encontrado: paciente !== null,
       id: paciente?.id ?? null,
+      cadastro: paciente?.cadastro ?? {},
     },
     conversa: {
       id: conversa.id,
@@ -153,20 +155,71 @@ async function buscarClinica(
   return (data as { id: string } | null) ?? null;
 }
 
+// Colunas lidas de `pacientes`. As quatro cadastrais entraram em 2026-08-09
+// (subetapa "integracao do Core com paciente"): sem elas, um paciente ja
+// cadastrado comecava toda conversa como se a clinica nao soubesse nada
+// dele, e a Iris pedia de novo dado que ja estava na ficha.
+//
+// `documento` e a coluna fisica; no dominio ela se chama `cpf`. Este SELECT e
+// o unico ponto de leitura onde a traducao acontece.
+const COLUNAS_PACIENTE = 'id, nome, documento, data_nascimento, email';
+
+interface LinhaPaciente {
+  id: string;
+  cadastro: CadastroPaciente;
+}
+
+/**
+ * Converte uma coluna cadastral crua em valor de dominio.
+ *
+ * Devolve `undefined` (que vira chave ausente) para NULL, para tipo
+ * inesperado e para string so de espacos -- "preenchido" e sempre presenca de
+ * conteudo real, nunca presenca de coluna. Mesma regra ja usada por
+ * `derivarCamposCadastraisPreenchidos`.
+ */
+function campoCadastral(valor: unknown): string | undefined {
+  if (typeof valor !== 'string') return undefined;
+  const limpo = valor.trim();
+  return limpo === '' ? undefined : limpo;
+}
+
 async function buscarPaciente(
   cliente: ClienteBancoDados,
   clinicaId: string,
   telefoneNormalizado: string
-): Promise<{ id: string } | null> {
+): Promise<LinhaPaciente | null> {
   const { data, error } = await cliente
     .from('pacientes')
-    .select('id')
+    .select(COLUNAS_PACIENTE)
+    // Isolamento por clinica: as duas igualdades precisam casar na MESMA
+    // linha. Um paciente com o mesmo telefone em outra clinica nunca e
+    // carregado aqui.
     .eq('clinica_id', clinicaId)
     .eq('telefone_normalizado', telefoneNormalizado)
     .maybeSingle();
 
   if (error) throw new Error(`falha ao buscar paciente: ${error.message}`);
-  return (data as { id: string } | null) ?? null;
+  if (!data) return null;
+
+  const bruto = data as Record<string, unknown>;
+  if (typeof bruto.id !== 'string' || bruto.id.trim() === '') {
+    throw new Error('pacientes retornou id em formato invalido');
+  }
+
+  // Montagem campo a campo a partir de chaves FECHADAS -- nunca por spread da
+  // linha crua. Mesmo que o SELECT mudasse, nenhuma coluna inesperada (nem
+  // uma PII nova) entraria no cadastro de dominio por acidente.
+  const cadastro: CadastroPaciente = {};
+  const nome = campoCadastral(bruto.nome);
+  if (nome !== undefined) cadastro.nome = nome;
+  const cpf = campoCadastral(bruto.documento);
+  if (cpf !== undefined) cadastro.cpf = cpf;
+  const dataNascimento = campoCadastral(bruto.data_nascimento);
+  if (dataNascimento !== undefined) cadastro.data_nascimento = dataNascimento;
+  const email = campoCadastral(bruto.email);
+  if (email !== undefined) cadastro.email = email;
+
+  return { id: bruto.id, cadastro };
 }
 
 async function obterOuCriarEstadoConversa(

@@ -1081,6 +1081,24 @@ Regras:
 - não enviar ao modelo valores cadastrais antigos — enviar somente **quais** campos
   cadastrais já estão preenchidos (`campos_cadastrais_preenchidos`), nunca os valores em
   si;
+- **duas origens de dado cadastral, um único indicador (2026-08-09).** Desde a subetapa
+  "integração do Core com paciente", `campos_cadastrais_preenchidos` é derivado da **visão
+  efetiva**, composta em memória a partir de:
+  1. `pacientes` — a ficha já persistida (lida em `identificacao.ts`; a coluna física
+     `documento` é traduzida para o conceito `cpf` nesse único ponto de leitura);
+  2. `estado_conversa.dados` — o que o paciente informou ou corrigiu nesta conversa.
+
+  O que veio da **conversa prevalece** sobre a ficha enquanto o turno corre. A ficha
+  **nunca** é copiada para `estado_conversa.dados`: não há segunda fonte persistida, e a
+  composição acontece só em memória (`cadastro-paciente.ts`). Copiá-la faria um `informar`
+  posterior do paciente ser descartado em silêncio por `calcularNovosDados`, e o dado
+  antigo venceria calado a correção explícita da pessoa.
+
+  O payload **não mudou de forma**: nenhum campo novo foi acrescentado, e o modelo
+  continua recebendo apenas presença, nunca valor — de qualquer uma das duas origens.
+  Provado por `interpretacao-minimizacao-pii.test.ts` (bloco "SEGUNDA ORIGEM"), que usa
+  valores sintéticos distintos por origem justamente para que um vazamento vindo da ficha
+  não produza falso negativo;
 - o paciente pode informar novo nome, CPF, nascimento ou e-mail na mensagem atual; o Core
   compara a nova interpretação contra o valor oficial mantido no servidor;
 - `pendente` é derivado exclusivamente pelo Core a partir do estado oficial e serve
@@ -1593,7 +1611,8 @@ outro cenário:
 - `dados_atuais` nunca contém valores cadastrais (nome/CPF/nascimento/e-mail) — só os
   campos operacionais listados no contrato;
 - `campos_cadastrais_preenchidos` reflete somente quais campos existem, nunca seus
-  valores;
+  valores — desde 2026-08-09 isso vale igualmente para as **duas** origens (a ficha em
+  `pacientes` e o snapshot da conversa), ver "Entrada e PII" acima;
 - `mensagens_atuais` nunca inclui histórico de turnos anteriores à janela atual;
 - nova informação cadastral do paciente na mensagem atual é comparada, pelo Core, contra
   o valor oficial do servidor — nunca aceita como verdade absoluta vinda do modelo.

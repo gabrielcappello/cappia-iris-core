@@ -5,6 +5,12 @@ Este documento define contrato lógico e comportamento; não autoriza implementa
 alteração de banco, criação de tabelas, índices, constraints, RPCs, migration, schema
 físico, alteração do painel ou de workflows.
 
+> **Revisão parcial 2026-08-09:** a seção 8 (Criação do paciente) teve a criação
+> conjunta de paciente + primeiro agendamento **superada** por decisão explícita
+> do Gabriel — ver o bloco de revisão na própria seção 8. O restante deste
+> documento permanece válido, incluindo o contrato de paciente da seção 5 e os
+> protocolos de conflito das seções 6 e 7 (ainda não implementados).
+
 Esta especificação complementa `novo-agendamento.md`, `interpretacao-ia.md`,
 `eventos-conversacionais-v1.md`, `controlador-conversacional-v1.md`,
 `procedimentos-v1.md`, `dentistas-vinculos-v1.md`, `duracao-v1.md`,
@@ -217,6 +223,42 @@ Esse comportamento é **excepcional** e não deve acrescentar complexidade ao fl
 (seção 26).
 
 ## 8. Criação do paciente
+
+> **REVISÃO 2026-08-09 — parte desta seção foi superada por decisão explícita do
+> Gabriel (frente CADASTRO DE PACIENTE, subetapa "contrato e persistência do
+> paciente").**
+>
+> **O que muda:** o paciente deixa de ser criado na mesma transação operacional
+> do primeiro agendamento. Ele é persistido **antes e separadamente**, por
+> `cappia_persistir_paciente(...)`, que devolve `paciente_id`; a reserva
+> (`cappia_reservar_agendamento`) permanece como **outra** operação. A RPC de
+> paciente não toca agendamento, dentista, disponibilidade, horário nem ação
+> pendente.
+>
+> **Por que:** manter as duas criações acopladas obriga toda a máquina de
+> cadastro a depender de haver horário reservável no mesmo instante, e foi
+> justamente esse acoplamento que tornou `cappia_confirmar_acao_pendente`
+> (pipeline legado) inaproveitável para o Core novo.
+>
+> **O que continua valendo desta seção:** não criar linha especulativamente no
+> início da conversa; gravar só depois de dados obrigatórios completos;
+> conflito concorrente de CPF impede duplicidade; o perdedor da disputa nunca
+> atualiza telefone silenciosamente e segue o protocolo da seção 6.
+>
+> **O que deixa de valer:** os bullets de transação única e de "paciente órfão",
+> e o parágrafo que justifica a criação conjunta. Sem a transação compartilhada,
+> "paciente órfão" deixa de ser falha e passa a ser estado normal e aceito: um
+> paciente cadastrado cuja reserva ainda não aconteceu (ou falhou) permanece
+> cadastrado, e a próxima tentativa o reaproveita pelo mesmo
+> `(clinica_id, telefone_normalizado)`.
+>
+> **Ainda não implementado:** o protocolo conversacional das seções 6 e 7. A
+> camada de persistência apenas devolve `cpf_ja_cadastrado` de forma tipada,
+> sem resolver, sem atualizar telefone e sem SELECT prévio — a conversa que
+> trata esse resultado é a próxima subetapa.
+>
+> Referências: `../src/supabase/migrations/20260809120000_iris_nova_persistencia_paciente_v1.sql`
+> e a migration irmã em `migrations-legado/`.
 
 Para paciente novo:
 
