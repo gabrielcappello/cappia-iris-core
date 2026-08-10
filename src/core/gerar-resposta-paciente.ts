@@ -106,9 +106,25 @@ export function gerarRespostaPaciente(decisao: DecisaoOrquestrador): string {
       return `Para confirmar esse agendamento, preciso completar seu cadastro antes. Pode me passar ${listarCamposEmPortugues(decisao.campos_faltantes)}?`;
 
     case 'cpf_ja_cadastrado':
-      // Nao explica de quem e o CPF, nao propoe trocar telefone, nao promete
-      // resolver: desfecho simples, encaminhado a recepcao (spec secao 7).
+      // Desfecho terminal: a troca foi aceita mas nao foi possivel concluir
+      // (telefone ja pertence a outra ficha -- persistencia-v1.md secao 7, ou
+      // o CPF sumiu entre os turnos). Nao explica de quem e o CPF, nao
+      // detalha qual dos dois casos ocorreu, nao promete resolver.
       return 'Esse CPF ja consta no cadastro de outro contato aqui na clinica. Vou pedir para a recepcao te ajudar a resolver isso.';
+
+    case 'troca_telefone_pendente':
+      // Faz a pergunta e nada alem dela. Nao revela nenhum digito do telefone
+      // anterior, nenhum nome, nada da outra ficha
+      // (specs/cpf-outro-telefone-v1.md secao 4). O texto natural e da
+      // redatora; isto so entra quando ela falha ou e reprovada.
+      return 'Esse CPF ja esta cadastrado aqui com outro telefone. Quer que eu passe o cadastro para este numero? Ele e o que recebe lembretes, avisos e remarcacoes.';
+
+    case 'troca_telefone_recusada':
+      // Acata sem insistir e sem reabrir a pergunta. O agendamento NAO
+      // continua: sem a troca nao ha associacao segura entre este telefone e
+      // aquela ficha (spec secao 3, que revoga a regra antiga da
+      // persistencia-v1.md secao 6).
+      return 'Sem problema, deixo o cadastro como esta. Para seguir com esse agendamento, vou pedir para a recepcao te ajudar.';
     case 'sem_dentista_disponivel':
       // A pergunta so e feita quando a alternativa EXISTE de verdade
       // (`procedimento_oferecido` presente). Ate 2026-08-09 ela era feita

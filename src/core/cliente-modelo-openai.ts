@@ -74,7 +74,16 @@ const SCHEMA_PORTATIL_APROVADO = {
       items: {
         type: 'object',
         properties: {
-          tipo: { type: 'string', enum: ['aceitar_opcao'] },
+          // DERIVADO de TIPOS_EVENTO_CANDIDATO_PERMITIDOS, nunca uma segunda
+          // lista escrita a mao -- exatamente pelo motivo do enum de campos
+          // logo acima, e desta vez com um caso real: em 2026-08-10 este enum
+          // ficou preso em ['aceitar_opcao'] enquanto o evento novo foi
+          // declarado no tipo, no schema interno, nos dois validadores e na
+          // instrucao. Com `strict: true`, o modelo ficou ESTRUTURALMENTE
+          // PROIBIDO de emiti-lo -- e, proibido do evento certo, passou a
+          // forcar o errado (medido: uma recusa saiu como `aceitar_opcao`).
+          // Mesma classe do bug de `historico_recente`.
+          tipo: { type: 'string', enum: [...TIPOS_EVENTO_CANDIDATO_PERMITIDOS] },
           referencia_textual: { type: ['string', 'null'] },
         },
         required: ['tipo', 'referencia_textual'],
@@ -411,6 +420,17 @@ async function processarTentativa(
           ...(contexto.entrada.payload.oferta_procedimento_pendente !== undefined
             ? { oferta_procedimento_pendente: contexto.entrada.payload.oferta_procedimento_pendente }
             : {}),
+          // Quarta variante do contexto pendente
+          // (specs/cpf-outro-telefone-v1.md secao 1). Sem esta chave no corpo
+          // HTTP, `aceitar_troca_telefone` nunca seria emitido em producao --
+          // e a suite de unidade passaria mesmo assim, porque so o payload
+          // interno estaria correto. E exatamente a falha de 2026-08-08 com
+          // `historico_recente`, documentada logo abaixo; por isso existe um
+          // teste que asserta sobre o CORPO que cruza a fronteira, nao sobre
+          // o objeto de entrada.
+          ...(contexto.entrada.payload.troca_telefone_pendente !== undefined
+            ? { troca_telefone_pendente: contexto.entrada.payload.troca_telefone_pendente }
+            : {}),
           // CORRECAO 2026-08-08: `historico_recente` existia em
           // EntradaInterpretacao desde specs/historico-conversacional-v1.md,
           // mas NUNCA era copiado para o corpo HTTP -- este objeto e montado
@@ -732,10 +752,13 @@ export function converterDentistasCandidatos(valor: unknown): string[] | null {
 }
 
 /**
- * Valida os eventos candidatos vindos do modelo. Fechado ao unico tipo
- * implementado; qualquer outro invalida a resposta inteira, nunca e ignorado
+ * Valida os eventos candidatos vindos do modelo. Fechado aos tipos
+ * implementados; qualquer outro invalida a resposta inteira, nunca e ignorado
  * em silencio (specs/eventos-conversacionais-v1.md secao 4: "tipos
  * desconhecidos ou eventos repetidos sao invalidos").
+ *
+ * FORMA UNICA para todos os tipos: os dois eventos afirmam a mesma coisa, e
+ * nenhum deles tem versao de recusa -- recusar e nao emitir.
  */
 export function converterEventosCandidatos(valor: unknown): EventoCandidatoIA[] {
   if (!Array.isArray(valor)) throw new ErroConversaoPortatil('eventos_candidatos_invalido');

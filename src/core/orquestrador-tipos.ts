@@ -165,12 +165,37 @@ export type DecisaoOrquestrador =
   // faltam; a redatora e quem formula a pergunta -- nao existe sequencia
   // rigida de textos.
   | { tipo: 'cadastro_necessario'; campos_faltantes: readonly CampoCadastralInterpretacao[] }
-  // A persistencia recusou por CPF ja usado por outro telefone nesta clinica
-  // (specs/cadastro-conversacional-v1.md secao 7). Desfecho simples e
-  // terminal: nao duplica paciente, nao atualiza telefone, nao investiga de
-  // quem e o CPF. Toda a logica de transferencia de telefone
-  // (persistencia-v1.md secoes 6 e 7) continua fora de escopo.
+  // Desfecho TERMINAL de encaminhamento a recepcao. Ate 2026-08-10 cobria
+  // tambem o primeiro contato com o conflito de CPF; desde
+  // specs/cpf-outro-telefone-v1.md secao 3, aquele caso virou
+  // `troca_telefone_pendente` (que PERGUNTA), e este ficou com os dois
+  // desfechos tecnicos terminais da troca:
+  //
+  // - `telefone_de_outro_paciente` -- persistencia-v1.md secao 7, detectada e
+  //   nao resolvida nesta rodada;
+  // - `cpf_nao_encontrado` -- corrida real, o CPF sumiu entre a pergunta e a
+  //   resposta.
+  //
+  // Nao duplica paciente, nao atualiza telefone, nao investiga de quem e o
+  // CPF. Uma decisao so para os dois: o desfecho para o paciente e o mesmo, e
+  // distingui-los no texto exporia a situacao da ficha alheia.
   | { tipo: 'cpf_ja_cadastrado' }
+  // O CPF informado pertence a outra ficha desta clinica, e a Iris esta
+  // PERGUNTANDO se pode passar o telefone oficial daquela ficha para o numero
+  // desta conversa (specs/cpf-outro-telefone-v1.md secao 3).
+  //
+  // Nao carrega paciente_id, nome nem qualquer dado da outra ficha: o Core
+  // nunca a leu, e a redatora nao precisa disso para fazer a pergunta (spec
+  // secao 4). Nada foi escrito ainda -- so a pergunta existe.
+  | { tipo: 'troca_telefone_pendente' }
+  // O paciente recusou a troca (specs/cpf-outro-telefone-v1.md secao 3).
+  // Nenhuma escrita, nenhum paciente novo, e o agendamento NAO continua: sem
+  // a troca nao existe associacao segura entre este telefone e aquela ficha.
+  //
+  // Isso REVOGA a regra antiga de persistencia-v1.md secao 6 ("permitir que o
+  // agendamento continue normalmente" na recusa) -- revogacao registrada por
+  // escrito na spec, nunca reconciliada em silencio.
+  | { tipo: 'troca_telefone_recusada' }
   | {
       tipo: 'reserva_criada';
       agendamento_id: string;

@@ -57,6 +57,8 @@ export type ObjetivoResposta =
   | 'informar_sem_profissional' // 2026-08-06 -- sem_dentista_disponivel, idem.
   | 'informar_combinacao_indisponivel' // 2026-08-09 -- combinacao_indisponivel (specs/dentista-semantico-v1.md).
   | 'informar_cpf_ja_cadastrado' // 2026-08-10 -- specs/cadastro-conversacional-v1.md secao 7.
+  | 'perguntar_troca_telefone' // 2026-08-10 -- specs/cpf-outro-telefone-v1.md secao 3.
+  | 'acatar_recusa_troca_telefone' // 2026-08-10 -- idem; recusa tem desfecho proprio.
   | 'informar_substituicao_por_avaliacao'; // 2026-08-09 -- o procedimento cedeu para preservar o dentista escolhido.
 
 export interface FatosAutorizados {
@@ -219,6 +221,16 @@ function derivarPorDecisao(decisao: DecisaoOrquestrador): FatosAutorizados {
 
     case 'cpf_ja_cadastrado':
       return { objetivo: 'informar_cpf_ja_cadastrado' };
+
+    // NENHUM fato sobre a outra ficha acompanha estes dois: o Core nunca a
+    // leu, e a redatora nao precisa de nada dela para perguntar ou para
+    // acatar a recusa (specs/cpf-outro-telefone-v1.md secao 4). Nem CPF, nem
+    // nome, nem telefone anterior, nem paciente_id.
+    case 'troca_telefone_pendente':
+      return { objetivo: 'perguntar_troca_telefone' };
+
+    case 'troca_telefone_recusada':
+      return { objetivo: 'acatar_recusa_troca_telefone' };
 
     case 'reserva_criada':
       return {

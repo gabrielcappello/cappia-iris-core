@@ -383,3 +383,81 @@ test('correcao3: chave desconhecida contendo nome, CPF e e-mail no proprio nome 
   assert.ok(!representacao.includes('maria.silva@example.com'));
   assert.equal(erroTipado.caminho, 'saida.alteracoes.campo_desconhecido');
 });
+
+// --- Evento aceitar_troca_telefone (specs/cpf-outro-telefone-v1.md secao 2) ---
+
+async function extrairComEventos(eventos: unknown) {
+  const cliente = new ClienteModeloFalso([
+    { natureza_mensagem: 'resposta', alteracoes: {}, eventos_candidatos: eventos, dentistas_candidatos: null },
+  ]);
+  return await extrairAlteracoes(cliente, {
+    mensagens_atuais: ['pode sim, atualiza pro meu numero'],
+    dados_atuais: {},
+    campos_cadastrais_preenchidos: [],
+    troca_telefone_pendente: true,
+  });
+}
+
+test('aceitar_troca_telefone usa a MESMA forma unica de aceitar_opcao', async () => {
+  for (const referencia of [null, 'pode sim']) {
+    const resultado = await extrairComEventos([{ tipo: 'aceitar_troca_telefone', referencia_textual: referencia }]);
+    assert.deepEqual(resultado.eventos_candidatos, [
+      { tipo: 'aceitar_troca_telefone', referencia_textual: referencia },
+    ]);
+  }
+});
+
+test('nao existe evento de recusa nem campo `resposta`: qualquer um dos dois invalida a saida', async () => {
+  // Recusa e a AUSENCIA do evento, em TODOS os tipos. Um nome de recusa ou um
+  // campo `resposta` que aparecesse (modelo antigo, prompt divergente, replay)
+  // precisa falhar fechado -- nunca ser aceito por semelhanca.
+  const invalidos = [
+    [{ tipo: 'recusar_troca_telefone', referencia_textual: null }],
+    [{ tipo: 'responder_troca_telefone', resposta: 'sim' }],
+    [{ tipo: 'aceitar_troca_telefone', resposta: 'nao' }],
+    [{ tipo: 'aceitar_troca_telefone', referencia_textual: null, resposta: 'sim' }],
+    [{ tipo: 'aceitar_troca_telefone' }],
+  ];
+
+  for (const eventos of invalidos) {
+    await assert.rejects(
+      () => extrairComEventos(eventos),
+      InterpretacaoInvalidaError,
+      `esperava rejeitar ${JSON.stringify(eventos)}`
+    );
+  }
+});
+
+test('os dois eventos coexistem no mesmo turno; repetir o mesmo tipo invalida', async () => {
+  const resultado = await extrairComEventos([
+    { tipo: 'aceitar_opcao', referencia_textual: null },
+    { tipo: 'aceitar_troca_telefone', referencia_textual: null },
+  ]);
+  assert.equal(resultado.eventos_candidatos.length, 2);
+
+  await assert.rejects(
+    () =>
+      extrairComEventos([
+        { tipo: 'aceitar_troca_telefone', referencia_textual: null },
+        { tipo: 'aceitar_troca_telefone', referencia_textual: 'de novo' },
+      ]),
+    InterpretacaoInvalidaError
+  );
+});
+
+test('troca_telefone_pendente: fechado a `true`, rejeitado em qualquer outro valor', async () => {
+  const cliente = new ClienteModeloFalso([{ natureza_mensagem: 'resposta', alteracoes: {} }]);
+  for (const valor of [false, 'sim', 1, null]) {
+    await assert.rejects(
+      () =>
+        extrairAlteracoes(cliente, {
+          mensagens_atuais: ['pode sim'],
+          dados_atuais: {},
+          campos_cadastrais_preenchidos: [],
+          troca_telefone_pendente: valor,
+        }),
+      EntradaInvalidaError,
+      `esperava rejeitar troca_telefone_pendente=${JSON.stringify(valor)}`
+    );
+  }
+});

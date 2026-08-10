@@ -8,13 +8,14 @@ import { carregarEntradaDisponibilidade } from './carregar-disponibilidade.ts';
 import { carregarCatalogo } from './carregar-catalogo.ts';
 import { reservarAgendamento } from './reservar-agendamento.ts';
 import { persistirPaciente } from './persistir-paciente.ts';
+import { trocarTelefonePaciente } from './trocar-telefone-paciente.ts';
 import { calcularCadastroFaltante, comporVisaoEfetivaCadastro } from './cadastro-paciente.ts';
 import { derivarAcaoContextoHorarios, gravarContextoHorarios } from './contexto-horarios.ts';
 import { historicoValidoParaEnvio } from './historico-conversa.ts';
 import { ErroRpcTecnico } from './erros.ts';
 import { CAMPOS_CADASTRAIS_INTERPRETACAO } from './interpretacao-tipos.ts';
 import type { CadastroPaciente, ClienteBancoDados } from './tipos.ts';
-import type { ClienteModeloEstruturado, NaturezaMensagem } from './interpretacao-tipos.ts';
+import type { ClienteModeloEstruturado, NaturezaMensagem, RespostaTrocaTelefone } from './interpretacao-tipos.ts';
 import type { ClienteRpc } from './mensagens-recebidas-tipos.ts';
 import type { InstanteAtual, ModoConsulta, OpcaoHorario } from './disponibilidade-tipos.ts';
 import type { ResolucaoTemporalOficial } from './temporal-tipos.ts';
@@ -115,6 +116,14 @@ export async function processarMensagem(
     ...(identificacao.conversa.contexto_horarios?.oferta_procedimento_pendente !== undefined
       ? { oferta_procedimento_pendente: identificacao.conversa.contexto_horarios.oferta_procedimento_pendente }
       : {}),
+    // Pergunta de troca de telefone feita no turno anterior, quando houver
+    // (specs/cpf-outro-telefone-v1.md secao 1). E contexto de interpretacao E
+    // gate de autorizacao: `interpretarEAplicar` so devolve
+    // `resposta_troca_telefone` diferente de `null` quando esta chave chega
+    // aqui -- um evento sem pergunta pendente nunca autoriza a troca.
+    ...(identificacao.conversa.contexto_horarios?.troca_telefone_pendente !== undefined
+      ? { troca_telefone_pendente: identificacao.conversa.contexto_horarios.troca_telefone_pendente }
+      : {}),
     // Cadastro ja persistido do paciente, quando ele existe e tem algum dado.
     // Serve para a Iris nao pedir de novo o que ja esta na ficha: entra
     // somente na derivacao de `campos_cadastrais_preenchidos` (presenca,
@@ -198,7 +207,8 @@ export async function processarMensagem(
     catalogoCarregado.catalogo,
     entrada.instante_atual,
     interpretacao.dentistas_candidatos,
-    identificacao.paciente.cadastro
+    identificacao.paciente.cadastro,
+    interpretacao.resposta_troca_telefone
   );
 
   return await finalizar(resultadoDecisao.decisao, resultadoDecisao.substituicao);
@@ -265,7 +275,8 @@ async function decidir(
   catalogo: CatalogoClinica,
   instanteAtual: InstanteAtual,
   dentistasCandidatos: string[] | null,
-  cadastroFicha: CadastroPaciente
+  cadastroFicha: CadastroPaciente,
+  respostaTrocaTelefone: RespostaTrocaTelefone | null
 ): Promise<{ decisao: DecisaoOrquestrador; substituicao?: { dentista_nome_exibido: string } }> {
   // INTEGRIDADE, NUNCA INTERPRETACAO (specs/procedimento-semantico-v1.md
   // secao 4). Quem entendeu o pedido do paciente foi a IA, que devolveu um
@@ -377,7 +388,8 @@ async function decidir(
             dados.confirmacao,
             cadastroFicha,
             comporVisaoEfetivaCadastro(cadastroFicha, dados),
-            catalogo.exigirEmail
+            catalogo.exigirEmail,
+            respostaTrocaTelefone
           )
         );
       }
@@ -436,7 +448,8 @@ async function decidirConfirmacaoOuReserva(
   confirmacao: string | undefined,
   cadastroFicha: CadastroPaciente,
   visaoEfetiva: CadastroPaciente,
-  exigirEmail: boolean
+  exigirEmail: boolean,
+  respostaTrocaTelefone: RespostaTrocaTelefone | null
 ): Promise<DecisaoOrquestrador> {
   // Regra absoluta: nunca reservar sem confirmacao explicita ('sim',
   // vocabulario fechado ja validado por aplicar-dados.ts). Ausencia ou
@@ -454,6 +467,60 @@ async function decidirConfirmacaoOuReserva(
   const faltantes = calcularCadastroFaltante(visaoEfetiva, exigirEmail);
   if (faltantes.length > 0) {
     return { tipo: 'cadastro_necessario', campos_faltantes: faltantes };
+  }
+
+  // RESPOSTA A PERGUNTA DE TROCA DE TELEFONE (specs/cpf-outro-telefone-v1.md).
+  // Vem ANTES de `persistirPaciente` porque, com a resposta na mao, nao ha o
+  // que tentar persistir: o paciente ja existe, e a unica escrita autorizada e
+  // a troca do telefone.
+  //
+  // `respostaTrocaTelefone` so e diferente de `null` quando o MARCADOR oficial
+  // estava presente (gate em interpretar-e-aplicar.ts). Um evento sem pergunta
+  // pendente nunca chega ate aqui.
+  //
+  // Limitacao conhecida e aceita: se o horario tiver sido ocupado entre a
+  // pergunta e a resposta, o fluxo nem alcanca esta funcao (volta a apresentar
+  // horarios) e a resposta se perde junto com a pergunta. Ela deixa de fazer
+  // sentido nesse cenario -- nao ha mais agendamento a destravar.
+  if (respostaTrocaTelefone === 'nao') {
+    // REVOGACAO EXPLICITA de persistencia-v1.md secao 6 ("a recusa permitia
+    // que o agendamento continuasse normalmente"): sem a troca, nao existe
+    // associacao segura entre ESTE telefone e aquela ficha, e agendar assim
+    // gravaria um atendimento para um paciente cuja identidade nao foi
+    // estabelecida por nenhum meio confirmado. Nenhuma escrita acontece.
+    return { tipo: 'troca_telefone_recusada' };
+  }
+
+  if (respostaTrocaTelefone === 'sim') {
+    // `cpf` esta necessariamente presente: `calcularCadastroFaltante` acabou
+    // de garantir que nenhum obrigatorio falta, e o CPF e obrigatorio sempre.
+    const troca = await trocarTelefonePaciente(clienteRpc, {
+      clinica_id: clinicaId,
+      cpf: visaoEfetiva.cpf as string,
+      telefone_normalizado: telefoneNormalizado,
+    });
+
+    if (troca.tipo !== 'trocado') {
+      // `telefone_de_outro_paciente` (persistencia-v1.md secao 7, detectada e
+      // nao resolvida) e `cpf_nao_encontrado` (corrida real) terminam no MESMO
+      // desfecho: encaminhar a recepcao. Distingui-los no texto exporia a
+      // situacao de uma ficha alheia, e para o paciente a saida e a mesma.
+      return { tipo: 'cpf_ja_cadastrado' };
+    }
+
+    // Encadeamento direto ate a reserva, no mesmo processamento: nao existe
+    // decisao humana pendente entre trocar o telefone e reservar, pelo mesmo
+    // motivo que nao existe `cadastro_concluido`. `persistirPaciente` NAO e
+    // chamada aqui -- o paciente ja existe e a unica escrita autorizada por
+    // esta spec ja aconteceu.
+    return await reservar(clienteRpc, {
+      clinicaId,
+      procedimentoId,
+      dentistaId,
+      pacienteId: troca.paciente_id,
+      opcao,
+      telefoneNormalizado,
+    });
   }
 
   // Cadastro completo: garantir paciente_id antes da reserva. Persistir
@@ -474,9 +541,16 @@ async function decidirConfirmacaoOuReserva(
     });
 
     if (persistencia.tipo === 'cpf_ja_cadastrado') {
-      // Unico desfecho conversacional proprio da persistencia nesta etapa.
-      // Nao duplica, nao atualiza telefone, nao investiga.
-      return { tipo: 'cpf_ja_cadastrado' };
+      // Ate 2026-08-10 isto PARAVA a conversa. Agora PERGUNTA
+      // (specs/cpf-outro-telefone-v1.md secao 3): nao duplica, nao atualiza
+      // telefone nenhum ainda, nao investiga de quem e o CPF -- so declara a
+      // pergunta pendente, que o marcador do contexto grava no fim do turno.
+      //
+      // Re-derivado a cada turno em que o paciente nao responde, exatamente
+      // como a oferta de procedimento. Isso tem um beneficio real: se a
+      // recepcao corrigir a ficha no painel enquanto a pergunta esta aberta, o
+      // turno seguinte simplesmente persiste e segue, sem estado preso.
+      return { tipo: 'troca_telefone_pendente' };
     }
     if (persistencia.tipo === 'falhou') {
       // INVARIANTE DO CORE VIOLADA (spec secao 9): clinica_id_ausente,
@@ -496,17 +570,46 @@ async function decidirConfirmacaoOuReserva(
   }
 
   // Encadeamento direto: nao ha decisao humana pendente entre cadastrar e
-  // reservar, entao o mesmo processamento continua. A logica de reserva abaixo
-  // nao foi alterada -- so passou a receber o id recem-obtido.
-  const horario = minutosParaHHMM(opcao.inicio_min);
+  // reservar, entao o mesmo processamento continua.
+  return await reservar(clienteRpc, {
+    clinicaId,
+    procedimentoId,
+    dentistaId,
+    pacienteId: pacienteIdParaReserva,
+    opcao,
+    telefoneNormalizado,
+  });
+}
+
+/**
+ * Ultimo passo do caminho feliz, extraido em 2026-08-10 porque passou a ter
+ * DOIS chamadores: o cadastro normal e a troca de telefone aceita
+ * (specs/cpf-outro-telefone-v1.md secao 6). Nenhuma regra foi alterada na
+ * extracao -- os tres desfechos sao exatamente os de antes.
+ *
+ * Recebe o `paciente_id` ja resolvido; nunca decide qual e nem persiste
+ * paciente.
+ */
+async function reservar(
+  clienteRpc: ClienteRpc,
+  entrada: {
+    clinicaId: string;
+    procedimentoId: string;
+    dentistaId: string;
+    pacienteId: string;
+    opcao: OpcaoHorario;
+    telefoneNormalizado: string;
+  }
+): Promise<DecisaoOrquestrador> {
+  const horario = minutosParaHHMM(entrada.opcao.inicio_min);
   const resultadoReserva = await reservarAgendamento(clienteRpc, {
-    clinica_id: clinicaId,
-    procedimento_id: procedimentoId,
-    dentista_id: dentistaId,
-    paciente_id: pacienteIdParaReserva,
-    data: opcao.data,
+    clinica_id: entrada.clinicaId,
+    procedimento_id: entrada.procedimentoId,
+    dentista_id: entrada.dentistaId,
+    paciente_id: entrada.pacienteId,
+    data: entrada.opcao.data,
     horario,
-    telefone_normalizado: telefoneNormalizado,
+    telefone_normalizado: entrada.telefoneNormalizado,
   });
 
   switch (resultadoReserva.tipo) {
@@ -515,7 +618,7 @@ async function decidirConfirmacaoOuReserva(
         tipo: 'reserva_criada',
         agendamento_id: resultadoReserva.agendamento_id,
         dentista_id: resultadoReserva.dentista_id,
-        procedimento_id: procedimentoId,
+        procedimento_id: entrada.procedimentoId,
         duracao_min: resultadoReserva.duracao_min,
         data: resultadoReserva.data,
         horario: resultadoReserva.horario,

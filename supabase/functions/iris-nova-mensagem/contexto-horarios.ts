@@ -29,6 +29,7 @@ export type AcaoContextoHorarios =
   | { tipo: 'substituir'; horarios: string[] }
   | { tipo: 'propor'; data: string; horario: string }
   | { tipo: 'oferecer'; procedimento_id: string }
+  | { tipo: 'perguntar_troca_telefone' }
   | { tipo: 'preservar' }
   | { tipo: 'limpar' };
 
@@ -91,6 +92,26 @@ export function derivarAcaoContextoHorarios(decisao: DecisaoOrquestrador): AcaoC
         ? { tipo: 'oferecer', procedimento_id: decisao.procedimento_oferecido }
         : { tipo: 'limpar' };
 
+    // PERGUNTAR_TROCA_TELEFONE (2026-08-10, specs/cpf-outro-telefone-v1.md
+    // secao 1): a Iris acabou de perguntar se pode trocar o telefone oficial
+    // do dono do CPF e aguarda sim/nao. Sem este marcador, "pode sim,
+    // atualiza pro meu numero" chega a interpretadora sem nenhuma pergunta
+    // pendente declarada -- exatamente o defeito que
+    // `oferta_procedimento_pendente` ja corrigiu para a oferta de
+    // procedimento.
+    //
+    // SUBSTITUI o snapshot por inteiro (nao preserva `proposta_pendente`):
+    // o horario confirmado vive em dados.data_texto/horario_texto/
+    // confirmacao e e re-derivado a cada turno. Aqui o paciente esta
+    // respondendo sobre o TELEFONE, nao sobre o horario.
+    //
+    // Nao ha caso de "preservar": como a oferta de procedimento, o marcador
+    // e RE-DERIVADO a cada turno em que a situacao nao muda. Uma duvida no
+    // meio ("por que precisam disso?") nao altera CPF nem ficha, entao o
+    // fluxo recalcula e regrava o mesmo marcador.
+    case 'troca_telefone_pendente':
+      return { tipo: 'perguntar_troca_telefone' };
+
     case 'saudacao':
     case 'duvida_livre':
     case 'mensagem_nao_compreendida':
@@ -115,6 +136,10 @@ export function derivarAcaoContextoHorarios(decisao: DecisaoOrquestrador): AcaoC
     case 'erro_configuracao_duracao':
     case 'aguardando_data_horario':
     case 'cpf_ja_cadastrado':
+    // O paciente recusou a troca: a pergunta deixou de existir, entao o
+    // marcador some. O fluxo para e encaminha a recepcao
+    // (specs/cpf-outro-telefone-v1.md secao 3) -- nada fica pendurado.
+    case 'troca_telefone_recusada':
     case 'reserva_criada':
     case 'reserva_conflito':
     case 'reserva_falhou':
@@ -210,7 +235,9 @@ export async function gravarContextoHorarios(
               oferta_procedimento_pendente: { procedimento_id: entrada.acao.procedimento_id },
               criado_em: new Date().toISOString(),
             }
-          : null;
+          : entrada.acao.tipo === 'perguntar_troca_telefone'
+            ? { troca_telefone_pendente: true, criado_em: new Date().toISOString() }
+            : null;
 
   const proximoValor = proximoTimestamp(entrada.atualizado_em_da_decisao);
 
@@ -270,20 +297,29 @@ export function validarContextoHorarios(valor: unknown): ContextoHorarios | null
   if (valor === null || valor === undefined) return null;
   if (typeof valor !== 'object' || Array.isArray(valor)) return null;
 
-  const { horarios, criado_em, proposta_pendente, oferta_procedimento_pendente } = valor as Record<string, unknown>;
+  const { horarios, criado_em, proposta_pendente, oferta_procedimento_pendente, troca_telefone_pendente } =
+    valor as Record<string, unknown>;
   if (typeof criado_em !== 'string') return null;
 
   // Cada campo, quando PRESENTE, precisa ser valido -- um campo presente
-  // porem malformado invalida o snapshot inteiro (nunca aceita um dos tres
+  // porem malformado invalida o snapshot inteiro (nunca aceita um dos quatro
   // parcialmente). Um campo AUSENTE simplesmente nao contribui.
   if (horarios !== undefined && !horariosValidos(horarios)) return null;
   if (proposta_pendente !== undefined && !propostaPendenteValida(proposta_pendente)) return null;
   if (oferta_procedimento_pendente !== undefined && !ofertaProcedimentoValida(oferta_procedimento_pendente)) return null;
+  // Fechado a `true`, nunca `false`: "nao ha pergunta de troca em aberto" se
+  // representa pela AUSENCIA da chave, exatamente como as demais variantes.
+  if (troca_telefone_pendente !== undefined && troca_telefone_pendente !== true) return null;
 
-  // Pelo menos um dos tres precisa existir -- um snapshot sem nenhum e
+  // Pelo menos um dos quatro precisa existir -- um snapshot sem nenhum e
   // invalido, nunca vira um objeto "vazio" (specs/resposta-conversacional-v1.md
   // secao 5).
-  if (horarios === undefined && proposta_pendente === undefined && oferta_procedimento_pendente === undefined) {
+  if (
+    horarios === undefined &&
+    proposta_pendente === undefined &&
+    oferta_procedimento_pendente === undefined &&
+    troca_telefone_pendente === undefined
+  ) {
     return null;
   }
 
@@ -293,6 +329,7 @@ export function validarContextoHorarios(valor: unknown): ContextoHorarios | null
     ...(oferta_procedimento_pendente !== undefined
       ? { oferta_procedimento_pendente: oferta_procedimento_pendente as { procedimento_id: string } }
       : {}),
+    ...(troca_telefone_pendente !== undefined ? { troca_telefone_pendente: true as const } : {}),
     criado_em,
   };
 }

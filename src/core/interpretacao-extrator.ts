@@ -63,6 +63,9 @@ export async function extrairAlteracoes(
     ...(entradaBruta.oferta_procedimento_pendente !== undefined
       ? { oferta_procedimento_pendente: entradaBruta.oferta_procedimento_pendente }
       : {}),
+    ...(entradaBruta.troca_telefone_pendente !== undefined
+      ? { troca_telefone_pendente: entradaBruta.troca_telefone_pendente }
+      : {}),
     ...(entradaBruta.historico_recente !== undefined ? { historico_recente: [...entradaBruta.historico_recente] } : {}),
   };
 
@@ -104,7 +107,8 @@ export function construirEntradaMinimizada(
   procedimentosDisponiveis?: { procedimento_id: string; nome_pt: string }[],
   dentistasDisponiveis?: { dentista_id: string; nome_exibido: string }[],
   ofertaProcedimentoPendente?: true,
-  cadastroPaciente?: CadastroPaciente
+  cadastroPaciente?: CadastroPaciente,
+  trocaTelefonePendente?: true
 ): EntradaInterpretacao {
   return {
     mensagens_atuais: [...mensagensAtuais],
@@ -119,6 +123,7 @@ export function construirEntradaMinimizada(
     ...(ofertaProcedimentoPendente !== undefined
       ? { oferta_procedimento_pendente: ofertaProcedimentoPendente }
       : {}),
+    ...(trocaTelefonePendente !== undefined ? { troca_telefone_pendente: trocaTelefonePendente } : {}),
     ...(historicoRecente !== undefined ? { historico_recente: [...historicoRecente] } : {}),
   };
 }
@@ -167,6 +172,7 @@ export const CHAVES_OPCIONAIS_INTERPRETACAO = [
   'procedimentos_disponiveis',
   'dentistas_disponiveis',
   'oferta_procedimento_pendente',
+  'troca_telefone_pendente',
   'historico_recente',
 ] as const;
 
@@ -198,6 +204,7 @@ export function validarEntradaInterpretacao(entrada: unknown): asserts entrada i
     procedimentos_disponiveis,
     dentistas_disponiveis,
     oferta_procedimento_pendente,
+    troca_telefone_pendente,
     historico_recente,
   } = entrada as Record<string, unknown>;
   validarMensagensAtuais(mensagens_atuais);
@@ -208,7 +215,27 @@ export function validarEntradaInterpretacao(entrada: unknown): asserts entrada i
   if (procedimentos_disponiveis !== undefined) validarProcedimentosDisponiveis(procedimentos_disponiveis);
   if (dentistas_disponiveis !== undefined) validarDentistasDisponiveis(dentistas_disponiveis);
   if (oferta_procedimento_pendente !== undefined) validarOfertaProcedimentoPendente(oferta_procedimento_pendente);
+  if (troca_telefone_pendente !== undefined) validarTrocaTelefonePendente(troca_telefone_pendente);
   if (historico_recente !== undefined) validarHistoricoRecente(historico_recente);
+}
+
+/**
+ * Pergunta de troca de telefone aguardando sim/nao (contexto-horarios.ts,
+ * acao `perguntar_troca_telefone`). Fechada a `true`, exatamente como
+ * `oferta_procedimento_pendente`: "nao ha pergunta em aberto" se representa
+ * pela AUSENCIA da chave, nunca por `false`.
+ *
+ * Nenhum dado da outra ficha trafega -- nem CPF, nem paciente_id, nem
+ * telefone anterior (specs/cpf-outro-telefone-v1.md secao 4). A IA so
+ * precisa saber que ha um sim/nao em aberto.
+ */
+export function validarTrocaTelefonePendente(valor: unknown): asserts valor is true {
+  if (valor !== true) {
+    throw new EntradaInvalidaError(
+      'troca_telefone_pendente',
+      'troca_telefone_pendente deve ser exatamente true quando presente'
+    );
+  }
 }
 
 /**
@@ -585,9 +612,13 @@ export function validarSaidaInterpretacao(saida: unknown): asserts saida is Said
 
 /**
  * Eventos candidatos (specs/eventos-conversacionais-v1.md secao 4).
- * Array obrigatorio, possivelmente vazio. Fechado ao unico tipo implementado:
+ * Array obrigatorio, possivelmente vazio. Fechado aos tipos implementados:
  * tipo desconhecido ou evento repetido invalida a saida inteira -- nunca e
  * descartado em silencio.
+ *
+ * FORMA UNICA para todos os tipos (2026-08-10): os dois eventos afirmam a
+ * mesma coisa, entao nao existe campo que um precise e o outro nao. Nenhum
+ * deles tem versao de recusa -- recusar e nao emitir.
  */
 export function validarEventosCandidatos(valor: unknown): asserts valor is EventoCandidatoIA[] {
   if (!Array.isArray(valor)) {

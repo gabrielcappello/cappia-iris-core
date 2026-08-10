@@ -135,6 +135,22 @@ export interface EntradaInterpretacao {
    */
   oferta_procedimento_pendente?: true;
   /**
+   * Existe uma pergunta de troca de telefone aguardando sim/nao
+   * (specs/cpf-outro-telefone-v1.md secao 1). Quarta variante do contexto
+   * pendente.
+   *
+   * E o que autoriza a interpretadora a emitir `aceitar_troca_telefone`.
+   * Sem este marcador o evento NUNCA e emitido -- mesma guarda ja escrita
+   * para `aceitar_opcao`, pelo mesmo motivo: a resposta nao pode existir sem
+   * a pergunta ter sido feita.
+   *
+   * DELIBERADAMENTE sem CPF, paciente_id ou qualquer dado da outra ficha --
+   * um booleano basta para a IA entender que ha um sim/nao em aberto, e
+   * nenhum dado do outro cadastro atravessa a fronteira do modelo
+   * (specs/cpf-outro-telefone-v1.md secao 4).
+   */
+  troca_telefone_pendente?: true;
+  /**
    * Ultimos turnos da conversa (specs/historico-conversacional-v1.md secao
    * 6), do mais antigo para o mais recente, ja filtrados por validade (24h)
    * -- permite entender mensagens curtas ou dependentes de contexto ("sim",
@@ -184,12 +200,23 @@ export const NATUREZAS_MENSAGEM_PERMITIDAS: readonly NaturezaMensagem[] = [
  * apenas "a mensagem atual parece conter isto". Quem valida contra o estado
  * oficial e aplica qualquer efeito e sempre o Core.
  *
- * Somente `aceitar_opcao` e implementado (2026-08-09). Os outros quatro do
- * catalogo canonico -- `solicitar_nova_opcao`, `desistir`,
+ * Dois tipos implementados: `aceitar_opcao` (2026-08-09) e
+ * `aceitar_troca_telefone` (2026-08-10). Os outros quatro do catalogo
+ * canonico -- `solicitar_nova_opcao`, `desistir`,
  * `aceitar_qualquer_profissional`, `confirmar_resumo` -- permanecem fora:
- * nenhum deles e necessario para este funcionar, porque recusa e a AUSENCIA
- * do evento e pedido de outro procedimento ja e coberto pela regra normal de
- * `procedimento_id`.
+ * nenhum deles e necessario para estes funcionarem.
+ *
+ * FORMA UNICA, nunca uniao discriminada. Os dois eventos afirmam a mesma
+ * coisa -- "o paciente aceitou o que voce perguntou" --, entao nao existe
+ * campo que um precise e o outro nao.
+ *
+ * NENHUM DOS DOIS TEM UM "NAO": recusa e sempre a AUSENCIA do evento. Medido
+ * contra a IA real em 2026-08-10 (src/eval/diagnostico-contrato-eventos.ts):
+ * um evento de recusa proprio (`recusar_troca_telefone`) foi emitido em 0 dos
+ * casos, porque toda a instrucao ao redor ensina justamente a regra oposta.
+ * A recusa da troca de telefone e lida de `natureza_mensagem === 'negacao'`,
+ * campo que ja existe e ja vem em todo turno -- 14/15 nas mesmas medicoes,
+ * com ZERO aceites por engano.
  *
  * `referencia_textual` preserva a referencia presente na mensagem quando ela
  * existe ("14h", "a segunda opcao"); e `null` para concordancia deitica
@@ -197,11 +224,22 @@ export const NATUREZAS_MENSAGEM_PERMITIDAS: readonly NaturezaMensagem[] = [
  * referencia para ID, indice ou registro.
  */
 export interface EventoCandidatoIA {
-  tipo: 'aceitar_opcao';
+  tipo: 'aceitar_opcao' | 'aceitar_troca_telefone';
   referencia_textual: string | null;
 }
 
-export const TIPOS_EVENTO_CANDIDATO_PERMITIDOS: readonly EventoCandidatoIA['tipo'][] = ['aceitar_opcao'];
+/**
+ * Resposta do paciente a pergunta de troca de telefone, **derivada pelo
+ * Core** (specs/cpf-outro-telefone-v1.md secao 2). A IA nunca emite este
+ * valor: ela emite (ou nao) o evento de aceite, e classifica a mensagem em
+ * `natureza_mensagem`. Quem combina os dois sinais e `interpretar-e-aplicar.ts`.
+ */
+export type RespostaTrocaTelefone = 'sim' | 'nao';
+
+export const TIPOS_EVENTO_CANDIDATO_PERMITIDOS: readonly EventoCandidatoIA['tipo'][] = [
+  'aceitar_opcao',
+  'aceitar_troca_telefone',
+];
 
 export interface SaidaInterpretacao {
   natureza_mensagem: NaturezaMensagem;
@@ -266,4 +304,16 @@ export interface ResultadoInterpretacao {
    * nada. Os casos `[]` e `[varios]` e que viram decisao la.
    */
   dentistas_candidatos: string[] | null;
+  /**
+   * Resposta do paciente a pergunta de troca de telefone, DERIVADA pelo Core
+   * (specs/cpf-outro-telefone-v1.md secao 2). `null` = nao respondeu, e a
+   * pergunta segue pendente.
+   *
+   * SO E DIFERENTE DE `null` QUANDO O MARCADOR OFICIAL DO CORE ESTAVA
+   * PRESENTE nesta chamada. Exige os DOIS lados -- o sinal da IA E a pergunta
+   * pendente do proprio Core --, exatamente como `aplicarAceitacaoDeOferta`
+   * exige a oferta oficial. Um evento sem pergunta pendente nunca autoriza
+   * nada.
+   */
+  resposta_troca_telefone: RespostaTrocaTelefone | null;
 }

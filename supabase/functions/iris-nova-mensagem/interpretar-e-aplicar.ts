@@ -23,6 +23,7 @@ import type {
   Conflito,
   EventoCandidatoIA,
   NaturezaMensagem,
+  RespostaTrocaTelefone,
   ResultadoInterpretacao,
   SnapshotOficialConversa,
 } from './interpretacao-tipos.ts';
@@ -70,6 +71,14 @@ export interface InterpretarEAplicarInput extends ContextoConversa {
    * -- o procedimento aceito passa pela validacao de integridade de sempre.
    */
   oferta_procedimento_pendente?: { procedimento_id: string };
+  /**
+   * Pergunta de troca de telefone feita no turno anterior, aguardando sim/nao
+   * (specs/cpf-outro-telefone-v1.md secao 1). Contexto de interpretacao E
+   * gate de autorizacao: sem ele, um evento `aceitar_troca_telefone` que
+   * chegue mesmo assim e ignorado, e uma `natureza_mensagem` de negacao nao e
+   * lida como recusa -- `resposta_troca_telefone` sai `null` nos dois casos.
+   */
+  troca_telefone_pendente?: true;
   /**
    * Cadastro JA PERSISTIDO do paciente (identificacao.ts). SEGUNDA ORIGEM de
    * dado cadastral, ao lado do snapshot da conversa.
@@ -146,6 +155,68 @@ function aplicarAceitacaoDeOferta(
     ...alteracoes,
     procedimento_id: { acao: jaTemOutro ? 'corrigir' : 'informar', valor: ofertaPendente.procedimento_id },
   };
+}
+
+/**
+ * DERIVA a resposta do paciente a pergunta de troca de telefone
+ * (specs/cpf-outro-telefone-v1.md secao 2). A IA nunca emite `sim`/`nao`: ela
+ * emite (ou nao) o evento de aceite, e classifica a mensagem em
+ * `natureza_mensagem`. Este e o unico lugar que combina os dois sinais.
+ *
+ * EXIGE OS DOIS LADOS, exatamente como `aplicarAceitacaoDeOferta`: o sinal da
+ * IA E a pergunta pendente do proprio Core. Sem o marcador oficial, nada e
+ * interpretado -- a IA nao tem como fazer o Core trocar telefone nenhum por
+ * conta propria, ainda que emita o evento indevidamente. Medido: o evento
+ * VAZA mesmo sem marcador (3/3 contratos testados em 2026-08-10), entao este
+ * gate nao e teorico.
+ *
+ * POR QUE A RECUSA NAO TEM EVENTO PROPRIO: toda a instrucao ensina que recusa
+ * e a AUSENCIA do evento -- e assim que `aceitar_opcao` funciona. Um
+ * `recusar_troca_telefone` foi medido contra a IA real e emitido em ZERO
+ * casos. `natureza_mensagem === 'negacao'` acertou 14/15 nas mesmas medicoes,
+ * com ZERO aceites por engano. Nao e regra de linguagem no Core: e a
+ * classificacao que a propria IA ja produz em todo turno, combinada com o
+ * evento -- mesma tecnica ja usada em `aplicarAceitacaoDeOferta` para sinais
+ * incompativeis.
+ *
+ * SINAIS INCOMPATIVEIS -- A NEGACAO VENCE O EVENTO, e a ordem abaixo e o
+ * mecanismo. Medido contra a IA real em 2026-08-10: "nao, deixa como esta"
+ * chegou com `natureza=negacao` E `aceitar_troca_telefone` no mesmo turno.
+ * Checando o evento primeiro, uma RECUSA EXPLICITA virava troca de telefone
+ * -- o unico desfecho inaceitavel desta spec. Nao e regra nova: e exatamente
+ * a mesma disciplina de `aplicarAceitacaoDeOferta` logo acima ("o Core nao
+ * escolhe qual acreditar"), aplicada de forma consistente. Aqui ela vai alem
+ * de nao-aplicar: com a pergunta pendente, `negacao` E a recusa, entao o
+ * desfecho e `nao`, que tambem nao escreve nada.
+ *
+ * UMA DUVIDA TAMBEM NAO AUTORIZA -- mesmo mecanismo, mesma disciplina.
+ * Medido em 2026-08-10, ~1 em 5 execucoes: "por que voces precisam disso?"
+ * chegou com `natureza=duvida` E `aceitar_troca_telefone` no mesmo turno.
+ * Uma PERGUNTA e logicamente incompativel com um aceite, exatamente como uma
+ * negacao -- e aqui nao havia guarda, entao o telefone seria trocado sem a
+ * confirmacao explicita que `persistencia-v1.md` secao 6 exige.
+ *
+ * Diferente da negacao, uma duvida NAO e recusa: o desfecho e `null`, e a
+ * Iris repete a pergunta. Nunca `nao`, que encerraria o agendamento de quem
+ * so queria entender o motivo.
+ *
+ * FALHA SEGURA nos dois lados: recusa que a IA nao classificou como `negacao`
+ * e que tambem nao trouxe o evento (medido 1/15) devolve `null` -- a Iris
+ * apenas repete a pergunta. Nunca troca telefone por engano.
+ *
+ * Nunca escreve nada em `dados`: a resposta e transitoria, consumida no mesmo
+ * processamento. Um `sim` persistido autorizaria, sozinho, uma troca num
+ * turno futuro em que ninguem perguntou nada.
+ */
+function lerRespostaTrocaTelefone(
+  eventos: readonly EventoCandidatoIA[],
+  naturezaMensagem: NaturezaMensagem,
+  trocaTelefonePendente: true | undefined
+): RespostaTrocaTelefone | null {
+  if (trocaTelefonePendente === undefined) return null;
+  if (naturezaMensagem === 'negacao') return 'nao';
+  if (naturezaMensagem === 'duvida') return null;
+  return eventos.some((e) => e.tipo === 'aceitar_troca_telefone') ? 'sim' : null;
 }
 
 /**
@@ -237,6 +308,7 @@ const CHAVES_OPCIONAIS_INTEGRADA = [
   'procedimentos_disponiveis',
   'dentistas_disponiveis',
   'oferta_procedimento_pendente',
+  'troca_telefone_pendente',
   'cadastro_paciente',
   'data_referencia',
 ] as const;
@@ -296,7 +368,8 @@ export async function interpretarEAplicar(
       // inteira para dentro de construirEntradaMinimizada, que extrai
       // PRESENCA e descarta os valores -- nenhum valor cadastral, de
       // qualquer origem, chega ao modelo.
-      entrada.cadastro_paciente
+      entrada.cadastro_paciente,
+      entrada.troca_telefone_pendente
     )
   );
 
@@ -387,6 +460,13 @@ export async function interpretarEAplicar(
     conflitos,
     aplicacao,
     dentistas_candidatos: saida.dentistas_candidatos,
+    // Transitoria por construcao: sai daqui para o orquestrador e nunca e
+    // gravada em `dados` (specs/cpf-outro-telefone-v1.md secao 2).
+    resposta_troca_telefone: lerRespostaTrocaTelefone(
+      saida.eventos_candidatos,
+      saida.natureza_mensagem,
+      entrada.troca_telefone_pendente
+    ),
   };
 }
 

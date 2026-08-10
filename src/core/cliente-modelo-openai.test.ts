@@ -11,6 +11,7 @@ import {
 } from './cliente-modelo-openai.ts';
 import { INSTRUCOES_EXTRATOR } from './interpretacao-instrucoes.ts';
 import { CHAVES_OPCIONAIS_INTERPRETACAO } from './interpretacao-extrator.ts';
+import { TIPOS_EVENTO_CANDIDATO_PERMITIDOS } from './interpretacao-tipos.ts';
 import { CAMPOS_PERMITIDOS, CAMPOS_SO_DO_CORE } from './aplicar-dados.ts';
 
 // --- dublês de fetch (todos falsos; nenhuma rede real em nenhum teste) ---
@@ -2058,6 +2059,7 @@ test('fronteira: GUARDA GERAL -- toda chave opcional do payload precisa aparecer
     procedimentos_disponiveis: [{ procedimento_id: 'limpeza', nome_pt: 'Limpeza dental' }],
     dentistas_disponiveis: [{ dentista_id: 'dent-ana', nome_exibido: 'Dra. Ana Souza' }],
     oferta_procedimento_pendente: { procedimento_id: 'consultation_evaluation' },
+    troca_telefone_pendente: true,
     historico_recente: HISTORICO_EXEMPLO,
   };
 
@@ -2206,7 +2208,14 @@ test('schema enviado: eventos_candidatos existe no schema REAL, com additionalPr
   assert.equal(eventos.type, 'array');
   assert.equal(eventos.items.additionalProperties, false);
   assert.deepEqual([...eventos.items.required].sort(), ['referencia_textual', 'tipo']);
-  assert.deepEqual(eventos.items.properties.tipo.enum, ['aceitar_opcao']);
+  // CONTRA A CONSTANTE, nunca contra uma lista escrita a mao aqui. Ate
+  // 2026-08-10 esta linha congelava `['aceitar_opcao']`, e foi exatamente por
+  // isso que ela ABENCOOU o enum defasado em vez de pegar o defeito: o evento
+  // novo entrou na constante, no schema interno, nos dois validadores e na
+  // instrucao, e o schema do fio ficou para tras sem ninguem notar. Com a
+  // assercao amarrada a constante, um tipo novo que nao chegue ao fio quebra
+  // aqui.
+  assert.deepEqual(eventos.items.properties.tipo.enum, [...TIPOS_EVENTO_CANDIDATO_PERMITIDOS]);
   assert.deepEqual(eventos.items.properties.referencia_textual.type, ['string', 'null']);
 });
 
@@ -2280,4 +2289,44 @@ test('eventos_candidatos ausente na resposta invalida -- o campo raiz e obrigato
   const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs: 200, prazoTotalMs: 400, esperaEntreTentativasMs: 1 });
 
   await assert.rejects(() => cliente.executar(entradaValida()), ErroClienteModeloOpenAI);
+});
+
+// --- Evento aceitar_troca_telefone na conversao portatil ---
+// (specs/cpf-outro-telefone-v1.md secao 2). Este e o SEGUNDO validador de
+// eventos do sistema -- o outro esta em interpretacao-extrator.ts. Os dois
+// precisam concordar, e por isso ambos tem teste proprio: um passar sozinho
+// nao prova que a resposta do modelo real atravessa.
+
+test('eventos: aceitar_troca_telefone atravessa a conversao portatil com a mesma forma unica', async () => {
+  for (const referencia of [null, 'pode sim']) {
+    const { fetchFalso } = criarFetchFalso([
+      () => respostaSucesso([], undefined, 'resposta', [{ tipo: 'aceitar_troca_telefone', referencia_textual: referencia }]),
+    ]);
+    const cliente = criarCliente({ fetch: fetchFalso });
+    const resultado = (await cliente.executar(entradaValida())) as { eventos_candidatos: unknown[] };
+    assert.deepEqual(resultado.eventos_candidatos, [
+      { tipo: 'aceitar_troca_telefone', referencia_textual: referencia },
+    ]);
+  }
+});
+
+test('eventos: NAO existe evento de recusa -- recusar e nao emitir', async () => {
+  // Um `recusar_troca_telefone` que aparecesse (de um modelo antigo, de um
+  // prompt divergente, de um replay) precisa falhar fechado, nunca ser
+  // interpretado como recusa valida por semelhanca de nome.
+  const invalidos = [
+    [{ tipo: 'recusar_troca_telefone', referencia_textual: null }],
+    [{ tipo: 'responder_troca_telefone', resposta: 'sim' }],
+    [{ tipo: 'aceitar_troca_telefone', resposta: 'sim' }],
+    [{ tipo: 'aceitar_troca_telefone' }],
+  ];
+
+  for (const eventos of invalidos) {
+    const { fetchFalso } = criarFetchFalso([() => respostaSucesso([], undefined, 'resposta', eventos)]);
+    const cliente = criarCliente({ fetch: fetchFalso });
+    await assert.rejects(
+      () => cliente.executar(entradaValida()),
+      `esperava recusar ${JSON.stringify(eventos)}`
+    );
+  }
 });

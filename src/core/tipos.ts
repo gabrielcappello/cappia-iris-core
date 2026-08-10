@@ -48,10 +48,34 @@ export interface ContextoHorarios {
    * sobre Consulta/Avaliacao aqui; quem decide o que oferecer e o
    * orquestrador, e hoje so a avaliacao e oferecida.
    *
-   * AUSENTE quando as tres variantes nao se aplicam -- as tres sao
-   * mutuamente exclusivas, nunca coexistem no mesmo snapshot.
+   * AUSENTE quando as variantes nao se aplicam -- todas sao mutuamente
+   * exclusivas, nunca coexistem no mesmo snapshot.
    */
   oferta_procedimento_pendente?: { procedimento_id: string };
+  /**
+   * A Iris perguntou se pode passar o telefone oficial do dono do CPF para o
+   * numero desta conversa, e a resposta ainda nao veio
+   * (specs/cpf-outro-telefone-v1.md secao 1). Quarta variante do contexto
+   * pendente.
+   *
+   * Mesmo papel de `oferta_procedimento_pendente`, pelo mesmo motivo medido:
+   * sem um marcador DECLARATIVO ("o que esta em aberto"), uma resposta curta
+   * ("pode sim") chega a interpretadora sem pergunta pendente e nao tem como
+   * ser lida como resposta A ESTA pergunta -- o historico e descritivo, este
+   * e declarativo.
+   *
+   * SUBSTITUI o snapshot por inteiro: `proposta_pendente` NAO e preservada
+   * junto (spec secao 1). O horario escolhido nao vive aqui -- ele vive em
+   * dados.data_texto/horario_texto/confirmacao, que persistem entre turnos e
+   * sao re-derivados a cada mensagem. Este snapshot e auxiliar de
+   * interpretacao, nunca fonte de disponibilidade nem autoridade de reserva.
+   *
+   * DELIBERADAMENTE sem CPF, sem paciente_id e sem qualquer dado da outra
+   * ficha: e um booleano, e a IA nao precisa de mais nada para entender que
+   * ha uma pergunta de sim/nao em aberto. Mesmo criterio que manteve o
+   * `procedimento_id` fora de `oferta_procedimento_pendente` no payload.
+   */
+  troca_telefone_pendente?: true;
   /** ISO, somente auditoria -- nunca usado como versao nem para ordenar escritas. */
   criado_em: string;
 }

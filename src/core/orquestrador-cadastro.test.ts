@@ -395,7 +395,12 @@ test('data de nascimento futura e recusada -- o campo continua faltante', async 
 
 // --- CPF ja cadastrado ---
 
-test('cpf_ja_cadastrado para o fluxo: nao duplica paciente e NUNCA tenta reservar', async () => {
+// COMPORTAMENTO ALTERADO EM 2026-08-10 (specs/cpf-outro-telefone-v1.md secao
+// 3): ate entao o conflito de CPF PARAVA a conversa com `cpf_ja_cadastrado`.
+// Agora ele PERGUNTA se o paciente quer passar o cadastro para este telefone.
+// O que este teste protege continua igual e continua sendo o essencial: nao
+// duplica paciente, e NUNCA reserva neste turno.
+test('cpf ja cadastrado vira PERGUNTA de troca: nao duplica paciente e NUNCA tenta reservar', async () => {
   const tabelas = criarTabelasFalsasVazias();
   const { procedimentoId } = montarCenario(tabelas);
   const rpc = new ClienteRpcFalso({
@@ -413,11 +418,11 @@ test('cpf_ja_cadastrado para o fluxo: nao duplica paciente e NUNCA tenta reserva
     'sou Gabriel Cappello, 529.982.247-25, nasci em 10/05/1985'
   );
 
-  assert.deepEqual(resultado.decisao, { tipo: 'cpf_ja_cadastrado' });
+  assert.deepEqual(resultado.decisao, { tipo: 'troca_telefone_pendente' });
   assert.deepEqual(
     rpc.chamadas.map((c) => c.nome),
     ['cappia_persistir_paciente'],
-    'a reserva nunca e tentada depois desse desfecho'
+    'nem a reserva nem a troca de telefone sao tentadas: a pergunta ainda nao foi respondida'
   );
 });
 

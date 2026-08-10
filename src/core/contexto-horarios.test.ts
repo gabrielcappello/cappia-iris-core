@@ -437,3 +437,58 @@ test('oferta: variante malformada invalida o snapshot inteiro (falha aberta, vir
     assert.equal(validarContextoHorarios(caso), null, `esperava null para ${JSON.stringify(caso)}`);
   }
 });
+
+// --- Troca de telefone (specs/cpf-outro-telefone-v1.md secao 1) ---
+
+test('troca de telefone: a acao grava SO o marcador, sem preservar proposta nem horarios', async () => {
+  const { cliente, instrucoes } = criarClienteRegistrador(1);
+
+  await gravarContextoHorarios(cliente, {
+    ...ENTRADA_BASE,
+    acao: { tipo: 'perguntar_troca_telefone' },
+  });
+
+  const update = instrucoes.find((i) => i.operacao === 'update');
+  const gravado = update?.valores?.contexto_horarios as Record<string, unknown>;
+  assert.equal(gravado.troca_telefone_pendente, true);
+  // Substitui o snapshot por inteiro: o horario ja confirmado nao vive aqui, e
+  // sim em dados.data_texto/horario_texto/confirmacao (spec secao 1).
+  assert.equal('horarios' in gravado, false);
+  assert.equal('proposta_pendente' in gravado, false);
+  assert.equal('oferta_procedimento_pendente' in gravado, false);
+  assert.equal(typeof gravado.criado_em, 'string');
+});
+
+test('troca de telefone: decisao pendente grava o marcador; recusa e desfecho terminal limpam', () => {
+  assert.deepEqual(derivarAcaoContextoHorarios({ tipo: 'troca_telefone_pendente' } as DecisaoOrquestrador), {
+    tipo: 'perguntar_troca_telefone',
+  });
+  assert.deepEqual(derivarAcaoContextoHorarios({ tipo: 'troca_telefone_recusada' } as DecisaoOrquestrador), {
+    tipo: 'limpar',
+  });
+  assert.deepEqual(derivarAcaoContextoHorarios({ tipo: 'cpf_ja_cadastrado' } as DecisaoOrquestrador), {
+    tipo: 'limpar',
+  });
+});
+
+test('troca de telefone: snapshot lido do banco com o marcador e aceito', () => {
+  assert.deepEqual(
+    validarContextoHorarios({ troca_telefone_pendente: true, criado_em: '2026-08-10T12:00:00.000Z' }),
+    { troca_telefone_pendente: true, criado_em: '2026-08-10T12:00:00.000Z' }
+  );
+});
+
+test('troca de telefone: qualquer valor que nao seja `true` invalida o snapshot inteiro', () => {
+  // "Nao ha pergunta em aberto" se representa pela AUSENCIA da chave -- nunca
+  // por `false`, que seria uma segunda forma de dizer a mesma coisa.
+  const invalidos = [
+    { troca_telefone_pendente: false, criado_em: 'x' },
+    { troca_telefone_pendente: 'sim', criado_em: 'x' },
+    { troca_telefone_pendente: 1, criado_em: 'x' },
+    { troca_telefone_pendente: null, criado_em: 'x' },
+  ];
+
+  for (const caso of invalidos) {
+    assert.equal(validarContextoHorarios(caso), null, `esperava null para ${JSON.stringify(caso)}`);
+  }
+});
