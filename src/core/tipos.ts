@@ -169,6 +169,18 @@ type ResultadoListagem<T> = { data: T[] | null; error: { message: string } | nul
 export interface ConsultaEncadeavel<T = Record<string, unknown>> extends PromiseLike<ResultadoListagem<T>> {
   eq(coluna: string, valor: unknown): ConsultaEncadeavel<T>;
   is(coluna: string, valor: null): ConsultaEncadeavel<T>;
+  /**
+   * Espelha PostgrestFilterBuilder.gte() do supabase-js. Usado hoje somente
+   * pelo corte temporal da busca de agendamento ativo
+   * (`data >= instante_atual.data`, specs/remarcacao-operacional-v1.md
+   * secao 1) -- a METADE do corte que pode ser feita no banco.
+   *
+   * A outra metade (desempate do mesmo dia por minuto) NAO usa este operador
+   * e nunca deve usar: `horario` e `text` e o formato aceita hora de um
+   * digito, entao comparacao lexicografica erra ('9:00' > '14:00' e
+   * verdadeiro). Essa metade e feita em TypeScript, sobre minutos.
+   */
+  gte(coluna: string, valor: unknown): ConsultaEncadeavel<T>;
   // Espelha PostgrestFilterBuilder.not() do supabase-js. Usado hoje somente
   // para expressar "IS NOT NULL" (ex.: not('interpretacao_persistida_em',
   // 'is', null)), necessario para a conclusao condicional -- nunca faz um

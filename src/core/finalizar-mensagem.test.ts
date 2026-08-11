@@ -43,6 +43,7 @@ function clienteComErroDeUpdate(mensagemErro: string): ClienteBancoDados {
   const consultaComErro: ConsultaEncadeavel = {
     eq: () => consultaComErro,
     is: () => consultaComErro,
+    gte: () => consultaComErro,
     not: () => consultaComErro,
     select: () => consultaComErro,
     maybeSingle: async () => ({ data: null, error: { message: mensagemErro } }),

@@ -56,6 +56,23 @@ class ConsultaFalsa implements ConsultaEncadeavel {
     return this.eq(coluna, valor);
   }
 
+  // Comparacao com `>=` de string, mesma semantica do PostgREST para uma
+  // coluna `date` em YYYY-MM-DD (ordem lexicografica == ordem cronologica).
+  // Linha com valor nulo/ausente NUNCA passa -- em SQL, `null >= x` e NULL,
+  // que o WHERE descarta.
+  gte(coluna: string, valor: unknown): ConsultaEncadeavel {
+    const base = this.linhasFiltradas ?? this.todasLinhas;
+    return new ConsultaFalsa(
+      this.todasLinhas,
+      base.filter((linha) => {
+        const atual = linha[coluna];
+        if (atual === null || atual === undefined) return false;
+        return (atual as string | number) >= (valor as string | number);
+      }),
+      this.erro
+    );
+  }
+
   not(coluna: string, operador: string, valor: unknown): ConsultaEncadeavel {
     if (operador !== 'is' || valor !== null) {
       throw new Error(`ConsultaFalsa.not: combinacao nao suportada (${operador}, ${String(valor)})`);
@@ -104,10 +121,18 @@ class ConsultaFalsa implements ConsultaEncadeavel {
 
 // 'eq' cobre .eq() e .is(coluna, null); 'not_null' cobre .not(coluna, 'is', null)
 // -- a unica combinacao de .not() usada hoje (ver ConsultaEncadeavel.not em tipos.ts).
-type Filtro = { tipo: 'eq'; coluna: string; valor: unknown } | { tipo: 'not_null'; coluna: string };
+type Filtro =
+  | { tipo: 'eq'; coluna: string; valor: unknown }
+  | { tipo: 'not_null'; coluna: string }
+  | { tipo: 'gte'; coluna: string; valor: unknown };
 
 function filtroCasa(linha: Record<string, unknown>, filtro: Filtro): boolean {
   if (filtro.tipo === 'eq') return linha[filtro.coluna] === filtro.valor;
+  if (filtro.tipo === 'gte') {
+    const atual = linha[filtro.coluna];
+    if (atual === null || atual === undefined) return false;
+    return (atual as string | number) >= (filtro.valor as string | number);
+  }
   return linha[filtro.coluna] !== null && linha[filtro.coluna] !== undefined;
 }
 
@@ -128,6 +153,10 @@ class AtualizacaoFalsa implements ConsultaEncadeavel {
 
   is(coluna: string, valor: null): ConsultaEncadeavel {
     return this.eq(coluna, valor);
+  }
+
+  gte(coluna: string, valor: unknown): ConsultaEncadeavel {
+    return new AtualizacaoFalsa(this.linhas, this.valores, [...this.filtros, { tipo: 'gte', coluna, valor }]);
   }
 
   not(coluna: string, operador: string, valor: unknown): ConsultaEncadeavel {

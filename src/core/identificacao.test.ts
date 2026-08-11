@@ -328,6 +328,7 @@ function clienteParaReconsultaInvalida(
     const consulta: ConsultaEncadeavel = {
       eq: () => consulta,
       is: () => consulta,
+      gte: () => consulta,
       not: () => consulta,
       select: () => consulta,
       maybeSingle: async () => ({ data, error: null }),

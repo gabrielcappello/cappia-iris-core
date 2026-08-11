@@ -652,6 +652,7 @@ function clienteComUpdateInvalido(estadoInicial: Record<string, unknown>, dadosI
     const consulta: ConsultaEncadeavel = {
       eq: () => consulta,
       is: () => consulta,
+      gte: () => consulta,
       not: () => consulta,
       select: () => consulta,
       maybeSingle: async () => ({ data, error: null }),
