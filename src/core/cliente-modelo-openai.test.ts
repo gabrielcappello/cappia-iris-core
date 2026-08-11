@@ -2060,6 +2060,7 @@ test('fronteira: GUARDA GERAL -- toda chave opcional do payload precisa aparecer
     dentistas_disponiveis: [{ dentista_id: 'dent-ana', nome_exibido: 'Dra. Ana Souza' }],
     oferta_procedimento_pendente: { procedimento_id: 'consultation_evaluation' },
     troca_telefone_pendente: true,
+    agendamentos_ativos: [{ agendamento_id: 'ag-1', descricao: 'Limpeza com Dra. Ana em 15/08 às 14:00' }],
     historico_recente: HISTORICO_EXEMPLO,
   };
 

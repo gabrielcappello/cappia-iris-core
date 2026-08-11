@@ -481,13 +481,118 @@ test('exaustividade: todos os 18 tipos de DecisaoOrquestrador produzem texto nao
     { tipo: 'reserva_criada', agendamento_id: 'a1', dentista_id: 'd1', procedimento_id: 'p1', duracao_min: 40, data: '2026-08-05', horario: '09:00' },
     { tipo: 'reserva_conflito' },
     { tipo: 'reserva_falhou', motivo: 'erro_tecnico' },
+    // --- remarcacao (2026-08-11, specs/remarcacao-conversacional-v1.md) ---
+    { tipo: 'sem_agendamento_para_remarcar' },
+    {
+      tipo: 'aguardando_escolha_agendamento',
+      agendamentos: [
+        {
+          agendamento_id: 'ag1',
+          data: '2026-08-10',
+          horario: '14:00',
+          dentista_id: 'd1',
+          dentista_nome: 'Dra. Ana',
+          procedimento_id: 'p1',
+          procedimento: 'Limpeza',
+        },
+      ],
+    },
+    {
+      tipo: 'aguardando_confirmacao_remarcacao',
+      agendamento_atual: {
+        agendamento_id: 'ag1',
+        data: '2026-08-10',
+        horario: '14:00',
+        dentista_id: 'd1',
+        dentista_nome: 'Dra. Ana',
+        procedimento_id: 'p1',
+        procedimento: 'Limpeza',
+      },
+      procedimento_id: 'p1',
+      dentista_id: 'd1',
+      opcao: opcao(),
+    },
+    {
+      tipo: 'remarcacao_criada',
+      agendamento_id: 'ag2',
+      agendamento_id_antigo: 'ag1',
+      dentista_id: 'd1',
+      procedimento_id: 'p1',
+      duracao_min: 40,
+      data: '2026-08-20',
+      horario: '09:00',
+    },
   ];
-  assert.equal(decisoes.length, 18, 'confirma que os 18 tipos estao cobertos neste teste');
+  assert.equal(decisoes.length, 22, 'confirma que os tipos cobertos neste teste continuam todos presentes (18 originais + 4 de remarcacao)');
   for (const decisao of decisoes) {
     const texto = gerarRespostaPaciente(decisao);
     assert.equal(typeof texto, 'string');
     assert.ok(texto.trim().length > 0, `decisao ${decisao.tipo} produziu texto vazio`);
   }
+});
+
+// --- remarcacao (2026-08-11, specs/remarcacao-conversacional-v1.md) ---
+
+function agendamentoAtivo(overrides: Record<string, unknown> = {}) {
+  return {
+    agendamento_id: 'ag1',
+    data: '2026-08-10',
+    horario: '14:00',
+    dentista_id: 'd1',
+    dentista_nome: 'Dra. Ana',
+    procedimento_id: 'p1',
+    procedimento: 'Limpeza',
+    ...overrides,
+  };
+}
+
+test('sem_agendamento_para_remarcar: informa a ausencia, nunca soa como falha tecnica', () => {
+  const texto = gerarRespostaPaciente({ tipo: 'sem_agendamento_para_remarcar' });
+  assert.ok(!/problema t[eé]cnico/i.test(texto));
+});
+
+test('aguardando_escolha_agendamento: lista as opcoes numeradas com data e horario', () => {
+  const decisao: DecisaoCaminhoFeliz = {
+    tipo: 'aguardando_escolha_agendamento',
+    agendamentos: [agendamentoAtivo({ data: '2026-08-10', horario: '14:00' }), agendamentoAtivo({ data: '2026-08-15', horario: '09:00' })],
+  };
+  const texto = gerarRespostaPaciente(decisao);
+  assert.ok(texto.includes('10/08'));
+  assert.ok(texto.includes('14:00'));
+  assert.ok(texto.includes('15/08'));
+  assert.ok(texto.includes('09:00'));
+});
+
+test('aguardando_confirmacao_remarcacao: menciona o agendamento ATUAL e o horario NOVO -- de onde para onde', () => {
+  const decisao: DecisaoCaminhoFeliz = {
+    tipo: 'aguardando_confirmacao_remarcacao',
+    agendamento_atual: agendamentoAtivo({ data: '2026-08-10', horario: '14:00' }),
+    procedimento_id: 'p1',
+    dentista_id: 'd1',
+    opcao: opcao({ data: '2026-08-20', inicio_min: 540 }),
+  };
+  const texto = gerarRespostaPaciente(decisao);
+  assert.ok(texto.includes('10/08'));
+  assert.ok(texto.includes('14:00'));
+  assert.ok(texto.includes('20/08'));
+  assert.ok(texto.includes('09:00'));
+});
+
+test('remarcacao_criada: confirma a nova data/horario, nunca menciona "cancelado"', () => {
+  const decisao: DecisaoCaminhoFeliz = {
+    tipo: 'remarcacao_criada',
+    agendamento_id: 'ag2',
+    agendamento_id_antigo: 'ag1',
+    dentista_id: 'd1',
+    procedimento_id: 'p1',
+    duracao_min: 40,
+    data: '2026-08-20',
+    horario: '09:00',
+  };
+  const texto = gerarRespostaPaciente(decisao);
+  assert.ok(texto.includes('20/08'));
+  assert.ok(texto.includes('09:00'));
+  assert.ok(!/cancelad/i.test(texto));
 });
 
 // --- determinismo ---

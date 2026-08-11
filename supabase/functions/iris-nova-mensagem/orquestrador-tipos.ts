@@ -10,6 +10,8 @@ import type { CampoCadastralInterpretacao, Conflito, NaturezaMensagem } from './
 import type { InstanteAtual, OpcaoHorario, ResultadoDisponibilidade } from './disponibilidade-tipos.ts';
 import type { ResultadoResolucaoTemporal } from './temporal-tipos.ts';
 import type { MotivoErroReserva } from './reservar-agendamento.ts';
+import type { MotivoErroRemarcacao } from './remarcar-agendamento.ts';
+import type { AgendamentoAtivo } from './buscar-agendamento-ativo.ts';
 import type { HistoricoConversa } from './tipos.ts';
 
 /**
@@ -208,8 +210,56 @@ export type DecisaoOrquestrador =
   // O horario estava livre na leitura, mas cappia_reservar_agendamento (trava
   // real, ja testada em producao) recusou por sobreposição -- nunca insiste
   // sozinho, devolve conflito para o chamador pedir uma nova escolha.
+  //
+  // REUTILIZADA pela remarcacao (specs/remarcacao-conversacional-v1.md secao
+  // 6): `cappia_remarcar_agendamento_v2` usa o MESMO lock/conflito de
+  // `cappia_reservar_agendamento`, e o desfecho para o paciente e
+  // literalmente o mesmo -- escolher outro horario. Uma segunda decisao so
+  // para dizer a mesma frase seria duplicacao.
   | { tipo: 'reserva_conflito' }
-  | { tipo: 'reserva_falhou'; motivo: MotivoErroReserva };
+  // REUTILIZADA pela remarcacao pelo mesmo motivo (spec secao 6, auditoria
+  // de `remarcacao_falhou`): nenhum dos motivos de falha e lido em nenhum
+  // lugar do Core (so tres consumidores existem, e todos colapsam no MESMO
+  // texto tecnico generico) -- criar uma decisao propria so anteciparia um
+  // palpite sobre um campo que ninguem le. `motivo` aceita o vocabulario das
+  // DUAS RPCs: `Exclude<..., 'horario_ocupado'>` porque esse motivo especifico
+  // da remarcacao sempre vira `reserva_conflito` acima, nunca chega aqui.
+  | { tipo: 'reserva_falhou'; motivo: MotivoErroReserva | Exclude<MotivoErroRemarcacao, 'horario_ocupado'> }
+  // Nenhum agendamento ativo encontrado para remarcar -- zero resultados da
+  // busca, ou paciente sem ficha (specs/remarcacao-conversacional-v1.md
+  // secao 2). Paciente sem cadastro nao recebe oferta de cadastro aqui: sem
+  // ficha nao ha agendamento por definicao.
+  | { tipo: 'sem_agendamento_para_remarcar' }
+  // Mais de um agendamento ativo -- a Iris precisa perguntar qual
+  // (spec secao 3). `agendamentos` e a lista OFERECIDA, na ordem em que sera
+  // apresentada; o contexto pendente persiste so os IDs, nesta mesma ordem.
+  | { tipo: 'aguardando_escolha_agendamento'; agendamentos: readonly AgendamentoAtivo[] }
+  // Horario novo encontrado e livre, aguardando confirmacao explicita (spec
+  // secao 5). Decisao SEPARADA de `aguardando_confirmacao`: a resposta
+  // precisa comunicar de ONDE para ONDE (agendamento atual -> horario
+  // novo), nao so pedir um "sim" -- diferenca de significado operacional,
+  // nunca de conveniencia estrutural. `procedimento_id`/`dentista_id` sao os
+  // do agendamento ja localizado, NUNCA re-resolvidos.
+  | {
+      tipo: 'aguardando_confirmacao_remarcacao';
+      agendamento_atual: AgendamentoAtivo;
+      procedimento_id: string;
+      dentista_id: string;
+      opcao: OpcaoHorario;
+    }
+  // Remarcacao concluida com sucesso (spec secao 6), inclusive replay
+  // (`ja_remarcado: true` na RPC) -- o desfecho para o paciente e o mesmo:
+  // uma confirmacao verdadeira, nunca um erro de retentativa.
+  | {
+      tipo: 'remarcacao_criada';
+      agendamento_id: string;
+      agendamento_id_antigo: string;
+      dentista_id: string;
+      procedimento_id: string;
+      duracao_min: number;
+      data: string;
+      horario: string;
+    };
 
 export interface ResultadoOrquestrador {
   clinica_id: string;

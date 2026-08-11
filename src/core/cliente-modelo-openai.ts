@@ -431,6 +431,15 @@ async function processarTentativa(
           ...(contexto.entrada.payload.troca_telefone_pendente !== undefined
             ? { troca_telefone_pendente: contexto.entrada.payload.troca_telefone_pendente }
             : {}),
+          // Quinta variante do contexto pendente
+          // (specs/remarcacao-conversacional-v1.md secao 3). Mesmo motivo do
+          // comentario acima: sem esta chave no corpo HTTP, a IA nunca recebe
+          // a lista de agendamentos e `agendamento_id` nunca seria emitido em
+          // producao -- exatamente a classe de falha que este bloco
+          // campo-a-campo ja causou uma vez com `historico_recente`.
+          ...(contexto.entrada.payload.agendamentos_ativos !== undefined
+            ? { agendamentos_ativos: contexto.entrada.payload.agendamentos_ativos }
+            : {}),
           // CORRECAO 2026-08-08: `historico_recente` existia em
           // EntradaInterpretacao desde specs/historico-conversacional-v1.md,
           // mas NUNCA era copiado para o corpo HTTP -- este objeto e montado

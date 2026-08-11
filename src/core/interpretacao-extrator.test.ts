@@ -167,7 +167,11 @@ test('teste16: as instrucoes registram explicitamente que periodo nao e inferido
   const ocorrencias = INSTRUCOES_EXTRATOR.split(fraseEmissaoIntencao).length - 1;
   assert.equal(ocorrencias, 1, 'a regra de emissao de intencao deve aparecer exatamente uma vez em INSTRUCOES_EXTRATOR');
 
-  assert.deepEqual(INTENCOES_PERMITIDAS, ['novo_agendamento'], 'novo_agendamento continua sendo o unico valor permitido para intencao');
+  assert.deepEqual(
+    INTENCOES_PERMITIDAS,
+    ['novo_agendamento', 'remarcacao'],
+    'novo_agendamento e remarcacao sao os unicos valores permitidos para intencao (specs/remarcacao-conversacional-v1.md)'
+  );
 });
 
 test('teste17: campo nao mencionado fica ausente da saida interpretada', async () => {

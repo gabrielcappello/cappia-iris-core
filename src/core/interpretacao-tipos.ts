@@ -15,7 +15,14 @@ import type { AlteracoesDados, CampoDadosConversa, ParConversa, ResultadoAplicar
 
 export type CampoOperacionalInterpretacao = Extract<
   CampoDadosConversa,
-  'intencao' | 'procedimento_id' | 'dentista_id' | 'data_texto' | 'periodo' | 'horario_texto' | 'confirmacao'
+  | 'intencao'
+  | 'procedimento_id'
+  | 'dentista_id'
+  | 'agendamento_id'
+  | 'data_texto'
+  | 'periodo'
+  | 'horario_texto'
+  | 'confirmacao'
 >;
 
 export type CampoCadastralInterpretacao = Extract<
@@ -27,6 +34,7 @@ export const CAMPOS_OPERACIONAIS_INTERPRETACAO: readonly CampoOperacionalInterpr
   'intencao',
   'procedimento_id',
   'dentista_id',
+  'agendamento_id',
   'data_texto',
   'periodo',
   'horario_texto',
@@ -150,6 +158,23 @@ export interface EntradaInterpretacao {
    * (specs/cpf-outro-telefone-v1.md secao 4).
    */
   troca_telefone_pendente?: true;
+  /**
+   * Agendamentos ativos do paciente, quando ha mais de um e a Iris precisa
+   * que ele escolha qual remarcar (specs/remarcacao-conversacional-v1.md
+   * secao 3). So chega no payload quando ha uma escolha pendente -- o
+   * proprio ENVIO da lista e o sinal de que ha uma pergunta em aberto (nao
+   * existe um booleano separado: contrato fechado por medicao 2026-08-11).
+   *
+   * Exatamente dois campos por item: `agendamento_id` (identificador opaco)
+   * e `descricao` (texto pronto -- procedimento, dentista, data e horario --
+   * montado pelo Core a partir de uma busca fresca, nunca do snapshot
+   * persistido). A IA correlaciona semanticamente e devolve o
+   * `agendamento_id` direto em `alteracoes`; ela NUNCA resolve ordinal, nome
+   * de procedimento, dia da semana ou nome de dentista para indice ou ID por
+   * conta propria no Core -- e a IA quem faz essa correlacao, uma unica vez,
+   * no proprio turno.
+   */
+  agendamentos_ativos?: { agendamento_id: string; descricao: string }[];
   /**
    * Ultimos turnos da conversa (specs/historico-conversacional-v1.md secao
    * 6), do mais antigo para o mais recente, ja filtrados por validade (24h)

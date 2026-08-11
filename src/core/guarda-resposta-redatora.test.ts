@@ -36,6 +36,31 @@ test('aprova horario vindo de agendamento_confirmado', () => {
   assert.deepEqual(verificarRespostaRedatora('Prontinho, confirmado para 09:00!', f), { aprovado: true });
 });
 
+// 2026-08-11 (specs/remarcacao-conversacional-v1.md secao 5): a redatora
+// precisa poder mencionar o horario ANTIGO ao propor a troca ("voce esta
+// com 14:00, quer passar para 09:00?") -- sem autorizar esse horario, a
+// guarda reprovaria uma frase honesta.
+test('aprova horario vindo de agendamento_atual (remarcacao)', () => {
+  const f = fatos({ agendamento_atual: { data: '10/08', horario: '14:00' } });
+  assert.deepEqual(verificarRespostaRedatora('Você está com 14:00 marcado.', f), { aprovado: true });
+});
+
+test('agendamento_atual e proposta_pendente autorizam os DOIS horarios simultaneamente (de onde para onde)', () => {
+  const f = fatos({
+    agendamento_atual: { data: '10/08', horario: '14:00' },
+    proposta_pendente: { data: '20/08', horario: '09:00' },
+  });
+  assert.deepEqual(verificarRespostaRedatora('Você está com 14:00 no dia 10/08. Quer passar para 09:00 no dia 20/08?', f), {
+    aprovado: true,
+  });
+});
+
+test('reprova horario nao autorizado mesmo com agendamento_atual presente', () => {
+  const f = fatos({ agendamento_atual: { data: '10/08', horario: '14:00' } });
+  const resultado = verificarRespostaRedatora('Você está com 15:00 marcado.', f);
+  assert.deepEqual(resultado, { aprovado: false, motivo: 'horario_nao_autorizado' });
+});
+
 // --- Normalizacao: mesmo valor, grafias diferentes ---
 
 test('normaliza antes de comparar: 14h, 14:00 e 14 horas sao o mesmo valor autorizado', () => {

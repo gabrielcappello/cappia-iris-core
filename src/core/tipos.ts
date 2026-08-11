@@ -76,6 +76,23 @@ export interface ContextoHorarios {
    * `procedimento_id` fora de `oferta_procedimento_pendente` no payload.
    */
   troca_telefone_pendente?: true;
+  /**
+   * O paciente tem mais de um agendamento ativo e a Iris perguntou qual
+   * deles ele quer remarcar (specs/remarcacao-conversacional-v1.md secao 3).
+   * Quinta variante do contexto pendente.
+   *
+   * `agendamento_ids` e a ordem EXATA em que os agendamentos foram
+   * apresentados -- mesmo papel que `horarios` ja tem para slots, dá sentido
+   * a "o segundo". Deliberadamente SEM descricao (procedimento/dentista/
+   * data/horario): o texto que a IA le e montado a cada turno a partir de
+   * uma busca fresca (`buscarAgendamentoAtivo`), nunca persistido aqui --
+   * este snapshot e so a lista de IDs que autoriza a validacao de
+   * integridade em interpretar-e-aplicar.ts.
+   *
+   * SUBSTITUI o snapshot por inteiro, mesmo criterio das demais variantes
+   * declarativas.
+   */
+  escolha_agendamento_pendente?: { agendamento_ids: string[] };
   /** ISO, somente auditoria -- nunca usado como versao nem para ordenar escritas. */
   criado_em: string;
 }
@@ -215,6 +232,15 @@ export type CampoDadosConversa =
   // ativos da clinica e devolve o ID; o Core so confere integridade e
   // vinculo -- nunca compara nome.
   | 'dentista_id'
+  // Agendamento que o paciente esta remarcando, quando ha mais de um ativo
+  // (specs/remarcacao-conversacional-v1.md secao 3). AO CONTRARIO de
+  // `dentista_id`, a IA emite este campo DIRETAMENTE -- contrato fechado por
+  // medicao 2026-08-11 (11/11 contra a IA real; a alternativa via evento
+  // media 11/11 mas so devolve a frase crua do paciente, transferindo ao
+  // Core a tarefa de interpretar portugues). O Core NUNCA aceita um valor
+  // fora da lista oficialmente oferecida neste turno (interpretar-e-
+  // aplicar.ts) -- nunca adivinha, nunca interpreta referencia textual.
+  | 'agendamento_id'
   | 'data_texto'
   | 'periodo'
   | 'horario_texto'

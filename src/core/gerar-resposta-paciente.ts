@@ -19,9 +19,11 @@
 // tem texto proprio (situacoes de conversa normal, nunca falha); os outros
 // cinco (clinica_sem_catalogo, erro_catalogo_dentista,
 // duracao_nao_configurada, erro_configuracao_duracao, reserva_falhou) sao
-// falha tecnica real e compartilham uma unica frase
-// honesta. Este modulo agora cobre os 18 tipos de DecisaoOrquestrador por
-// completo -- nenhum deles retorna resposta:null. Desde a mesma data, este
+// falha tecnica real e compartilham uma unica frase honesta -- desde
+// 2026-08-11 essa mesma frase tambem cobre falhas de remarcacao
+// (reserva_falhou e REUTILIZADA, spec secao 6). Este modulo cobre todos os
+// tipos de DecisaoOrquestrador por completo -- nenhum deles retorna
+// resposta:null. Desde a mesma data original, este
 // e o FALLBACK deterministico (specs/resposta-conversacional-v1.md secao 6):
 // o caminho normal e a IA redatora (gerar-resposta-conversacional.ts); este
 // modulo so e chamado quando ela falha, e reprovada pela guarda, ou nao
@@ -133,6 +135,19 @@ export function gerarRespostaPaciente(decisao: DecisaoOrquestrador): string {
       return decisao.procedimento_oferecido !== undefined
         ? 'Não encontrei nenhum profissional disponível para esse atendimento. Posso verificar uma Consulta/Avaliação em vez disso?'
         : 'Não encontrei nenhum profissional disponível para esse atendimento no momento.';
+    // --- Remarcacao (2026-08-11, specs/remarcacao-conversacional-v1.md) ---
+    case 'sem_agendamento_para_remarcar':
+      return 'Não encontrei nenhum agendamento seu para remarcar no momento.';
+    case 'aguardando_escolha_agendamento': {
+      const opcoes = decisao.agendamentos
+        .map((a, indice) => `${indice + 1}) ${formatarData(a.data)} às ${a.horario}`)
+        .join('; ');
+      return `Você tem mais de um agendamento: ${opcoes}. Qual deles você quer remarcar?`;
+    }
+    case 'aguardando_confirmacao_remarcacao':
+      return `Você está com ${formatarData(decisao.agendamento_atual.data)} às ${decisao.agendamento_atual.horario}. Quer passar para ${formatarOpcao(decisao.opcao)}?`;
+    case 'remarcacao_criada':
+      return `Prontinho! Sua consulta foi remarcada para ${formatarData(decisao.data)} às ${decisao.horario}.`;
     case 'combinacao_indisponivel':
       // O paciente escolheu um profissional que nao realiza esse atendimento
       // e para quem a avaliacao tambem nao e possivel. Nunca sugere OUTRO

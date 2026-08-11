@@ -30,6 +30,7 @@ export type AcaoContextoHorarios =
   | { tipo: 'propor'; data: string; horario: string }
   | { tipo: 'oferecer'; procedimento_id: string }
   | { tipo: 'perguntar_troca_telefone' }
+  | { tipo: 'perguntar_qual_agendamento'; agendamento_ids: string[] }
   | { tipo: 'preservar' }
   | { tipo: 'limpar' };
 
@@ -111,6 +112,32 @@ export function derivarAcaoContextoHorarios(decisao: DecisaoOrquestrador): AcaoC
     // fluxo recalcula e regrava o mesmo marcador.
     case 'troca_telefone_pendente':
       return { tipo: 'perguntar_troca_telefone' };
+
+    // PERGUNTAR_QUAL_AGENDAMENTO (2026-08-11, specs/remarcacao-
+    // conversacional-v1.md secao 3): mais de um agendamento ativo, a Iris
+    // perguntou qual remarcar. Mesmo motivo das duas variantes acima: sem
+    // este marcador, "o segundo" no turno seguinte chega a interpretadora
+    // sem nenhuma pergunta pendente declarada.
+    //
+    // So os IDS sao persistidos, na mesma ordem em que foram apresentados --
+    // as descricoes que a IA le sao remontadas a cada turno a partir de uma
+    // busca fresca (orquestrador.ts), nunca guardadas aqui.
+    case 'aguardando_escolha_agendamento':
+      return { tipo: 'perguntar_qual_agendamento', agendamento_ids: decisao.agendamentos.map((a) => a.agendamento_id) };
+
+    // PROPOR (mesma acao de `aguardando_confirmacao`): o Core propos UM
+    // horario concreto para a remarcacao e aguarda confirmacao explicita.
+    // Decisao separada, mesma acao de contexto -- a diferenca entre as duas
+    // e so a REDACAO (de onde para onde), nunca o mecanismo de pergunta
+    // pendente.
+    case 'aguardando_confirmacao_remarcacao':
+      return { tipo: 'propor', data: decisao.opcao.data, horario: formatarMinutos(decisao.opcao.inicio_min) };
+
+    // Nenhum agendamento ativo, ou remarcacao concluida: a pergunta (se
+    // havia alguma) deixou de fazer sentido -- nada fica pendurado.
+    case 'sem_agendamento_para_remarcar':
+    case 'remarcacao_criada':
+      return { tipo: 'limpar' };
 
     case 'saudacao':
     case 'duvida_livre':
@@ -237,7 +264,12 @@ export async function gravarContextoHorarios(
             }
           : entrada.acao.tipo === 'perguntar_troca_telefone'
             ? { troca_telefone_pendente: true, criado_em: new Date().toISOString() }
-            : null;
+            : entrada.acao.tipo === 'perguntar_qual_agendamento'
+              ? {
+                  escolha_agendamento_pendente: { agendamento_ids: entrada.acao.agendamento_ids },
+                  criado_em: new Date().toISOString(),
+                }
+              : null;
 
   const proximoValor = proximoTimestamp(entrada.atualizado_em_da_decisao);
 
@@ -297,12 +329,18 @@ export function validarContextoHorarios(valor: unknown): ContextoHorarios | null
   if (valor === null || valor === undefined) return null;
   if (typeof valor !== 'object' || Array.isArray(valor)) return null;
 
-  const { horarios, criado_em, proposta_pendente, oferta_procedimento_pendente, troca_telefone_pendente } =
-    valor as Record<string, unknown>;
+  const {
+    horarios,
+    criado_em,
+    proposta_pendente,
+    oferta_procedimento_pendente,
+    troca_telefone_pendente,
+    escolha_agendamento_pendente,
+  } = valor as Record<string, unknown>;
   if (typeof criado_em !== 'string') return null;
 
   // Cada campo, quando PRESENTE, precisa ser valido -- um campo presente
-  // porem malformado invalida o snapshot inteiro (nunca aceita um dos quatro
+  // porem malformado invalida o snapshot inteiro (nunca aceita um dos cinco
   // parcialmente). Um campo AUSENTE simplesmente nao contribui.
   if (horarios !== undefined && !horariosValidos(horarios)) return null;
   if (proposta_pendente !== undefined && !propostaPendenteValida(proposta_pendente)) return null;
@@ -310,15 +348,17 @@ export function validarContextoHorarios(valor: unknown): ContextoHorarios | null
   // Fechado a `true`, nunca `false`: "nao ha pergunta de troca em aberto" se
   // representa pela AUSENCIA da chave, exatamente como as demais variantes.
   if (troca_telefone_pendente !== undefined && troca_telefone_pendente !== true) return null;
+  if (escolha_agendamento_pendente !== undefined && !escolhaAgendamentoValida(escolha_agendamento_pendente)) return null;
 
-  // Pelo menos um dos quatro precisa existir -- um snapshot sem nenhum e
+  // Pelo menos um dos cinco precisa existir -- um snapshot sem nenhum e
   // invalido, nunca vira um objeto "vazio" (specs/resposta-conversacional-v1.md
   // secao 5).
   if (
     horarios === undefined &&
     proposta_pendente === undefined &&
     oferta_procedimento_pendente === undefined &&
-    troca_telefone_pendente === undefined
+    troca_telefone_pendente === undefined &&
+    escolha_agendamento_pendente === undefined
   ) {
     return null;
   }
@@ -330,8 +370,20 @@ export function validarContextoHorarios(valor: unknown): ContextoHorarios | null
       ? { oferta_procedimento_pendente: oferta_procedimento_pendente as { procedimento_id: string } }
       : {}),
     ...(troca_telefone_pendente !== undefined ? { troca_telefone_pendente: true as const } : {}),
+    ...(escolha_agendamento_pendente !== undefined
+      ? { escolha_agendamento_pendente: escolha_agendamento_pendente as { agendamento_ids: string[] } }
+      : {}),
     criado_em,
   };
+}
+
+function escolhaAgendamentoValida(valor: unknown): valor is { agendamento_ids: string[] } {
+  if (valor === null || typeof valor !== 'object' || Array.isArray(valor)) return false;
+  const chaves = Object.keys(valor as Record<string, unknown>);
+  if (chaves.length !== 1 || chaves[0] !== 'agendamento_ids') return false;
+  const { agendamento_ids } = valor as Record<string, unknown>;
+  if (!Array.isArray(agendamento_ids) || agendamento_ids.length === 0) return false;
+  return agendamento_ids.every((id) => typeof id === 'string' && id.trim() !== '');
 }
 
 function ofertaProcedimentoValida(valor: unknown): valor is { procedimento_id: string } {

@@ -59,7 +59,11 @@ export type ObjetivoResposta =
   | 'informar_cpf_ja_cadastrado' // 2026-08-10 -- specs/cadastro-conversacional-v1.md secao 7.
   | 'perguntar_troca_telefone' // 2026-08-10 -- specs/cpf-outro-telefone-v1.md secao 3.
   | 'acatar_recusa_troca_telefone' // 2026-08-10 -- idem; recusa tem desfecho proprio.
-  | 'informar_substituicao_por_avaliacao'; // 2026-08-09 -- o procedimento cedeu para preservar o dentista escolhido.
+  | 'informar_substituicao_por_avaliacao' // 2026-08-09 -- o procedimento cedeu para preservar o dentista escolhido.
+  | 'informar_sem_agendamento_para_remarcar' // 2026-08-11 -- specs/remarcacao-conversacional-v1.md secao 2.
+  | 'escolher_entre_agendamentos' // 2026-08-11 -- idem, secao 3.
+  | 'pedir_confirmacao_remarcacao' // 2026-08-11 -- idem, secao 5.
+  | 'informar_remarcacao_criada'; // 2026-08-11 -- idem, secao 6.
 
 export interface FatosAutorizados {
   objetivo: ObjetivoResposta;
@@ -118,6 +122,21 @@ export interface FatosAutorizados {
   proposta_pendente?: { data: string; horario: string };
   dados_faltantes?: CampoFaltante[];
   falha_tecnica?: true;
+  /**
+   * Data e horario do agendamento ATUAL do paciente, na remarcacao
+   * (specs/remarcacao-conversacional-v1.md secao 5) -- o "de onde" da
+   * pergunta "de onde para onde". `proposta_pendente` continua sendo o "para
+   * onde" (o horario novo, aguardando confirmacao) -- mesmo campo que o
+   * novo agendamento ja usa, sem alteracao de significado.
+   */
+  agendamento_atual?: { data: string; horario: string };
+  /**
+   * Descricoes dos agendamentos ativos do paciente, quando ha mais de um e
+   * ele precisa escolher qual remarcar (spec secao 3). Mesmo papel que
+   * `dentistas_candidatos` ja tem para escolha de profissional -- texto
+   * pronto, nunca IDs.
+   */
+  agendamentos_candidatos?: string[];
 }
 
 /**
@@ -242,7 +261,35 @@ function derivarPorDecisao(decisao: DecisaoOrquestrador): FatosAutorizados {
       // Mesma familia de "isso que voce escolheu nao esta mais livre" que
       // horario_exato_indisponivel -- sem alternativas conhecidas aqui (a
       // RPC so informou conflito, nao vizinhos), entao sem horarios_disponiveis.
+      // REUTILIZADA pela remarcacao (spec secao 6): mesmo desfecho para o
+      // paciente, escolher outro horario.
       return { objetivo: 'informar_horario_indisponivel' };
+
+    // --- Remarcacao (2026-08-11, specs/remarcacao-conversacional-v1.md) ---
+    case 'sem_agendamento_para_remarcar':
+      return { objetivo: 'informar_sem_agendamento_para_remarcar' };
+
+    case 'aguardando_escolha_agendamento':
+      return {
+        objetivo: 'escolher_entre_agendamentos',
+        agendamentos_candidatos: decisao.agendamentos.map((a) => `${formatarData(a.data)} às ${a.horario}`),
+      };
+
+    case 'aguardando_confirmacao_remarcacao':
+      return {
+        objetivo: 'pedir_confirmacao_remarcacao',
+        agendamento_atual: {
+          data: formatarData(decisao.agendamento_atual.data),
+          horario: decisao.agendamento_atual.horario,
+        },
+        proposta_pendente: { data: formatarData(decisao.opcao.data), horario: formatarMinutos(decisao.opcao.inicio_min) },
+      };
+
+    case 'remarcacao_criada':
+      return {
+        objetivo: 'informar_remarcacao_criada',
+        agendamento_confirmado: { data: formatarData(decisao.data), horario: decisao.horario },
+      };
   }
 }
 

@@ -20,6 +20,19 @@ function opcao(overrides: Partial<OpcaoHorario> = {}): OpcaoHorario {
   };
 }
 
+function agendamentoAtivo(overrides: Record<string, unknown> = {}) {
+  return {
+    agendamento_id: 'ag1',
+    data: '2026-08-10',
+    horario: '14:00',
+    dentista_id: 'd1',
+    dentista_nome: 'Dra. Ana',
+    procedimento_id: 'p1',
+    procedimento: 'Limpeza',
+    ...overrides,
+  };
+}
+
 const CAMPOS_SENSIVEIS_PROIBIDOS = ['telefone', 'cpf', 'nome', 'email', 'paciente_id', 'clinica_id', 'agendamento_id'];
 
 // A checagem e pela CHAVE (`"campo":`), nunca pelo token solto.
@@ -114,8 +127,28 @@ test('mapeamento: os 18 tipos produzem um objetivo, nenhum lanca', () => {
     },
     { tipo: 'reserva_conflito' },
     { tipo: 'reserva_falhou', motivo: 'erro_tecnico' },
+    // --- remarcacao (2026-08-11, specs/remarcacao-conversacional-v1.md) ---
+    { tipo: 'sem_agendamento_para_remarcar' },
+    { tipo: 'aguardando_escolha_agendamento', agendamentos: [agendamentoAtivo()] },
+    {
+      tipo: 'aguardando_confirmacao_remarcacao',
+      agendamento_atual: agendamentoAtivo(),
+      procedimento_id: 'p1',
+      dentista_id: 'd1',
+      opcao: opcao(),
+    },
+    {
+      tipo: 'remarcacao_criada',
+      agendamento_id: 'ag2',
+      agendamento_id_antigo: 'ag1',
+      dentista_id: 'd1',
+      procedimento_id: 'p1',
+      duracao_min: 40,
+      data: '2026-08-20',
+      horario: '09:00',
+    },
   ];
-  assert.equal(decisoes.length, 18);
+  assert.equal(decisoes.length, 22);
   for (const decisao of decisoes) {
     const fatos = derivarFatosAutorizados(decisao);
     assert.equal(typeof fatos.objetivo, 'string');
@@ -202,6 +235,48 @@ test('falha tecnica: os cinco estados marcam falha_tecnica:true e objetivo infor
     assert.equal(fatos.objetivo, 'informar_falha_tecnica');
     assert.equal(fatos.falha_tecnica, true);
   }
+});
+
+// --- remarcacao (2026-08-11, specs/remarcacao-conversacional-v1.md) ---
+
+test('aguardando_escolha_agendamento: agendamentos_candidatos carrega data+horario formatados, nunca IDs', () => {
+  const fatos = derivarFatosAutorizados({
+    tipo: 'aguardando_escolha_agendamento',
+    agendamentos: [agendamentoAtivo({ data: '2026-08-10', horario: '14:00' }), agendamentoAtivo({ data: '2026-08-15', horario: '09:00' })],
+  });
+  assert.equal(fatos.objetivo, 'escolher_entre_agendamentos');
+  assert.deepEqual(fatos.agendamentos_candidatos, ['10/08 às 14:00', '15/08 às 09:00']);
+  assertNuncaContemFraseProntaOuId(fatos);
+});
+
+test('aguardando_confirmacao_remarcacao: agendamento_atual (de onde) e proposta_pendente (para onde), os dois formatados', () => {
+  const fatos = derivarFatosAutorizados({
+    tipo: 'aguardando_confirmacao_remarcacao',
+    agendamento_atual: agendamentoAtivo({ data: '2026-08-10', horario: '14:00' }),
+    procedimento_id: 'p1',
+    dentista_id: 'd1',
+    opcao: opcao({ data: '2026-08-20', inicio_min: 540 }),
+  });
+  assert.equal(fatos.objetivo, 'pedir_confirmacao_remarcacao');
+  assert.deepEqual(fatos.agendamento_atual, { data: '10/08', horario: '14:00' });
+  assert.deepEqual(fatos.proposta_pendente, { data: '20/08', horario: '09:00' });
+  assertNuncaContemFraseProntaOuId(fatos);
+});
+
+test('remarcacao_criada: agendamento_confirmado (mesmo campo de reserva_criada), sem IDs', () => {
+  const fatos = derivarFatosAutorizados({
+    tipo: 'remarcacao_criada',
+    agendamento_id: 'ag2',
+    agendamento_id_antigo: 'ag1',
+    dentista_id: 'd1',
+    procedimento_id: 'p1',
+    duracao_min: 40,
+    data: '2026-08-20',
+    horario: '09:00',
+  });
+  assert.equal(fatos.objetivo, 'informar_remarcacao_criada');
+  assert.deepEqual(fatos.agendamento_confirmado, { data: '20/08', horario: '09:00' });
+  assertNuncaContemFraseProntaOuId(fatos);
 });
 
 test('determinismo: mesma decisao produz sempre os mesmos fatos', () => {

@@ -7,18 +7,23 @@ import { resolverTemporal } from './resolver-temporal.ts';
 import { carregarEntradaDisponibilidade } from './carregar-disponibilidade.ts';
 import { carregarCatalogo } from './carregar-catalogo.ts';
 import { reservarAgendamento } from './reservar-agendamento.ts';
+import { buscarAgendamentoAtivo } from './buscar-agendamento-ativo.ts';
+import { remarcarAgendamento } from './remarcar-agendamento.ts';
 import { persistirPaciente } from './persistir-paciente.ts';
 import { trocarTelefonePaciente } from './trocar-telefone-paciente.ts';
 import { calcularCadastroFaltante, comporVisaoEfetivaCadastro } from './cadastro-paciente.ts';
 import { derivarAcaoContextoHorarios, gravarContextoHorarios } from './contexto-horarios.ts';
 import { historicoValidoParaEnvio } from './historico-conversa.ts';
+import { aplicarDados } from './aplicar-dados.ts';
+import { formatarData } from './gerar-resposta-paciente.ts';
 import { ErroRpcTecnico } from './erros.ts';
 import { CAMPOS_CADASTRAIS_INTERPRETACAO } from './interpretacao-tipos.ts';
-import type { CadastroPaciente, ClienteBancoDados } from './tipos.ts';
+import type { CadastroPaciente, ClienteBancoDados, ContextoConversa } from './tipos.ts';
 import type { ClienteModeloEstruturado, NaturezaMensagem, RespostaTrocaTelefone } from './interpretacao-tipos.ts';
 import type { ClienteRpc } from './mensagens-recebidas-tipos.ts';
 import type { InstanteAtual, ModoConsulta, OpcaoHorario } from './disponibilidade-tipos.ts';
 import type { ResolucaoTemporalOficial } from './temporal-tipos.ts';
+import type { AgendamentoAtivo } from './buscar-agendamento-ativo.ts';
 import type { CatalogoClinica, DecisaoOrquestrador, EntradaOrquestrador, ResultadoOrquestrador } from './orquestrador-tipos.ts';
 
 /**
@@ -30,9 +35,11 @@ import type { CatalogoClinica, DecisaoOrquestrador, EntradaOrquestrador, Resulta
  * que fica de fora por decisao do Gabriel.
  *
  * Nao gera texto de resposta ao paciente (redacao/NLG e P5, fora de escopo)
- * -- devolve uma decisao estruturada para o chamador formatar. Nao toca
- * remarcacao, cancelamento, consulta de agendamento, outbox nem cadastro de
- * paciente novo (ver decisao 'cadastro_necessario').
+ * -- devolve uma decisao estruturada para o chamador formatar. Desde
+ * 2026-08-11 tambem cobre REMARCACAO (specs/remarcacao-conversacional-v1.md),
+ * roteada por `dados.intencao === 'remarcacao'` -- ver `decidirRemarcacao`.
+ * Continua sem tocar cancelamento, consulta completa de agendamento, outbox
+ * nem cadastro de paciente novo (ver decisao 'cadastro_necessario').
  */
 export async function processarMensagem(
   clienteModelo: ClienteModeloEstruturado,
@@ -75,6 +82,39 @@ export async function processarMensagem(
           .filter((d) => d.ativo)
           .map((d) => ({ dentista_id: d.dentista_id, nome_exibido: d.nome_exibido }))
       : [];
+
+  // REMARCACAO -- construir a lista de agendamentos ativos para a IA
+  // correlacionar, SOMENTE quando ha uma escolha pendente do turno anterior
+  // (specs/remarcacao-conversacional-v1.md secao 3). Sem marcador, a lista
+  // nunca e enviada -- e o proprio ENVIO que sinaliza "ha uma pergunta em
+  // aberto" (contrato fechado por medicao 2026-08-11: nao existe um
+  // booleano separado, so a lista). Busca SEMPRE fresca -- nunca confia nas
+  // descricoes de um turno anterior, mesmo principio ja usado em toda
+  // disponibilidade do Core.
+  const escolhaAgendamentoPendente = identificacao.conversa.contexto_horarios?.escolha_agendamento_pendente;
+  let agendamentosAtivosParaIA: { agendamento_id: string; descricao: string }[] | undefined;
+  if (escolhaAgendamentoPendente !== undefined && identificacao.paciente.id !== null) {
+    const buscaParaContexto = await buscarAgendamentoAtivo(clienteBanco, {
+      clinica_id: identificacao.clinica_id,
+      paciente_id: identificacao.paciente.id,
+      instante_atual: entrada.instante_atual,
+    });
+    const candidatos: readonly AgendamentoAtivo[] =
+      buscaParaContexto.tipo === 'unico'
+        ? [buscaParaContexto.agendamento]
+        : buscaParaContexto.tipo === 'multiplos'
+          ? buscaParaContexto.agendamentos
+          : [];
+    // So os que ainda estao na lista OFERECIDA (marcador), na mesma ordem
+    // em que foram apresentados -- nunca todos os ativos de agora, mesmo
+    // que existam mais (spec secao 3: "a ordem do array e a ordem em que a
+    // Iris apresentou as opcoes").
+    const descritos = escolhaAgendamentoPendente.agendamento_ids
+      .map((id) => candidatos.find((a) => a.agendamento_id === id))
+      .filter((a): a is AgendamentoAtivo => a !== undefined)
+      .map((a) => ({ agendamento_id: a.agendamento_id, descricao: descreverAgendamentoAtivo(a) }));
+    if (descritos.length > 0) agendamentosAtivosParaIA = descritos;
+  }
 
   const interpretacao = await interpretarEAplicar(clienteModelo, clienteBanco, {
     conversa_id: identificacao.conversa.id,
@@ -124,6 +164,10 @@ export async function processarMensagem(
     ...(identificacao.conversa.contexto_horarios?.troca_telefone_pendente !== undefined
       ? { troca_telefone_pendente: identificacao.conversa.contexto_horarios.troca_telefone_pendente }
       : {}),
+    // Agendamentos ativos, quando ha escolha de remarcacao pendente
+    // (montado acima). AUSENTE quando nao ha escolha pendente ou a lista
+    // ficou vazia apos o cruzamento com a busca fresca.
+    ...(agendamentosAtivosParaIA !== undefined ? { agendamentos_ativos: agendamentosAtivosParaIA } : {}),
     // Cadastro ja persistido do paciente, quando ele existe e tem algum dado.
     // Serve para a Iris nao pedir de novo o que ja esta na ficha: entra
     // somente na derivacao de `campos_cadastrais_preenchidos` (presenca,
@@ -163,11 +207,31 @@ export async function processarMensagem(
     decisao: DecisaoOrquestrador,
     substituicao?: { dentista_nome_exibido: string }
   ): Promise<ResultadoOrquestrador> => {
+    let atualizadoEmParaContexto = atualizadoEmDaDecisao;
+
+    // LIMPEZA DE intencao/agendamento_id (specs/remarcacao-conversacional-v1.md,
+    // ciclo de vida, decisao do Gabriel 2026-08-11): sucesso ou desistencia
+    // DENTRO do fluxo de remarcacao encerram definitivamente. Sem isso, o
+    // turno seguinte reentraria em remarcacao sobre um agendamento que
+    // acabou de virar 'remarcado', ou continuaria "preso" numa intencao que
+    // o paciente ja abandonou.
+    if (deveLimparRemarcacaoPendente(decisao, dados)) {
+      atualizadoEmParaContexto = await limparIntencaoEAgendamentoId(
+        clienteBanco,
+        {
+          conversa_id: identificacao.conversa.id,
+          clinica_id: identificacao.clinica_id,
+          telefone_normalizado: entrada.telefone_normalizado,
+        },
+        atualizadoEmParaContexto
+      );
+    }
+
     const atualizadoEmFinal = await gravarContextoHorarios(clienteBanco, {
       conversa_id: identificacao.conversa.id,
       clinica_id: identificacao.clinica_id,
       telefone_normalizado: entrada.telefone_normalizado,
-      atualizado_em_da_decisao: atualizadoEmDaDecisao,
+      atualizado_em_da_decisao: atualizadoEmParaContexto,
       acao: derivarAcaoContextoHorarios(decisao),
     });
 
@@ -197,6 +261,24 @@ export async function processarMensagem(
     return await finalizar({ tipo: 'clinica_sem_catalogo' });
   }
 
+  // REMARCACAO -- roteada exclusivamente por `dados.intencao === 'remarcacao'`
+  // (specs/remarcacao-conversacional-v1.md). NUNCA inferida pela existencia
+  // de um agendamento ativo: um paciente com consulta marcada que peca outro
+  // procedimento esta pedindo um SEGUNDO agendamento, nao remarcando o
+  // primeiro -- quem distingue e a IA, lendo a frase.
+  if (dados.intencao === 'remarcacao') {
+    const resultadoRemarcacao = await decidirRemarcacao(
+      clienteBanco,
+      clienteRpc,
+      identificacao.clinica_id,
+      identificacao.paciente.id,
+      dados,
+      catalogoCarregado.catalogo,
+      entrada.instante_atual
+    );
+    return await finalizar(resultadoRemarcacao.decisao);
+  }
+
   const resultadoDecisao = await decidir(
     clienteBanco,
     clienteRpc,
@@ -212,6 +294,319 @@ export async function processarMensagem(
   );
 
   return await finalizar(resultadoDecisao.decisao, resultadoDecisao.substituicao);
+}
+
+/**
+ * Decisao conversacional (fora de `decidir`/`decidirRemarcacao`): sucesso ou
+ * desistencia DENTRO do fluxo de remarcacao precisam encerrar `intencao` e
+ * `agendamento_id` definitivamente (specs/remarcacao-conversacional-v1.md,
+ * ciclo de vida). `dados.intencao === 'remarcacao'` na checagem de
+ * desistencia garante que uma negacao qualquer, sem relacao com remarcacao,
+ * nunca dispara esta limpeza -- zero regressao para o fluxo de novo
+ * agendamento, que nunca escreve `intencao`.
+ */
+function deveLimparRemarcacaoPendente(
+  decisao: DecisaoOrquestrador,
+  dados: Record<string, string | undefined>
+): boolean {
+  if (decisao.tipo === 'remarcacao_criada') return true;
+  return decisao.tipo === 'desistencia' && dados.intencao === 'remarcacao';
+}
+
+/**
+ * Segunda escrita do turno, SOMENTE quando `deveLimparRemarcacaoPendente`
+ * autoriza. `aplicarDados` faz sua propria leitura+CAS internamente (nunca
+ * usa `atualizadoEmAtual` como base) -- o parametro serve so para o caso de
+ * falha, abaixo.
+ *
+ * BEST-EFFORT, NUNCA LANCA (mesmo padrao de `gravarContextoHorarios`): uma
+ * remarcacao ja bem-sucedida (ou uma desistencia ja aceita) nunca pode virar
+ * erro tecnico para o paciente so porque esta limpeza auxiliar falhou. Pior
+ * caso de falha: o turno seguinte reencontra `intencao='remarcacao'` com o
+ * agendamento antigo (ja 'remarcado', portanto fora da busca de ativos) e
+ * recomeca a pergunta -- nunca um risco de escrita duplicada, porque
+ * `confirmacao` sempre exige uma nova proposta pendente para autorizar de
+ * novo (interpretar-e-aplicar.ts).
+ */
+async function limparIntencaoEAgendamentoId(
+  clienteBanco: ClienteBancoDados,
+  contexto: ContextoConversa,
+  atualizadoEmAtual: string
+): Promise<string> {
+  try {
+    const resultado = await aplicarDados(clienteBanco, {
+      ...contexto,
+      alteracoes: { intencao: { acao: 'remover' }, agendamento_id: { acao: 'remover' } },
+    });
+    return resultado.atualizado_em;
+  } catch {
+    return atualizadoEmAtual;
+  }
+}
+
+// Nomes do dia da semana civil, na mesma convencao (0=segunda..6=domingo) ja
+// usada por resolver-temporal.ts (diaDaSemana) e carregar-disponibilidade.ts
+// (diaDaSemanaLocal). Usado SOMENTE para redigir a descricao abaixo -- nunca
+// para calcular disponibilidade, nunca para resolver data.
+const NOMES_DIA_SEMANA = [
+  'segunda-feira',
+  'terça-feira',
+  'quarta-feira',
+  'quinta-feira',
+  'sexta-feira',
+  'sábado',
+  'domingo',
+] as const;
+
+// Algoritmo de Howard Hinnant (days_from_civil), REIMPLEMENTADO aqui pelo
+// mesmo motivo ja documentado em carregar-disponibilidade.ts: este arquivo
+// nao pode alterar resolver-temporal.ts nem carregar-disponibilidade.ts so
+// para exportar 12 linhas de aritmetica de calendario pura.
+//
+// Contrato fechado por medicao (specs/remarcacao-conversacional-v1.md, secao
+// 3, medicao de 2026-08-11): a IA NUNCA calcula o dia da semana -- so casa
+// texto ja pronto. Sem o dia da semana calculado aqui, "o de sexta" chegou a
+// ESCOLHER O AGENDAMENTO ERRADO (a IA inferindo mal a partir da data); com
+// ele, 10/10 em duas rodadas identicas contra a IA real.
+function diaDaSemanaCivil(data: string): string | null {
+  const partes = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(data);
+  if (!partes) return null;
+  const ano = Number(partes[1]);
+  const mes = Number(partes[2]);
+  const dia = Number(partes[3]);
+
+  const y = mes <= 2 ? ano - 1 : ano;
+  const era = Math.floor(y / 400);
+  const anoDaEra = y - era * 400;
+  const diaDoAno = Math.floor((153 * (mes + (mes > 2 ? -3 : 9)) + 2) / 5) + dia - 1;
+  const diaDaEra = anoDaEra * 365 + Math.floor(anoDaEra / 4) - Math.floor(anoDaEra / 100) + diaDoAno;
+  const dias = era * 146097 + diaDaEra - 719468;
+  const indice = (((dias + 3) % 7) + 7) % 7;
+  return NOMES_DIA_SEMANA[indice] ?? null;
+}
+
+// Texto que a IA LE para correlacionar semanticamente qual agendamento o
+// paciente quer remarcar (specs/remarcacao-conversacional-v1.md secao 3).
+// Mesma formatacao de data que o paciente ja ve nas demais respostas
+// (formatarData) -- `horario` de AgendamentoAtivo ja vem em HH:MM, sem
+// necessidade de conversao. Dia da semana calculado deterministicamente pelo
+// Core (nunca pela IA) -- contrato fechado por medicao, ver diaDaSemanaCivil.
+//
+// Data malformada (nunca deveria ocorrer -- AgendamentoAtivo.data ja vem
+// validada por buscar-agendamento-ativo.ts) faz `diaDaSemanaCivil` devolver
+// `null`; a descricao cai para o formato antigo, sem dia da semana, em vez
+// de lancar ou inventar um dia.
+function descreverAgendamentoAtivo(agendamento: AgendamentoAtivo): string {
+  const procedimento = agendamento.procedimento ?? agendamento.procedimento_id ?? 'atendimento';
+  const dentista = agendamento.dentista_nome ?? 'profissional';
+  const dataFormatada = formatarData(agendamento.data);
+  const diaSemana = diaDaSemanaCivil(agendamento.data);
+  const dataComDia = diaSemana !== null ? `${diaSemana}, ${dataFormatada}` : dataFormatada;
+  return `${procedimento} com ${dentista} — ${dataComDia} às ${agendamento.horario}`;
+}
+
+/**
+ * Fluxo de remarcacao (specs/remarcacao-conversacional-v1.md). Reutiliza
+ * INTEGRALMENTE data_texto/periodo/horario_texto -> resolverTemporal ->
+ * carregarEntradaDisponibilidade (nenhum dos tres e alterado) e a RPC
+ * `cappia_remarcar_agendamento_v2` ja aplicada nos dois bancos. Nunca
+ * resolve dentista nem procedimento -- ambos vem do agendamento ja
+ * localizado, nunca re-perguntados: remarcacao v1 mantem procedimento e
+ * profissional.
+ */
+async function decidirRemarcacao(
+  clienteBanco: ClienteBancoDados,
+  clienteRpc: ClienteRpc,
+  clinicaId: string,
+  pacienteId: string | null,
+  dados: Record<string, string | undefined>,
+  catalogo: CatalogoClinica,
+  instanteAtual: InstanteAtual
+): Promise<{ decisao: DecisaoOrquestrador }> {
+  // Paciente sem ficha nao tem agendamento por definicao -- esta v1 nao
+  // oferece cadastro no fluxo de remarcacao (spec secao 2).
+  if (pacienteId === null) {
+    return { decisao: { tipo: 'sem_agendamento_para_remarcar' } };
+  }
+
+  const busca = await buscarAgendamentoAtivo(clienteBanco, {
+    clinica_id: clinicaId,
+    paciente_id: pacienteId,
+    instante_atual: instanteAtual,
+  });
+
+  let agendamentoEscolhido: AgendamentoAtivo;
+  switch (busca.tipo) {
+    case 'nenhum':
+      return { decisao: { tipo: 'sem_agendamento_para_remarcar' } };
+    case 'unico':
+      // Unico agendamento: segue direto, sem anunciar informacao redundante
+      // -- mesma regra canonica ja vigente para dentista unico apto
+      // (04-decisoes-canonicas.md).
+      agendamentoEscolhido = busca.agendamento;
+      break;
+    case 'multiplos': {
+      // So avanca se `agendamento_id` (ja validado contra a lista OFERECIDA
+      // por interpretar-e-aplicar.ts) casar com um dos agendamentos
+      // REALMENTE ativos agora. ID ausente ou que nao casa mais (corrida:
+      // remarcado por outra via entre a pergunta e a resposta) nunca
+      // adivinha -- mantem a pergunta, com a lista atual.
+      const escolhido = busca.agendamentos.find((a) => a.agendamento_id === dados.agendamento_id);
+      if (escolhido === undefined) {
+        return { decisao: { tipo: 'aguardando_escolha_agendamento', agendamentos: busca.agendamentos } };
+      }
+      agendamentoEscolhido = escolhido;
+      break;
+    }
+  }
+
+  // Linha sem dentista_id/procedimento_id (colunas nulaveis no operacional)
+  // nao tem o que remarcar para o mesmo profissional/procedimento -- falha
+  // tecnica real, nunca conversacional (nenhum dos dois campos e
+  // re-perguntado nesta v1).
+  const { dentista_id: dentistaId, procedimento_id: procedimentoId } = agendamentoEscolhido;
+  if (dentistaId === null || procedimentoId === null) {
+    return { decisao: { tipo: 'reserva_falhou', motivo: 'agendamento_nao_encontrado' } };
+  }
+
+  const resultadoDuracao = resolverDuracao({
+    clinica_id: clinicaId,
+    procedimento_id: procedimentoId,
+    configuracoes: catalogo.configuracoesDuracao,
+  });
+  if (resultadoDuracao.tipo === 'nao_configurada') return { decisao: { tipo: 'duracao_nao_configurada' } };
+  if (resultadoDuracao.tipo !== 'resolvida') {
+    return { decisao: { tipo: 'erro_configuracao_duracao', resultado: resultadoDuracao } };
+  }
+
+  const fuso = await buscarFusoHorario(clienteBanco, clinicaId);
+  const resultadoTemporal = resolverTemporal({
+    clinica_id: clinicaId,
+    fuso: fuso ?? '',
+    instante_atual: instanteAtual,
+    fatos_temporais: montarFatosTemporais({
+      data_texto: dados.data_texto,
+      periodo: dados.periodo,
+      horario_texto: dados.horario_texto,
+    }),
+  });
+  if (resultadoTemporal.tipo !== 'resolvido') {
+    return { decisao: { tipo: 'aguardando_data_horario', resultado: resultadoTemporal } };
+  }
+
+  const carregado = await carregarEntradaDisponibilidade(clienteBanco, {
+    clinica_id: clinicaId,
+    dentista_id: dentistaId,
+    procedimento_id: procedimentoId,
+    data: resultadoTemporal.data,
+    instante_atual: instanteAtual,
+    modo: derivarModoConsulta(resultadoTemporal),
+  });
+
+  switch (carregado.tipo) {
+    case 'carregado':
+      if (carregado.resultado.tipo === 'horario_exato_disponivel') {
+        return {
+          decisao: await decidirConfirmacaoOuExecutarRemarcacao(
+            clienteRpc,
+            clinicaId,
+            pacienteId,
+            agendamentoEscolhido,
+            procedimentoId,
+            dentistaId,
+            resultadoDuracao.duracao_min,
+            carregado.resultado.opcao,
+            dados.confirmacao
+          ),
+        };
+      }
+      return {
+        decisao: {
+          tipo: 'horarios_disponiveis',
+          procedimento_id: procedimentoId,
+          dentista_id: dentistaId,
+          duracao_min: resultadoDuracao.duracao_min,
+          resultado: carregado.resultado,
+        },
+      };
+    case 'clinica_nao_encontrada':
+      return {
+        decisao: { tipo: 'aguardando_data_horario', resultado: { tipo: 'erro_configuracao', motivo: 'fuso_ausente' } },
+      };
+    case 'dentista_nao_encontrado':
+      return { decisao: { tipo: 'sem_dentista_disponivel' } };
+    case 'duracao_nao_resolvida':
+      return {
+        decisao:
+          carregado.resultado.tipo === 'nao_configurada'
+            ? { tipo: 'duracao_nao_configurada' }
+            : { tipo: 'erro_configuracao_duracao', resultado: carregado.resultado },
+      };
+  }
+}
+
+/**
+ * Ultimo passo do fluxo de remarcacao: pede confirmacao explicita, ou
+ * executa `cappia_remarcar_agendamento_v2` (RPC pronta,
+ * remarcacao-operacional-v1.md) com os identificadores JA resolvidos --
+ * nunca re-resolve dentista, procedimento, duracao ou disponibilidade
+ * dentro da RPC.
+ */
+async function decidirConfirmacaoOuExecutarRemarcacao(
+  clienteRpc: ClienteRpc,
+  clinicaId: string,
+  pacienteId: string,
+  agendamentoAtual: AgendamentoAtivo,
+  procedimentoId: string,
+  dentistaId: string,
+  duracaoMin: number,
+  opcao: OpcaoHorario,
+  confirmacao: string | undefined
+): Promise<DecisaoOrquestrador> {
+  // Regra absoluta, identica ao novo agendamento: nunca remarcar sem
+  // confirmacao explicita ('sim', vocabulario fechado ja validado por
+  // aplicar-dados.ts).
+  if (confirmacao !== 'sim') {
+    return {
+      tipo: 'aguardando_confirmacao_remarcacao',
+      agendamento_atual: agendamentoAtual,
+      procedimento_id: procedimentoId,
+      dentista_id: dentistaId,
+      opcao,
+    };
+  }
+
+  const resultado = await remarcarAgendamento(clienteRpc, {
+    clinica_id: clinicaId,
+    paciente_id: pacienteId,
+    agendamento_id: agendamentoAtual.agendamento_id,
+    dentista_id: dentistaId,
+    procedimento_id: procedimentoId,
+    duracao_min: duracaoMin,
+    nova_data: opcao.data,
+    novo_horario: minutosParaHHMM(opcao.inicio_min),
+  });
+
+  if (resultado.tipo === 'remarcado') {
+    return {
+      tipo: 'remarcacao_criada',
+      agendamento_id: resultado.agendamento_id,
+      agendamento_id_antigo: resultado.agendamento_id_antigo,
+      dentista_id: resultado.dentista_id,
+      procedimento_id: procedimentoId,
+      duracao_min: resultado.duracao_min,
+      data: resultado.data,
+      horario: resultado.horario,
+    };
+  }
+
+  // horario_ocupado: a trava real da RPC (mesmo lock/conflito de
+  // cappia_reservar_agendamento) recusou por sobreposicao -- reusa
+  // reserva_conflito, mesmo desfecho para o paciente (spec secao 6).
+  if (resultado.motivo === 'horario_ocupado') {
+    return { tipo: 'reserva_conflito' };
+  }
+  return { tipo: 'reserva_falhou', motivo: resultado.motivo };
 }
 
 /**

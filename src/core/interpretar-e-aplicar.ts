@@ -80,6 +80,15 @@ export interface InterpretarEAplicarInput extends ContextoConversa {
    */
   troca_telefone_pendente?: true;
   /**
+   * Agendamentos ativos do paciente, quando ha uma escolha de remarcacao
+   * pendente (specs/remarcacao-conversacional-v1.md secao 3). Contexto de
+   * interpretacao E lista de integridade: `validarEscolhaAgendamento`, mais
+   * abaixo, so aceita um `agendamento_id` emitido pela IA se ele estiver
+   * dentro desta mesma lista -- fora dela, o campo e descartado, nunca
+   * aceito.
+   */
+  agendamentos_ativos?: { agendamento_id: string; descricao: string }[];
+  /**
    * Cadastro JA PERSISTIDO do paciente (identificacao.ts). SEGUNDA ORIGEM de
    * dado cadastral, ao lado do snapshot da conversa.
    *
@@ -256,6 +265,74 @@ function aplicarCandidatoUnicoDeDentista(
 }
 
 /**
+ * Valida `agendamento_id` contra a lista OFICIALMENTE OFERECIDA neste turno
+ * (specs/remarcacao-conversacional-v1.md secao 3, contrato fechado por
+ * medicao 2026-08-11: 11/11 casos contra a IA real, sem evento, sem
+ * `referencia_textual`). A IA correlaciona semanticamente e devolve o id
+ * direto -- ela nunca resolve "o segundo"/"a limpeza" para indice ou id por
+ * conta propria, e o Core NUNCA interpreta essas referencias aqui (seria
+ * recriar o parser textual que a medicao provou desnecessario).
+ *
+ * `agendamentos_ativos` so chega no payload quando ha uma escolha pendente
+ * (orquestrador.ts) -- entao a AUSENCIA da chave ja e prova de que nao
+ * havia pergunta em aberto, e qualquer `agendamento_id` emitido mesmo assim
+ * e descartado.
+ *
+ * ID fora da lista tambem e descartado -- nunca usado para localizar
+ * agendamento, mesmo que exista de fato no banco (poderia pertencer a outra
+ * pergunta, outro turno, ou ser uma alucinacao do modelo). O campo continua
+ * ausente, e o orquestrador mantem `aguardando_escolha_agendamento`.
+ */
+function validarEscolhaAgendamento(
+  alteracoes: AlteracoesDados,
+  agendamentosAtivos: { agendamento_id: string; descricao: string }[] | undefined
+): AlteracoesDados {
+  const alteracao = alteracoes.agendamento_id;
+  if (alteracao === undefined || alteracao.acao === 'remover') return alteracoes;
+
+  const idsValidos = new Set((agendamentosAtivos ?? []).map((item) => item.agendamento_id));
+  if (idsValidos.has(alteracao.valor as string)) return alteracoes;
+
+  const { agendamento_id: _descartado, ...resto } = alteracoes;
+  return resto;
+}
+
+/**
+ * Limpa `confirmacao` ao ENTRAR em remarcacao (specs/remarcacao-
+ * conversacional-v1.md, decisao do Gabriel 2026-08-11). Sem isso, um "sim"
+ * remanescente de um agendamento concluido antes na MESMA conversa
+ * autorizaria a remarcacao sozinho, sem ninguem ter perguntado nada -- mesmo
+ * defeito que cpf-outro-telefone-v1.md ja impediu ao recusar reusar
+ * `confirmacao` naquele fluxo.
+ *
+ * "Entrar" e a TRANSICAO: `intencao` esta sendo escrita para 'remarcacao'
+ * NESTE turno E o snapshot oficial ainda nao era 'remarcacao'. Turnos
+ * seguintes, ja dentro do fluxo (intencao ja era 'remarcacao' no snapshot),
+ * nunca passam por aqui -- a confirmacao da proposta de remarcacao (secao 5
+ * da spec) segue intacta.
+ *
+ * Forca a remocao mesmo que a IA tenha emitido `confirmacao` neste MESMO
+ * turno: nao existe `proposta_pendente` de remarcacao neste ponto (ela so
+ * nasce depois, quando o Core encontra um horario livre), entao nenhum
+ * valor legitimo de confirmacao pode existir para este fluxo agora.
+ */
+function limparConfirmacaoAoEntrarEmRemarcacao(
+  alteracoes: AlteracoesDados,
+  snapshotOficial: SnapshotOficialConversa
+): AlteracoesDados {
+  const alteracaoIntencao = alteracoes.intencao;
+  const entrandoAgora =
+    alteracaoIntencao !== undefined &&
+    alteracaoIntencao.acao !== 'remover' &&
+    alteracaoIntencao.valor === 'remarcacao' &&
+    snapshotOficial.intencao !== 'remarcacao';
+
+  if (!entrandoAgora) return alteracoes;
+
+  return { ...alteracoes, confirmacao: { acao: 'remover' } };
+}
+
+/**
  * Descarta valor cadastral que nao passa na validacao deterministica
  * (specs/cadastro-conversacional-v1.md secao 4).
  *
@@ -309,6 +386,7 @@ const CHAVES_OPCIONAIS_INTEGRADA = [
   'dentistas_disponiveis',
   'oferta_procedimento_pendente',
   'troca_telefone_pendente',
+  'agendamentos_ativos',
   'cadastro_paciente',
   'data_referencia',
 ] as const;
@@ -369,7 +447,8 @@ export async function interpretarEAplicar(
       // PRESENCA e descarta os valores -- nenhum valor cadastral, de
       // qualquer origem, chega ao modelo.
       entrada.cadastro_paciente,
-      entrada.troca_telefone_pendente
+      entrada.troca_telefone_pendente,
+      entrada.agendamentos_ativos
     )
   );
 
@@ -402,11 +481,24 @@ export async function interpretarEAplicar(
     snapshotOficial
   );
 
+  // 5c-bis. ESCOLHA DE AGENDAMENTO -- gate de integridade contra a lista
+  // oficialmente oferecida neste turno (specs/remarcacao-conversacional-v1.md
+  // secao 3). Id fora da lista (ou sem lista nenhuma) nunca e persistido.
+  const alteracoesComEscolhaAgendamento = validarEscolhaAgendamento(alteracoesFinais, entrada.agendamentos_ativos);
+
+  // 5c-ter. LIMPEZA DE CONFIRMACAO AO ENTRAR EM REMARCACAO -- um "sim" de
+  // outro fluxo, na mesma conversa, nunca autoriza uma remarcacao que
+  // ninguem confirmou.
+  const alteracoesComRemarcacao = limparConfirmacaoAoEntrarEmRemarcacao(
+    alteracoesComEscolhaAgendamento,
+    snapshotOficial
+  );
+
   // 5d. VALIDACAO CADASTRAL -- o Core confere o que a IA extraiu
   // (specs/cadastro-conversacional-v1.md secao 4). Valor invalido e
   // descartado aqui, antes de virar dado da conversa; valor valido segue
   // NORMALIZADO.
-  const alteracoesValidadas = descartarCadastroInvalido(alteracoesFinais, entrada.data_referencia);
+  const alteracoesValidadas = descartarCadastroInvalido(alteracoesComRemarcacao, entrada.data_referencia);
 
   // 6. pre-aplicacao deterministica usando o mesmo snapshot.
   const preAplicacao = preAplicar(snapshotOficial, alteracoesValidadas);

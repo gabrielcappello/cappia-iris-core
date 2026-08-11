@@ -69,6 +69,14 @@ function coletarMinutosAutorizados(fatos: FatosAutorizados): Set<number> {
   if (fatos.agendamento_confirmado !== undefined) {
     minutos.add(minutosDoHorario(fatos.agendamento_confirmado.horario));
   }
+  // Horario do agendamento ATUAL, na remarcacao (specs/remarcacao-
+  // conversacional-v1.md secao 5): a redatora precisa poder dizer "voce
+  // esta com [horario antigo]" ao propor a troca -- sem isso a guarda
+  // reprovaria uma frase honesta por mencionar um horario real que nao
+  // estava nas demais fontes.
+  if (fatos.agendamento_atual !== undefined) {
+    minutos.add(minutosDoHorario(fatos.agendamento_atual.horario));
+  }
   return minutos;
 }
 

@@ -16,6 +16,7 @@ export const CAMPOS_PERMITIDOS: readonly CampoDadosConversa[] = [
   'intencao',
   'procedimento_id',
   'dentista_id',
+  'agendamento_id',
   'data_texto',
   'periodo',
   'horario_texto',
@@ -52,7 +53,7 @@ export const CAMPOS_EMITIVEIS_PELA_IA: readonly CampoDadosConversa[] = CAMPOS_PE
 
 export const ACOES_PERMITIDAS: readonly AcaoAlteracaoDados[] = ['informar', 'corrigir', 'remover'];
 export const PERIODOS_PERMITIDOS = ['manha', 'tarde', 'noite'];
-export const INTENCOES_PERMITIDAS = ['novo_agendamento'];
+export const INTENCOES_PERMITIDAS = ['novo_agendamento', 'remarcacao'];
 // Fechado a 'sim': ausencia de confirmacao nunca e tratada como negacao
 // silenciosa, so como "ainda nao confirmou" -- mesmo principio ja usado em
 // dentista_id/procedimento_id ausentes.

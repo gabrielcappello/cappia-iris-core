@@ -66,6 +66,9 @@ export async function extrairAlteracoes(
     ...(entradaBruta.troca_telefone_pendente !== undefined
       ? { troca_telefone_pendente: entradaBruta.troca_telefone_pendente }
       : {}),
+    ...(entradaBruta.agendamentos_ativos !== undefined
+      ? { agendamentos_ativos: [...entradaBruta.agendamentos_ativos] }
+      : {}),
     ...(entradaBruta.historico_recente !== undefined ? { historico_recente: [...entradaBruta.historico_recente] } : {}),
   };
 
@@ -108,7 +111,8 @@ export function construirEntradaMinimizada(
   dentistasDisponiveis?: { dentista_id: string; nome_exibido: string }[],
   ofertaProcedimentoPendente?: true,
   cadastroPaciente?: CadastroPaciente,
-  trocaTelefonePendente?: true
+  trocaTelefonePendente?: true,
+  agendamentosAtivos?: { agendamento_id: string; descricao: string }[]
 ): EntradaInterpretacao {
   return {
     mensagens_atuais: [...mensagensAtuais],
@@ -124,6 +128,7 @@ export function construirEntradaMinimizada(
       ? { oferta_procedimento_pendente: ofertaProcedimentoPendente }
       : {}),
     ...(trocaTelefonePendente !== undefined ? { troca_telefone_pendente: trocaTelefonePendente } : {}),
+    ...(agendamentosAtivos !== undefined ? { agendamentos_ativos: [...agendamentosAtivos] } : {}),
     ...(historicoRecente !== undefined ? { historico_recente: [...historicoRecente] } : {}),
   };
 }
@@ -173,6 +178,7 @@ export const CHAVES_OPCIONAIS_INTERPRETACAO = [
   'dentistas_disponiveis',
   'oferta_procedimento_pendente',
   'troca_telefone_pendente',
+  'agendamentos_ativos',
   'historico_recente',
 ] as const;
 
@@ -205,6 +211,7 @@ export function validarEntradaInterpretacao(entrada: unknown): asserts entrada i
     dentistas_disponiveis,
     oferta_procedimento_pendente,
     troca_telefone_pendente,
+    agendamentos_ativos,
     historico_recente,
   } = entrada as Record<string, unknown>;
   validarMensagensAtuais(mensagens_atuais);
@@ -216,6 +223,7 @@ export function validarEntradaInterpretacao(entrada: unknown): asserts entrada i
   if (dentistas_disponiveis !== undefined) validarDentistasDisponiveis(dentistas_disponiveis);
   if (oferta_procedimento_pendente !== undefined) validarOfertaProcedimentoPendente(oferta_procedimento_pendente);
   if (troca_telefone_pendente !== undefined) validarTrocaTelefonePendente(troca_telefone_pendente);
+  if (agendamentos_ativos !== undefined) validarAgendamentosAtivos(agendamentos_ativos);
   if (historico_recente !== undefined) validarHistoricoRecente(historico_recente);
 }
 
@@ -293,6 +301,46 @@ export function validarDentistasDisponiveis(
     }
     if (typeof nome_exibido !== 'string' || nome_exibido.trim() === '') {
       throw new EntradaInvalidaError('dentistas_disponiveis', 'dentistas_disponiveis contem nome_exibido invalido');
+    }
+  }
+}
+
+/**
+ * Agendamentos ativos do paciente, quando ha uma escolha de remarcacao
+ * pendente (specs/remarcacao-conversacional-v1.md secao 3). Mesma
+ * disciplina de `procedimentos_disponiveis`/`dentistas_disponiveis`: fechada
+ * a arrays nao vazios de pares {agendamento_id, descricao}, ambos strings
+ * nao vazias -- "nenhuma escolha pendente" se representa pela AUSENCIA da
+ * chave, nunca por `[]`. Nao valida se o id existe: quem produz este valor
+ * e sempre o proprio Core (buscarAgendamentoAtivo), nunca a IA nem o
+ * paciente.
+ */
+export function validarAgendamentosAtivos(
+  valor: unknown
+): asserts valor is { agendamento_id: string; descricao: string }[] {
+  if (!Array.isArray(valor)) {
+    throw new EntradaInvalidaError('agendamentos_ativos', 'agendamentos_ativos deve ser um array');
+  }
+  if (valor.length === 0) {
+    throw new EntradaInvalidaError('agendamentos_ativos', 'agendamentos_ativos nao pode ser um array vazio');
+  }
+  for (const item of valor) {
+    if (item === null || typeof item !== 'object' || Array.isArray(item)) {
+      throw new EntradaInvalidaError('agendamentos_ativos', 'agendamentos_ativos contem item que nao e objeto');
+    }
+    const chaves = Object.keys(item as Record<string, unknown>).sort();
+    if (JSON.stringify(chaves) !== JSON.stringify(['agendamento_id', 'descricao'])) {
+      throw new EntradaInvalidaError(
+        'agendamentos_ativos',
+        'agendamentos_ativos contem item com chaves diferentes de agendamento_id/descricao'
+      );
+    }
+    const { agendamento_id, descricao } = item as Record<string, unknown>;
+    if (typeof agendamento_id !== 'string' || agendamento_id.trim() === '') {
+      throw new EntradaInvalidaError('agendamentos_ativos', 'agendamentos_ativos contem agendamento_id invalido');
+    }
+    if (typeof descricao !== 'string' || descricao.trim() === '') {
+      throw new EntradaInvalidaError('agendamentos_ativos', 'agendamentos_ativos contem descricao invalida');
     }
   }
 }
