@@ -45,6 +45,49 @@ test('aprova horario vindo de agendamento_atual (remarcacao)', () => {
   assert.deepEqual(verificarRespostaRedatora('Você está com 14:00 marcado.', f), { aprovado: true });
 });
 
+// 2026-08-12 (specs/consulta-agendamento-conversacional-v1.md secao 6): as
+// duas fontes de LISTA de agendamento. `agendamentos_candidatos` era um
+// DEFEITO REAL ja ativo em producao -- a resposta honesta da redatora na
+// escolha entre multiplos agendamentos era reprovada e caia no texto fixo.
+test('aprova horarios vindos de agendamentos_candidatos (defeito corrigido)', () => {
+  const f = fatos({
+    objetivo: 'escolher_entre_agendamentos',
+    agendamentos_candidatos: ['10/08 às 14:00', '15/08 às 09:00'],
+  });
+  assert.deepEqual(
+    verificarRespostaRedatora(
+      'Você tem dois agendamentos: 10/08 às 14:00 e 15/08 às 09:00. Qual deles quer remarcar?',
+      f
+    ),
+    { aprovado: true }
+  );
+});
+
+test('aprova horarios vindos de agendamentos_do_paciente (contexto conversacional)', () => {
+  const f = fatos({
+    objetivo: 'acolher_e_retomar',
+    agendamentos_do_paciente: ['Limpeza com Dra. Ana — segunda-feira, 10/08 às 14:00'],
+  });
+  assert.deepEqual(
+    verificarRespostaRedatora('Sua limpeza está marcada para 10/08 às 14:00.', f),
+    { aprovado: true }
+  );
+});
+
+// A correcao NAO afrouxa a guarda: horario que nao esta em nenhuma fonte
+// continua reprovado, mesmo com as listas presentes. Este e o caso medido
+// da redatora inventando horario de funcionamento ("das 8h as 18h").
+test('horario fora das listas continua REPROVADO -- a correcao nao afrouxa', () => {
+  const f = fatos({
+    objetivo: 'acolher_e_retomar',
+    agendamentos_do_paciente: ['Limpeza com Dra. Ana — segunda-feira, 10/08 às 14:00'],
+  });
+  assert.deepEqual(
+    verificarRespostaRedatora('Funcionamos das 8h às 18h. Sua consulta é 10/08 às 14:00.', f),
+    { aprovado: false, motivo: 'horario_nao_autorizado' }
+  );
+});
+
 test('agendamento_atual e proposta_pendente autorizam os DOIS horarios simultaneamente (de onde para onde)', () => {
   const f = fatos({
     agendamento_atual: { data: '10/08', horario: '14:00' },

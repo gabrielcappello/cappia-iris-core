@@ -157,6 +157,12 @@ Deno.serve(async (req: Request) => {
       ...(resultado.substituicao_por_avaliacao !== undefined
         ? { substituicaoPorAvaliacao: resultado.substituicao_por_avaliacao }
         : {}),
+      // Agendamentos futuros do paciente como CONTEXTO da conversa
+      // (specs/consulta-agendamento-conversacional-v1.md). So vem preenchido
+      // em decisao conversacional -- o orquestrador e quem filtra.
+      ...(resultado.agendamentos_do_paciente !== undefined
+        ? { agendamentosDoPaciente: resultado.agendamentos_do_paciente }
+        : {}),
     });
     if (motivo_fallback !== null) {
       console.log(`resposta_conversacional_fallback decisao=${resultado.decisao.tipo} motivo=${motivo_fallback}`);

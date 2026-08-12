@@ -11,6 +11,7 @@
 
 import { formatarData, formatarMinutos } from './gerar-resposta-paciente.ts';
 import type { DecisaoOrquestrador } from './orquestrador-tipos.ts';
+import type { AgendamentoAtivo } from './buscar-agendamento-ativo.ts';
 
 /**
  * ITEMIZADO desde 2026-08-10 (specs/cadastro-conversacional-v1.md secao 8): o
@@ -159,6 +160,28 @@ export interface FatosAutorizados {
    * acrescenta uma nuance a um objetivo que ja existe.
    */
   confirmacao_nao_compreendida?: true;
+  /**
+   * Agendamentos futuros que este paciente ja tem marcados
+   * (specs/consulta-agendamento-conversacional-v1.md). Texto pronto, nunca
+   * IDs -- mesmo formato de `agendamentos_candidatos`.
+   *
+   * E CONTEXTO DISPONIVEL, nunca assunto obrigatorio: o `objetivo` da
+   * resposta nao muda por causa dele. A redatora usa quando o assunto for
+   * esse e ignora quando nao for -- e o mesmo estatuto que o contrato dela ja
+   * da aos demais campos ("os dados reais que voce PODE mencionar").
+   *
+   * PRESENTE SOMENTE em decisao conversacional (`saudacao`, `duvida_livre`,
+   * `mensagem_nao_compreendida`), nunca em fluxo operacional nem em
+   * `desistencia` -- ver `agendamentos_do_paciente` em orquestrador-tipos.ts.
+   *
+   * LIMITACAO MEDIDA E ACEITA (spec secao 5): em duvidas sobre a clinica
+   * (preco, convenio, endereco) a redatora pode mencionar o agendamento sem
+   * necessidade. Ruido conversacional, nunca dado errado -- decisao do
+   * Gabriel, 2026-08-12. Quatro rotas para separar esses casos foram medidas
+   * contra a IA real e reprovadas (spec secao 4); nenhuma deve ser retomada
+   * por suposicao.
+   */
+  agendamentos_do_paciente?: string[];
 }
 
 /**
@@ -177,19 +200,97 @@ export interface FatosAutorizados {
  */
 export function derivarFatosAutorizados(
   decisao: DecisaoOrquestrador,
-  substituicaoPorAvaliacao?: { dentista_nome_exibido: string }
+  substituicaoPorAvaliacao?: { dentista_nome_exibido: string },
+  agendamentosDoPaciente?: readonly AgendamentoAtivo[]
 ): FatosAutorizados {
-  const fatos = derivarPorDecisao(decisao);
+  let fatos = derivarPorDecisao(decisao);
+
   // A substituicao e um fato deste turno, ortogonal a decisao (ela pode
   // acompanhar horarios_disponiveis, aguardando_confirmacao, reserva_criada
   // ou qualquer outro desfecho depois da troca) -- por isso e anexada aqui,
   // e nao dentro de um `case` (specs/dentista-semantico-v1.md secao 5).
-  if (substituicaoPorAvaliacao === undefined) return fatos;
-  return {
-    ...fatos,
-    dentista_preferido: substituicaoPorAvaliacao.dentista_nome_exibido,
-    substituido_por_avaliacao: true,
-  };
+  if (substituicaoPorAvaliacao !== undefined) {
+    fatos = {
+      ...fatos,
+      dentista_preferido: substituicaoPorAvaliacao.dentista_nome_exibido,
+      substituido_por_avaliacao: true,
+    };
+  }
+
+  // Os agendamentos do paciente seguem EXATAMENTE o mesmo padrao acima
+  // (specs/consulta-agendamento-conversacional-v1.md secao 1): fato do turno,
+  // anexado FORA do switch, sem tocar no `objetivo`. Quem restringe a quais
+  // decisoes ele chega e o orquestrador, nunca esta funcao -- aqui, se veio,
+  // e porque ja foi autorizado.
+  //
+  // Lista vazia nunca vira campo (`ausente, nunca vazio`), mesma disciplina
+  // do restante do Core.
+  if (agendamentosDoPaciente !== undefined && agendamentosDoPaciente.length > 0) {
+    fatos = {
+      ...fatos,
+      agendamentos_do_paciente: agendamentosDoPaciente.map(descreverAgendamentoDoPaciente),
+    };
+  }
+
+  return fatos;
+}
+
+// Nomes do dia da semana civil, na convencao (0=segunda..6=domingo) ja usada
+// por resolver-temporal.ts, carregar-disponibilidade.ts e orquestrador.ts.
+const NOMES_DIA_SEMANA = [
+  'segunda-feira',
+  'terça-feira',
+  'quarta-feira',
+  'quinta-feira',
+  'sexta-feira',
+  'sábado',
+  'domingo',
+] as const;
+
+// Algoritmo de Howard Hinnant (days_from_civil), REIMPLEMENTADO aqui pela
+// mesma razao ja documentada em carregar-disponibilidade.ts e orquestrador.ts:
+// e a convencao do projeto reimplementar 12 linhas de aritmetica de calendario
+// pura em vez de acoplar modulos so para exportar um helper privado
+// (specs/consulta-agendamento-conversacional-v1.md secao 10).
+function diaDaSemanaCivil(data: string): string | null {
+  const partes = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(data);
+  if (!partes) return null;
+  const ano = Number(partes[1]);
+  const mes = Number(partes[2]);
+  const dia = Number(partes[3]);
+
+  const y = mes <= 2 ? ano - 1 : ano;
+  const era = Math.floor(y / 400);
+  const anoDaEra = y - era * 400;
+  const diaDoAno = Math.floor((153 * (mes + (mes > 2 ? -3 : 9)) + 2) / 5) + dia - 1;
+  const diaDaEra = anoDaEra * 365 + Math.floor(anoDaEra / 4) - Math.floor(anoDaEra / 100) + diaDoAno;
+  const dias = era * 146097 + diaDaEra - 719468;
+  const indice = (((dias + 3) % 7) + 7) % 7;
+  return NOMES_DIA_SEMANA[indice] ?? null;
+}
+
+/**
+ * Texto pronto que a redatora le. Mesma forma de `descreverAgendamentoAtivo`
+ * (orquestrador.ts), incluindo o dia da semana calculado DETERMINISTICAMENTE
+ * pelo Core -- a IA nunca calcula dia da semana (contrato fechado por medicao,
+ * specs/remarcacao-conversacional-v1.md secao 3).
+ *
+ * Campos nulaveis no banco operacional degradam a frase em vez de exibir
+ * "null": sem procedimento vira "atendimento", sem dentista some a parte do
+ * profissional.
+ *
+ * `procedimento_id` NUNCA e usado como fallback de texto (revisao
+ * independente, 2026-08-12): e um identificador INTERNO e opaco, e este
+ * caminho termina na redatora -- ou seja, no texto enviado ao paciente.
+ * Nenhum ID interno pode atravessar essa fronteira por aqui.
+ */
+function descreverAgendamentoDoPaciente(agendamento: AgendamentoAtivo): string {
+  const procedimento = agendamento.procedimento ?? 'atendimento';
+  const dataFormatada = formatarData(agendamento.data);
+  const diaSemana = diaDaSemanaCivil(agendamento.data);
+  const dataComDia = diaSemana !== null ? `${diaSemana}, ${dataFormatada}` : dataFormatada;
+  const comDentista = agendamento.dentista_nome !== null ? ` com ${agendamento.dentista_nome}` : '';
+  return `${procedimento}${comDentista} — ${dataComDia} às ${agendamento.horario}`;
 }
 
 function derivarPorDecisao(decisao: DecisaoOrquestrador): FatosAutorizados {

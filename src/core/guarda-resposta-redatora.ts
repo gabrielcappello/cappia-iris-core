@@ -77,7 +77,39 @@ function coletarMinutosAutorizados(fatos: FatosAutorizados): Set<number> {
   if (fatos.agendamento_atual !== undefined) {
     minutos.add(minutosDoHorario(fatos.agendamento_atual.horario));
   }
+  // Horarios das LISTAS de agendamento (specs/consulta-agendamento-
+  // conversacional-v1.md secao 6). Duas fontes, mesma natureza:
+  //
+  // - `agendamentos_candidatos` -- a lista oferecida na escolha de qual
+  //   remarcar/cancelar. A AUSENCIA disto era um DEFEITO REAL ja ativo em
+  //   producao: com multiplos agendamentos, a resposta honesta da redatora
+  //   ("voce tem 10/08 as 14:00 e 15/08 as 09:00, qual quer remarcar?") era
+  //   reprovada e caia no texto fixo, desligando a redatora em silencio;
+  // - `agendamentos_do_paciente` -- o contexto conversacional novo.
+  //
+  // Nao afrouxa a guarda: estes horarios vem do Core, sao os do agendamento
+  // REAL do paciente, e qualquer horario citado fora destas fontes continua
+  // reprovado exatamente como antes (ex.: horario de funcionamento inventado).
+  //
+  // Formato: ao contrario das fontes acima, aqui o horario vem DENTRO de um
+  // texto ja montado ("Limpeza com Dra. Ana — sexta-feira, 20/08 às 14:00"),
+  // entao e extraido por padrao, nunca por parse direto da string inteira.
+  for (const descricao of fatos.agendamentos_candidatos ?? []) {
+    adicionarMinutosDeTexto(minutos, descricao);
+  }
+  for (const descricao of fatos.agendamentos_do_paciente ?? []) {
+    adicionarMinutosDeTexto(minutos, descricao);
+  }
   return minutos;
+}
+
+// `HH:MM` dentro de um texto de fato autorizado. Usa a MESMA expressao que a
+// extracao do texto da redatora (REGEX_HHMM), para que os dois lados nunca
+// divirjam sobre o que conta como horario.
+function adicionarMinutosDeTexto(minutos: Set<number>, texto: string): void {
+  for (const m of texto.matchAll(REGEX_HHMM)) {
+    minutos.add(Number(m[1]) * 60 + Number(m[2]));
+  }
 }
 
 // Fontes autorizadas sempre chegam em 'HH:MM' (formatarMinutos) -- parse

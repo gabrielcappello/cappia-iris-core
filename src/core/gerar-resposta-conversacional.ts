@@ -21,6 +21,7 @@ import type { ClienteModeloRedator } from './cliente-modelo-redator-openai.ts';
 import type { DecisaoOrquestrador } from './orquestrador-tipos.ts';
 import type { NaturezaMensagem } from './interpretacao-tipos.ts';
 import type { HistoricoConversa } from './tipos.ts';
+import type { AgendamentoAtivo } from './buscar-agendamento-ativo.ts';
 
 export type MotivoFallbackResposta = 'redator_nao_configurado' | 'falha_redatora' | 'texto_vazio' | 'horario_nao_autorizado';
 
@@ -50,6 +51,16 @@ export interface GerarRespostaConversacionalEntrada {
    * dever de ser informada.
    */
   substituicaoPorAvaliacao?: { dentista_nome_exibido: string };
+  /**
+   * `ResultadoOrquestrador.agendamentos_do_paciente`, quando presente
+   * (specs/consulta-agendamento-conversacional-v1.md): os agendamentos
+   * futuros do paciente, disponibilizados a redatora como CONTEXTO.
+   *
+   * Mesmo papel de `substituicaoPorAvaliacao` acima -- fato do turno, nunca
+   * estado nem decisao. So chega aqui em decisao conversacional; quem filtra
+   * e o orquestrador.
+   */
+  agendamentosDoPaciente?: readonly AgendamentoAtivo[];
 }
 
 /**
@@ -62,7 +73,11 @@ export async function gerarRespostaConversacional(
   clienteRedator: ClienteModeloRedator | null,
   entrada: GerarRespostaConversacionalEntrada
 ): Promise<ResultadoRespostaConversacional> {
-  const fatos = derivarFatosAutorizados(entrada.decisao, entrada.substituicaoPorAvaliacao);
+  const fatos = derivarFatosAutorizados(
+    entrada.decisao,
+    entrada.substituicaoPorAvaliacao,
+    entrada.agendamentosDoPaciente
+  );
   const historicoParaEnvio = historicoValidoParaEnvio(entrada.historicoConversa, Date.now());
 
   if (clienteRedator === null) {

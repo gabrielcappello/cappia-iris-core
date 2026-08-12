@@ -206,7 +206,8 @@ export async function processarMensagem(
   // tomada, nunca afeta a resposta ao paciente.
   const finalizar = async (
     decisao: DecisaoOrquestrador,
-    substituicao?: { dentista_nome_exibido: string }
+    substituicao?: { dentista_nome_exibido: string },
+    agendamentosDoPaciente?: readonly AgendamentoAtivo[]
   ): Promise<ResultadoOrquestrador> => {
     let atualizadoEmParaContexto = atualizadoEmDaDecisao;
 
@@ -245,13 +246,34 @@ export async function processarMensagem(
       natureza_mensagem: interpretacao.natureza_mensagem,
       historico_conversa: identificacao.conversa.historico_conversa,
       ...(substituicao !== undefined ? { substituicao_por_avaliacao: substituicao } : {}),
+      // AUSENTE quando nao ha agendamento futuro -- nunca `[]` (spec secao 3).
+      ...(agendamentosDoPaciente !== undefined && agendamentosDoPaciente.length > 0
+        ? { agendamentos_do_paciente: agendamentosDoPaciente }
+        : {}),
     };
   };
 
   if (Object.keys(interpretacao.alteracoes_interpretadas).length === 0) {
     const decisaoConversacional = decidirPorNatureza(interpretacao.natureza_mensagem, dados);
     if (decisaoConversacional !== null) {
-      return await finalizar(decisaoConversacional);
+      // CONTEXTO CONVERSACIONAL (specs/consulta-agendamento-conversacional-v1.md):
+      // os agendamentos futuros do paciente viram fato do turno, para a
+      // redatora usar quando o assunto for esse -- e ignorar quando nao for.
+      //
+      // Este e o UNICO ponto de busca, e e aqui de proposito: so aqui ja se
+      // sabe que a decisao e conversacional. Os fluxos operacionais nunca
+      // passam por este `return` e portanto nunca fazem esta consulta extra.
+      return await finalizar(
+        decisaoConversacional,
+        undefined,
+        await buscarAgendamentosParaContexto(
+          clienteBanco,
+          decisaoConversacional,
+          identificacao.clinica_id,
+          identificacao.paciente.id,
+          entrada.instante_atual
+        )
+      );
     }
   }
 
@@ -329,6 +351,61 @@ export async function processarMensagem(
   );
 
   return await finalizar(resultadoDecisao.decisao, resultadoDecisao.substituicao);
+}
+
+/**
+ * Decisoes conversacionais que recebem os agendamentos futuros do paciente
+ * como CONTEXTO (specs/consulta-agendamento-conversacional-v1.md secao 2).
+ *
+ * `desistencia` sai da MESMA `decidirPorNatureza` e foi DELIBERADAMENTE
+ * excluida (decisao do Gabriel, 2026-08-12): o paciente esta encerrando, e
+ * mencionar um agendamento futuro ali reabriria assunto justamente quando ele
+ * quis fechar. Por isso a lista e explicita, e nao "tudo que `decidirPorNatureza`
+ * devolve".
+ */
+const DECISOES_COM_CONTEXTO_DE_AGENDAMENTO: readonly DecisaoOrquestrador['tipo'][] = [
+  'saudacao',
+  'duvida_livre',
+  'mensagem_nao_compreendida',
+];
+
+/**
+ * Busca os agendamentos futuros do paciente para servirem de CONTEXTO a
+ * redatora. Nunca decide nada, nunca escreve, nunca altera a decisao ja
+ * tomada -- so disponibiliza fato.
+ *
+ * Devolve `undefined` (nunca `[]`) quando nao ha o que informar: decisao fora
+ * da lista, paciente sem ficha, ou nenhum agendamento futuro. A disciplina
+ * "ausente, nunca vazio" ja e canonica no Core.
+ *
+ * FALHA DE BANCO NAO E ENGOLIDA (revisao independente, 2026-08-12): esta
+ * funcao NAO tem try/catch proprio. Um erro de `buscarAgendamentoAtivo`
+ * propaga normalmente, pelo mesmo caminho tecnico ja existente para qualquer
+ * outra falha de leitura no orquestrador (`decidirRemarcacao`,
+ * `decidirCancelamento` tampouco engolem). "Sem agendamento" e um FATO ("o
+ * paciente nao tem nenhum"); um erro de banco nao e esse fato, e nunca deveria
+ * virar silenciosamente a mesma coisa.
+ */
+async function buscarAgendamentosParaContexto(
+  clienteBanco: ClienteBancoDados,
+  decisao: DecisaoOrquestrador,
+  clinicaId: string,
+  pacienteId: string | null,
+  instanteAtual: InstanteAtual
+): Promise<readonly AgendamentoAtivo[] | undefined> {
+  if (!DECISOES_COM_CONTEXTO_DE_AGENDAMENTO.includes(decisao.tipo)) return undefined;
+  // Paciente sem ficha nao tem agendamento por definicao -- sem consulta ao
+  // banco (spec secao 3).
+  if (pacienteId === null) return undefined;
+
+  const busca = await buscarAgendamentoAtivo(clienteBanco, {
+    clinica_id: clinicaId,
+    paciente_id: pacienteId,
+    instante_atual: instanteAtual,
+  });
+  if (busca.tipo === 'unico') return [busca.agendamento];
+  if (busca.tipo === 'multiplos') return busca.agendamentos;
+  return undefined;
 }
 
 /**

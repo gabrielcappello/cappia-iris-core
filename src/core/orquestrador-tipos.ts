@@ -371,4 +371,29 @@ export interface ResultadoOrquestrador {
    * pediu, e o turno seguinte re-deriva o mesmo resultado.
    */
   substituicao_por_avaliacao?: { dentista_nome_exibido: string };
+  /**
+   * Agendamentos futuros do paciente, disponibilizados a redatora como
+   * CONTEXTO da conversa (specs/consulta-agendamento-conversacional-v1.md).
+   *
+   * Mesma natureza de `substituicao_por_avaliacao` logo acima -- nao e
+   * estado, nao e decisao, e um fato deste turno anexado FORA do switch de
+   * `derivarFatosAutorizados`. O `objetivo` da resposta nunca muda por causa
+   * dele: o Core disponibiliza, a redatora decide se e relevante mencionar.
+   *
+   * PRESENTE SOMENTE em decisao conversacional (`saudacao`, `duvida_livre`,
+   * `mensagem_nao_compreendida`) e com paciente identificado (spec secao 2).
+   * `desistencia` fica DE FORA de proposito, embora saia da mesma
+   * `decidirPorNatureza` (decisao do Gabriel, 2026-08-12): o paciente esta
+   * encerrando, e mencionar um agendamento futuro ali reabriria assunto
+   * justamente quando ele quis fechar.
+   *
+   * Os fluxos operacionais (novo agendamento, remarcacao, cancelamento)
+   * NUNCA recebem este fato -- eles ja fazem as proprias buscas, com
+   * exigencia de frescor propria, e uma lista lida antes da decisao poderia
+   * contradizer o desfecho do turno (ex.: `reserva_criada`).
+   *
+   * AUSENTE quando nao ha nenhum agendamento futuro -- nunca `[]`, mesma
+   * disciplina das demais chaves opcionais do Core.
+   */
+  agendamentos_do_paciente?: readonly AgendamentoAtivo[];
 }
