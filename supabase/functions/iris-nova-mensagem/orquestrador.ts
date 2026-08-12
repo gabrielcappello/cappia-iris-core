@@ -9,6 +9,7 @@ import { carregarCatalogo } from './carregar-catalogo.ts';
 import { reservarAgendamento } from './reservar-agendamento.ts';
 import { buscarAgendamentoAtivo } from './buscar-agendamento-ativo.ts';
 import { remarcarAgendamento } from './remarcar-agendamento.ts';
+import { cancelarAgendamento } from './cancelar-agendamento.ts';
 import { persistirPaciente } from './persistir-paciente.ts';
 import { trocarTelefonePaciente } from './trocar-telefone-paciente.ts';
 import { calcularCadastroFaltante, comporVisaoEfetivaCadastro } from './cadastro-paciente.ts';
@@ -254,9 +255,43 @@ export async function processarMensagem(
     }
   }
 
+  // CANCELAMENTO -- roteado exclusivamente por `dados.intencao === 'cancelamento'`
+  // (specs/cancelamento-conversacional-v1.md). Mesma disciplina da remarcacao:
+  // NUNCA inferido pela existencia de um agendamento ativo. Quem distingue
+  // "cancela isso" (desistir desta conversa) de "cancela minha consulta"
+  // (cancelar o que ja existe) e a IA, lendo a frase -- e o contexto que ela
+  // ja recebe hoje distingue os dois melhor do que qualquer regra de prompt
+  // acrescentada (medicao de 2026-08-11, spec secao 3).
+  //
+  // ANTES DA CHECAGEM DE CATALOGO, de proposito (revisao independente,
+  // 2026-08-11): cancelar NAO depende de catalogo, procedimento, dentista,
+  // disponibilidade nem resolucao temporal -- o agendamento ja existe e todos
+  // os identificadores saem dele. Uma clinica sem catalogo carregavel
+  // impediria o paciente de cancelar o proprio agendamento por um motivo que
+  // nao tem relacao nenhuma com a operacao.
+  //
+  // A remarcacao continua DEPOIS da checagem, porque ela realmente precisa do
+  // catalogo (resolverDuracao a partir de `configuracoesDuracao`).
+  //
+  // `proposta_pendente` vem do contexto lido no INICIO deste turno (antes de
+  // qualquer escrita) -- e a condicao 3 da spec secao 4, o que impede um "sim"
+  // remanescente de autorizar um cancelamento que ninguem confirmou agora.
+  if (dados.intencao === 'cancelamento') {
+    const resultadoCancelamento = await decidirCancelamento(
+      clienteBanco,
+      clienteRpc,
+      identificacao.clinica_id,
+      identificacao.paciente.id,
+      dados,
+      entrada.instante_atual,
+      identificacao.conversa.contexto_horarios?.proposta_pendente
+    );
+    return await finalizar(resultadoCancelamento.decisao);
+  }
+
   // Checagem TARDE (ver "carregar cedo, checar tarde" acima): o catalogo ja
   // foi carregado antes da interpretacao, mas so aqui a ausencia dele vira
-  // decisao -- depois do early-return conversacional.
+  // decisao -- depois do early-return conversacional e do cancelamento.
   if (catalogoCarregado.tipo !== 'carregado') {
     return await finalizar({ tipo: 'clinica_sem_catalogo' });
   }
@@ -297,20 +332,31 @@ export async function processarMensagem(
 }
 
 /**
- * Decisao conversacional (fora de `decidir`/`decidirRemarcacao`): sucesso ou
- * desistencia DENTRO do fluxo de remarcacao precisam encerrar `intencao` e
- * `agendamento_id` definitivamente (specs/remarcacao-conversacional-v1.md,
- * ciclo de vida). `dados.intencao === 'remarcacao'` na checagem de
- * desistencia garante que uma negacao qualquer, sem relacao com remarcacao,
- * nunca dispara esta limpeza -- zero regressao para o fluxo de novo
- * agendamento, que nunca escreve `intencao`.
+ * Intencoes cujo fluxo opera sobre um agendamento JA EXISTENTE e por isso
+ * precisa de um ponto de saida explicito (specs/remarcacao-conversacional-v1.md
+ * e specs/cancelamento-conversacional-v1.md secao 1, ciclo de vida).
+ */
+const INTENCOES_SOBRE_AGENDAMENTO_EXISTENTE: readonly string[] = ['remarcacao', 'cancelamento'];
+
+/**
+ * Decisao conversacional (fora de `decidir`/`decidirRemarcacao`/
+ * `decidirCancelamento`): sucesso ou desistencia DENTRO de um fluxo sobre
+ * agendamento existente precisam encerrar `intencao` e `agendamento_id`
+ * definitivamente. A checagem de `dados.intencao` na desistencia garante que
+ * uma negacao qualquer, sem relacao com esses fluxos, nunca dispara esta
+ * limpeza -- zero regressao para o fluxo de novo agendamento, que nunca
+ * escreve `intencao`.
  */
 function deveLimparRemarcacaoPendente(
   decisao: DecisaoOrquestrador,
   dados: Record<string, string | undefined>
 ): boolean {
-  if (decisao.tipo === 'remarcacao_criada') return true;
-  return decisao.tipo === 'desistencia' && dados.intencao === 'remarcacao';
+  if (decisao.tipo === 'remarcacao_criada' || decisao.tipo === 'cancelamento_criado') return true;
+  return (
+    decisao.tipo === 'desistencia' &&
+    typeof dados.intencao === 'string' &&
+    INTENCOES_SOBRE_AGENDAMENTO_EXISTENTE.includes(dados.intencao)
+  );
 }
 
 /**
@@ -607,6 +653,176 @@ async function decidirConfirmacaoOuExecutarRemarcacao(
     return { tipo: 'reserva_conflito' };
   }
   return { tipo: 'reserva_falhou', motivo: resultado.motivo };
+}
+
+/**
+ * Fluxo de cancelamento (specs/cancelamento-conversacional-v1.md).
+ *
+ * MENOR que `decidirRemarcacao` por construcao, nao por omissao: cancelar nao
+ * tem DESTINO. Nao resolve temporal, nao consulta disponibilidade, nao calcula
+ * duracao, nao resolve dentista nem procedimento -- todos vem do agendamento
+ * ja localizado, e nenhum deles muda.
+ */
+async function decidirCancelamento(
+  clienteBanco: ClienteBancoDados,
+  clienteRpc: ClienteRpc,
+  clinicaId: string,
+  pacienteId: string | null,
+  dados: Record<string, string | undefined>,
+  instanteAtual: InstanteAtual,
+  propostaPendente: { data: string; horario: string } | undefined
+): Promise<{ decisao: DecisaoOrquestrador }> {
+  // Paciente sem ficha nao tem agendamento por definicao -- esta v1 nao
+  // oferece cadastro no fluxo de cancelamento (spec secao 2), mesma decisao
+  // ja vigente para remarcacao.
+  if (pacienteId === null) {
+    return { decisao: { tipo: 'sem_agendamento_para_cancelar' } };
+  }
+
+  const busca = await buscarAgendamentoAtivo(clienteBanco, {
+    clinica_id: clinicaId,
+    paciente_id: pacienteId,
+    instante_atual: instanteAtual,
+  });
+
+  let agendamentoEscolhido: AgendamentoAtivo;
+  switch (busca.tipo) {
+    case 'nenhum':
+      return { decisao: { tipo: 'sem_agendamento_para_cancelar' } };
+    case 'unico':
+      // Unico agendamento: segue direto para a confirmacao. "Segue direto"
+      // NUNCA significa cancelar direto -- a pergunta de confirmacao abaixo e
+      // obrigatoria em todos os caminhos (spec secao 4).
+      agendamentoEscolhido = busca.agendamento;
+      break;
+    case 'multiplos': {
+      // So avanca se `agendamento_id` (ja validado contra a lista OFERECIDA
+      // por interpretar-e-aplicar.ts) casar com um dos agendamentos REALMENTE
+      // ativos agora. ID ausente ou que nao casa mais nunca adivinha --
+      // mantem a pergunta, com a lista atual.
+      const escolhido = busca.agendamentos.find((a) => a.agendamento_id === dados.agendamento_id);
+      if (escolhido === undefined) {
+        return {
+          decisao: { tipo: 'aguardando_escolha_agendamento_cancelamento', agendamentos: busca.agendamentos },
+        };
+      }
+      agendamentoEscolhido = escolhido;
+      break;
+    }
+  }
+
+  // PROTECAO CENTRAL (spec secao 4): `intencao = cancelamento` NUNCA, por si
+  // so, executa. As tres condicoes sao exigidas juntas -- ver
+  // `confirmacaoAutorizaCancelamento`.
+  const jaPerguntado = propostaCorrespondeAoAgendamento(propostaPendente, agendamentoEscolhido);
+  if (dados.confirmacao !== 'sim' || !jaPerguntado) {
+    // CONFIRMACAO QUE NAO FICOU CLARA: a pergunta ja tinha sido feita para
+    // ESTE agendamento e a resposta nao autorizou. Nao encerrou o fluxo por
+    // nenhum caminho existente tambem -- negacao (`desistencia`) e duvida
+    // (`duvida_livre`) saem antes, em `decidirPorNatureza`, e nunca chegam
+    // aqui. Entao so resta um caso: o paciente respondeu algo que a IA nao
+    // leu como concordancia. A Iris pede esclarecimento em vez de repetir.
+    //
+    // Sem o marcador (primeira pergunta do fluxo), o campo fica AUSENTE --
+    // nunca `false`, mesma disciplina das demais chaves opcionais do Core.
+    return {
+      decisao: {
+        tipo: 'aguardando_confirmacao_cancelamento',
+        agendamento: agendamentoEscolhido,
+        ...(jaPerguntado ? { confirmacao_nao_compreendida: true as const } : {}),
+      },
+    };
+  }
+
+  const resultado = await cancelarAgendamento(clienteRpc, {
+    clinica_id: clinicaId,
+    paciente_id: pacienteId,
+    agendamento_id: agendamentoEscolhido.agendamento_id,
+  });
+
+  if (resultado.tipo === 'cancelado') {
+    // `ja_cancelado: true` (replay) e sucesso normal, sem texto proprio -- o
+    // desfecho para o paciente e o mesmo, e verdadeiro (spec secao 7).
+    // Os dados descritivos vem do agendamento localizado, nunca da RPC: ela
+    // devolve so o identificador.
+    return {
+      decisao: {
+        tipo: 'cancelamento_criado',
+        agendamento_id: resultado.agendamento_id,
+        procedimento_id: agendamentoEscolhido.procedimento_id,
+        dentista_id: agendamentoEscolhido.dentista_id,
+        data: agendamentoEscolhido.data,
+        horario: agendamentoEscolhido.horario,
+      },
+    };
+  }
+
+  // Os tres motivos colapsam na frase tecnica generica ja existente (spec
+  // secao 7) -- nenhuma decisao nova so para dizer a mesma coisa.
+  return { decisao: { tipo: 'reserva_falhou', motivo: resultado.motivo } };
+}
+
+/**
+ * As TRES condicoes da spec secao 4, exigidas juntas e verificadas no mesmo
+ * turno. Nenhuma delas autoriza sozinha.
+ *
+ * 1. `confirmacao === 'sim'` -- o valor CANONICO INTERNO do campo, produzido
+ *    pela IA depois de uma leitura SEMANTICA da mensagem. Nao existe, aqui nem
+ *    em lugar nenhum do Core, comparacao com a palavra "sim" digitada pelo
+ *    paciente: "pode", "ok", "isso", "beleza", "pode cancelar" chegam todas
+ *    como `confirmacao = 'sim'`, pela regra de concordancia sem repertorio
+ *    fechado que ja rege reserva e remarcacao (interpretacao-instrucoes.ts,
+ *    inalterada por esta spec). Nenhum parser lexical, nenhum enum de frases.
+ * 2. existe `proposta_pendente` -- houve de fato uma pergunta concreta em
+ *    aberto no INICIO deste turno.
+ * 3. essa proposta corresponde EXATAMENTE ao agendamento que esta prestes a
+ *    ser cancelado.
+ *
+ * A condicao 3 e o que fecha o buraco que a reutilizacao de `proposta_pendente`
+ * abriria. `confirmacao` e persistido em `dados` e sobrevive a turnos em que
+ * deixou de fazer sentido -- por exemplo, quando a RPC falhou por corrida e
+ * `intencao` continuou 'cancelamento' (entao a limpeza-na-entrada de
+ * interpretar-e-aplicar.ts nao dispara, porque nao ha transicao). Sem esta
+ * checagem, aquele "sim" velho autorizaria um cancelamento que ninguem
+ * confirmou AGORA.
+ *
+ * Comparacao por igualdade estrita dos dois campos: os dois lados vem da MESMA
+ * origem (a busca fresca de `buscarAgendamentoAtivo` a cada turno, sobre a
+ * mesma linha do banco), entao sao identicos por construcao enquanto a linha
+ * nao muda. Se ela mudou, a comparacao falha e o Core re-pergunta -- que e
+ * exatamente o desfecho desejado.
+ */
+function confirmacaoAutorizaCancelamento(
+  confirmacao: string | undefined,
+  propostaPendente: { data: string; horario: string } | undefined,
+  agendamento: AgendamentoAtivo
+): boolean {
+  if (confirmacao !== 'sim') return false;
+  return propostaCorrespondeAoAgendamento(propostaPendente, agendamento);
+}
+
+/**
+ * A pergunta de confirmacao JA foi feita, e foi sobre ESTE agendamento?
+ *
+ * Isola a condicao 3 acima, porque ela tem DOIS leitores com finalidades
+ * diferentes e nao pode divergir entre eles:
+ *
+ * - `confirmacaoAutorizaCancelamento` (acima) -- junto com `confirmacao='sim'`,
+ *   AUTORIZA a execucao;
+ * - `decidirCancelamento` -- sozinha, e o que distingue "primeira pergunta"
+ *   de "ja perguntei e a resposta nao ficou clara"
+ *   (`confirmacao_nao_compreendida`).
+ *
+ * Igualdade estrita dos dois campos: os dois lados vem da MESMA origem (a
+ * busca fresca a cada turno, sobre a mesma linha do banco), entao sao
+ * identicos por construcao enquanto a linha nao muda.
+ */
+function propostaCorrespondeAoAgendamento(
+  propostaPendente: { data: string; horario: string } | undefined,
+  agendamento: AgendamentoAtivo
+): boolean {
+  if (propostaPendente === undefined) return false;
+  return propostaPendente.data === agendamento.data && propostaPendente.horario === agendamento.horario;
 }
 
 /**

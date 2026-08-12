@@ -53,7 +53,14 @@ export const CAMPOS_EMITIVEIS_PELA_IA: readonly CampoDadosConversa[] = CAMPOS_PE
 
 export const ACOES_PERMITIDAS: readonly AcaoAlteracaoDados[] = ['informar', 'corrigir', 'remover'];
 export const PERIODOS_PERMITIDOS = ['manha', 'tarde', 'noite'];
-export const INTENCOES_PERMITIDAS = ['novo_agendamento', 'remarcacao'];
+// `cancelamento` entrou em 2026-08-11 (specs/cancelamento-conversacional-v1.md
+// secao 1) por MEDICAO contra a IA real, e SEM nenhuma regra de prompt nova:
+// as duas variantes com instrucao explicita testadas pioraram o resultado --
+// uma em acerto, a outra introduziu o unico falso positivo perigoso de toda a
+// medicao. O contexto que ja existe (`dados_atuais` vazio vs. em andamento +
+// `historico_recente`) distingue desistencia da conversa de cancelamento de
+// agendamento existente melhor do que qualquer prosa acrescentada.
+export const INTENCOES_PERMITIDAS = ['novo_agendamento', 'remarcacao', 'cancelamento'];
 // Fechado a 'sim': ausencia de confirmacao nunca e tratada como negacao
 // silenciosa, so como "ainda nao confirmou" -- mesmo principio ja usado em
 // dentista_id/procedimento_id ausentes.

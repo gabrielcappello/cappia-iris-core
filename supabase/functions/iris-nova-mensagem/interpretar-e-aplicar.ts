@@ -298,34 +298,50 @@ function validarEscolhaAgendamento(
 }
 
 /**
- * Limpa `confirmacao` ao ENTRAR em remarcacao (specs/remarcacao-
- * conversacional-v1.md, decisao do Gabriel 2026-08-11). Sem isso, um "sim"
- * remanescente de um agendamento concluido antes na MESMA conversa
- * autorizaria a remarcacao sozinho, sem ninguem ter perguntado nada -- mesmo
- * defeito que cpf-outro-telefone-v1.md ja impediu ao recusar reusar
- * `confirmacao` naquele fluxo.
+ * Intencoes cujo fluxo executa uma acao sobre um agendamento JA EXISTENTE e
+ * portanto exige confirmacao explicita nova ao ser iniciado. Novo agendamento
+ * nao entra: ele nunca escreve `intencao` e nao tem agendamento previo a
+ * proteger.
+ */
+const INTENCOES_QUE_LIMPAM_CONFIRMACAO: readonly string[] = ['remarcacao', 'cancelamento'];
+
+/**
+ * Limpa `confirmacao` ao ENTRAR em remarcacao ou cancelamento
+ * (specs/remarcacao-conversacional-v1.md e
+ * specs/cancelamento-conversacional-v1.md secao 4, decisoes do Gabriel
+ * 2026-08-11). Sem isso, um "sim" remanescente de um agendamento concluido
+ * antes na MESMA conversa autorizaria a operacao sozinho, sem ninguem ter
+ * perguntado nada -- mesmo defeito que cpf-outro-telefone-v1.md ja impediu ao
+ * recusar reusar `confirmacao` naquele fluxo.
  *
- * "Entrar" e a TRANSICAO: `intencao` esta sendo escrita para 'remarcacao'
- * NESTE turno E o snapshot oficial ainda nao era 'remarcacao'. Turnos
- * seguintes, ja dentro do fluxo (intencao ja era 'remarcacao' no snapshot),
- * nunca passam por aqui -- a confirmacao da proposta de remarcacao (secao 5
- * da spec) segue intacta.
+ * "Entrar" e a TRANSICAO: `intencao` esta sendo escrita para um desses valores
+ * NESTE turno E o snapshot oficial ainda nao era esse valor. Turnos seguintes,
+ * ja dentro do fluxo, nunca passam por aqui -- a confirmacao da proposta
+ * (secao 5 da spec de remarcacao, secao 4 da de cancelamento) segue intacta.
  *
  * Forca a remocao mesmo que a IA tenha emitido `confirmacao` neste MESMO
- * turno: nao existe `proposta_pendente` de remarcacao neste ponto (ela so
- * nasce depois, quando o Core encontra um horario livre), entao nenhum
- * valor legitimo de confirmacao pode existir para este fluxo agora.
+ * turno: nao existe `proposta_pendente` deste fluxo neste ponto (ela so nasce
+ * depois, quando o Core localiza o agendamento ou encontra um horario livre),
+ * entao nenhum valor legitimo de confirmacao pode existir para ele agora.
+ *
+ * NAO E A UNICA PROTECAO no cancelamento. Esta cobre o "sim" que vem de OUTRO
+ * fluxo; o "sim" que sobra DENTRO do mesmo fluxo (entre uma pergunta de
+ * confirmacao e a seguinte, quando `intencao` ja era 'cancelamento' e portanto
+ * nao ha transicao) e barrado no orquestrador, pela exigencia de
+ * `proposta_pendente` correspondente ao agendamento (spec secao 4, condicao 3).
  */
-function limparConfirmacaoAoEntrarEmRemarcacao(
+function limparConfirmacaoAoEntrarEmFluxoDeAgendamentoExistente(
   alteracoes: AlteracoesDados,
   snapshotOficial: SnapshotOficialConversa
 ): AlteracoesDados {
   const alteracaoIntencao = alteracoes.intencao;
+  if (alteracaoIntencao === undefined || alteracaoIntencao.acao === 'remover') return alteracoes;
+
+  const valor = alteracaoIntencao.valor;
   const entrandoAgora =
-    alteracaoIntencao !== undefined &&
-    alteracaoIntencao.acao !== 'remover' &&
-    alteracaoIntencao.valor === 'remarcacao' &&
-    snapshotOficial.intencao !== 'remarcacao';
+    typeof valor === 'string' &&
+    INTENCOES_QUE_LIMPAM_CONFIRMACAO.includes(valor) &&
+    snapshotOficial.intencao !== valor;
 
   if (!entrandoAgora) return alteracoes;
 
@@ -486,10 +502,10 @@ export async function interpretarEAplicar(
   // secao 3). Id fora da lista (ou sem lista nenhuma) nunca e persistido.
   const alteracoesComEscolhaAgendamento = validarEscolhaAgendamento(alteracoesFinais, entrada.agendamentos_ativos);
 
-  // 5c-ter. LIMPEZA DE CONFIRMACAO AO ENTRAR EM REMARCACAO -- um "sim" de
-  // outro fluxo, na mesma conversa, nunca autoriza uma remarcacao que
-  // ninguem confirmou.
-  const alteracoesComRemarcacao = limparConfirmacaoAoEntrarEmRemarcacao(
+  // 5c-ter. LIMPEZA DE CONFIRMACAO AO ENTRAR EM REMARCACAO/CANCELAMENTO -- um
+  // "sim" de outro fluxo, na mesma conversa, nunca autoriza uma operacao sobre
+  // agendamento existente que ninguem confirmou.
+  const alteracoesComRemarcacao = limparConfirmacaoAoEntrarEmFluxoDeAgendamentoExistente(
     alteracoesComEscolhaAgendamento,
     snapshotOficial
   );

@@ -148,6 +148,37 @@ export function gerarRespostaPaciente(decisao: DecisaoOrquestrador): string {
       return `Você está com ${formatarData(decisao.agendamento_atual.data)} às ${decisao.agendamento_atual.horario}. Quer passar para ${formatarOpcao(decisao.opcao)}?`;
     case 'remarcacao_criada':
       return `Prontinho! Sua consulta foi remarcada para ${formatarData(decisao.data)} às ${decisao.horario}.`;
+    // --- Cancelamento (2026-08-11, specs/cancelamento-conversacional-v1.md) ---
+    case 'sem_agendamento_para_cancelar':
+      return 'Não encontrei nenhum agendamento seu para cancelar no momento.';
+    case 'aguardando_escolha_agendamento_cancelamento': {
+      const opcoes = decisao.agendamentos
+        .map((a, indice) => `${indice + 1}) ${formatarData(a.data)} às ${a.horario}`)
+        .join('; ');
+      return `Você tem mais de um agendamento: ${opcoes}. Qual deles você quer cancelar?`;
+    }
+    // MOSTRA CLARAMENTE o que sera cancelado (spec secao 4) -- procedimento e
+    // profissional entram quando existem na linha; nunca um "confirma?" nu.
+    // `procedimento`/`dentista_nome` sao nulaveis no banco operacional, entao
+    // a frase degrada para data+horario em vez de exibir "null".
+    case 'aguardando_confirmacao_cancelamento': {
+      const { procedimento, dentista_nome, data, horario } = decisao.agendamento;
+      const partes = [procedimento, dentista_nome !== null ? `com ${dentista_nome}` : null].filter(
+        (parte): parte is string => parte !== null
+      );
+      const descricao = partes.length > 0 ? `${partes.join(' ')} ` : '';
+      // A pergunta ja tinha sido feita e a resposta nao ficou clara: reconhece
+      // isso em vez de repetir a mesma frase. Texto FIXO aqui de proposito --
+      // este e o fallback deterministico, usado so quando a redatora falha ou
+      // e reprovada; a formulacao natural e dela (fato
+      // `confirmacao_nao_compreendida`).
+      if (decisao.confirmacao_nao_compreendida === true) {
+        return `Só quero ter certeza antes de cancelar: você confirma que quer cancelar ${descricao}de ${formatarData(data)} às ${horario}?`;
+      }
+      return `Você quer cancelar ${descricao}de ${formatarData(data)} às ${horario}?`;
+    }
+    case 'cancelamento_criado':
+      return `Pronto, cancelei seu agendamento de ${formatarData(decisao.data)} às ${decisao.horario}.`;
     case 'combinacao_indisponivel':
       // O paciente escolheu um profissional que nao realiza esse atendimento
       // e para quem a avaliacao tambem nao e possivel. Nunca sugere OUTRO

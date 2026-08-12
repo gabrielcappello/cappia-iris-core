@@ -63,7 +63,11 @@ export type ObjetivoResposta =
   | 'informar_sem_agendamento_para_remarcar' // 2026-08-11 -- specs/remarcacao-conversacional-v1.md secao 2.
   | 'escolher_entre_agendamentos' // 2026-08-11 -- idem, secao 3.
   | 'pedir_confirmacao_remarcacao' // 2026-08-11 -- idem, secao 5.
-  | 'informar_remarcacao_criada'; // 2026-08-11 -- idem, secao 6.
+  | 'informar_remarcacao_criada' // 2026-08-11 -- idem, secao 6.
+  | 'informar_sem_agendamento_para_cancelar' // 2026-08-11 -- specs/cancelamento-conversacional-v1.md secao 2.
+  | 'escolher_entre_agendamentos_cancelamento' // 2026-08-11 -- idem, secao 5.
+  | 'pedir_confirmacao_cancelamento' // 2026-08-11 -- idem, secao 4.
+  | 'informar_cancelamento_criado'; // 2026-08-11 -- idem, secao 7.
 
 export interface FatosAutorizados {
   objetivo: ObjetivoResposta;
@@ -137,6 +141,24 @@ export interface FatosAutorizados {
    * pronto, nunca IDs.
    */
   agendamentos_candidatos?: string[];
+  /**
+   * A pergunta de confirmacao de cancelamento JA tinha sido feita para este
+   * mesmo agendamento, e a resposta do paciente nao ficou clara o bastante
+   * para autorizar (specs/cancelamento-conversacional-v1.md secao 4).
+   *
+   * A redatora deve RECONHECER isso e pedir esclarecimento de forma natural,
+   * em vez de repetir a mesma pergunta mecanicamente. O objetivo dela e
+   * eliminar SOMENTE a duvida daquele momento -- nao reiniciar o fluxo, nao
+   * exigir uma palavra fixa, nao transformar a conversa em sequencia
+   * burocratica.
+   *
+   * O Core NAO dita a frase: `pedir_confirmacao_cancelamento` continua sendo
+   * o objetivo, e a redatora formula da maneira mais clara para o contexto.
+   *
+   * Mesma forma de `preferencia_nao_localizada` -- fato opcional que
+   * acrescenta uma nuance a um objetivo que ja existe.
+   */
+  confirmacao_nao_compreendida?: true;
 }
 
 /**
@@ -288,6 +310,44 @@ function derivarPorDecisao(decisao: DecisaoOrquestrador): FatosAutorizados {
     case 'remarcacao_criada':
       return {
         objetivo: 'informar_remarcacao_criada',
+        agendamento_confirmado: { data: formatarData(decisao.data), horario: decisao.horario },
+      };
+
+    // --- Cancelamento (2026-08-11, specs/cancelamento-conversacional-v1.md) ---
+    case 'sem_agendamento_para_cancelar':
+      return { objetivo: 'informar_sem_agendamento_para_cancelar' };
+
+    case 'aguardando_escolha_agendamento_cancelamento':
+      return {
+        objetivo: 'escolher_entre_agendamentos_cancelamento',
+        agendamentos_candidatos: decisao.agendamentos.map((a) => `${formatarData(a.data)} às ${a.horario}`),
+      };
+
+    // `agendamento_atual` (nao `proposta_pendente`): no cancelamento nao ha
+    // "para onde" -- o unico fato e QUAL agendamento sera cancelado. A spec
+    // secao 4 exige mostra-lo claramente, nunca um "confirma?" generico.
+    // O campo tambem ja e reconhecido por `coletarMinutosAutorizados`
+    // (guarda-resposta-redatora.ts), entao a redatora pode citar o horario
+    // real sem ser reprovada.
+    case 'aguardando_confirmacao_cancelamento':
+      // OBJETIVO INALTERADO mesmo quando a confirmacao nao ficou clara: o que
+      // a resposta precisa alcancar continua sendo exatamente o mesmo -- obter
+      // a confirmacao. So o CONTEXTO muda, e ele viaja como fato opcional.
+      return {
+        objetivo: 'pedir_confirmacao_cancelamento',
+        agendamento_atual: {
+          data: formatarData(decisao.agendamento.data),
+          horario: decisao.agendamento.horario,
+        },
+        ...(decisao.confirmacao_nao_compreendida === true ? { confirmacao_nao_compreendida: true as const } : {}),
+      };
+
+    case 'cancelamento_criado':
+      // `agendamento_confirmado` carrega aqui o que foi CANCELADO -- o
+      // objetivo (`informar_cancelamento_criado`) e que diz a redatora o que
+      // fazer com esse fato. Reuso do campo, nao do significado do objetivo.
+      return {
+        objetivo: 'informar_cancelamento_criado',
         agendamento_confirmado: { data: formatarData(decisao.data), horario: decisao.horario },
       };
   }

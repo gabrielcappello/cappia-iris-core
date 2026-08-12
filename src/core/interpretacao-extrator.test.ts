@@ -169,8 +169,8 @@ test('teste16: as instrucoes registram explicitamente que periodo nao e inferido
 
   assert.deepEqual(
     INTENCOES_PERMITIDAS,
-    ['novo_agendamento', 'remarcacao'],
-    'novo_agendamento e remarcacao sao os unicos valores permitidos para intencao (specs/remarcacao-conversacional-v1.md)'
+    ['novo_agendamento', 'remarcacao', 'cancelamento'],
+    'os tres valores permitidos para intencao (specs/cancelamento-conversacional-v1.md secao 1) -- cancelamento entrou SEM nenhuma regra de prompt propria, por medicao'
   );
 });
 

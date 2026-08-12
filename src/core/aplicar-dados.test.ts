@@ -278,11 +278,15 @@ test('teste13: intencao invalida e rejeitada', async () => {
   const conversa = semearEstado(tabelas, {});
   const cliente = new ClienteFalso(tabelas);
 
+  // O valor usado aqui era 'cancelamento' ate 2026-08-11, quando ele passou a
+  // ser um valor VALIDO (specs/cancelamento-conversacional-v1.md secao 1).
+  // Trocado por um valor que nao pertence ao vocabulario -- o que este teste
+  // prova e o FECHAMENTO do enum, nunca uma palavra especifica.
   await assert.rejects(
     () =>
       aplicarDados(cliente, {
         ...contexto(conversa.id),
-        alteracoes: { intencao: { acao: 'informar', valor: 'cancelamento' } },
+        alteracoes: { intencao: { acao: 'informar', valor: 'valor_fora_do_vocabulario' } },
       }),
     EntradaInvalidaError
   );

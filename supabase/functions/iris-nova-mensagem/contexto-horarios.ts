@@ -139,6 +139,35 @@ export function derivarAcaoContextoHorarios(decisao: DecisaoOrquestrador): AcaoC
     case 'remarcacao_criada':
       return { tipo: 'limpar' };
 
+    // --- Cancelamento (2026-08-11, specs/cancelamento-conversacional-v1.md) ---
+    //
+    // MESMA acao da escolha de remarcacao, sem nenhum marcador novo (spec
+    // secao 5): o marcador so guarda a lista de IDs oferecidos, papel
+    // identico nos dois fluxos. Quem diz QUAL fluxo esta em andamento quando
+    // o paciente responde "o segundo" e `dados.intencao`, que e persistido e
+    // sobrevive ao turno -- nunca este marcador sozinho.
+    case 'aguardando_escolha_agendamento_cancelamento':
+      return { tipo: 'perguntar_qual_agendamento', agendamento_ids: decisao.agendamentos.map((a) => a.agendamento_id) };
+
+    // PROPOR (mesma acao das outras duas confirmacoes): a Iris mostrou QUAL
+    // agendamento sera cancelado e aguarda confirmacao explicita. Reuso
+    // deliberado de `proposta_pendente` (spec secao 4, decisao do Gabriel):
+    // ele e um sinal DECLARATIVO -- "ha um fato concreto aguardando
+    // confirmacao" --, nunca prescritivo sobre o que esse fato significa. A IA
+    // nunca soube, e nao precisa saber, se confirma uma reserva, uma
+    // remarcacao ou um cancelamento; isso sempre foi do Core.
+    //
+    // `data`/`horario` vao CRUS do agendamento (nunca reformatados): e contra
+    // estes valores exatos que o orquestrador confere a condicao 3 da spec no
+    // turno seguinte.
+    case 'aguardando_confirmacao_cancelamento':
+      return { tipo: 'propor', data: decisao.agendamento.data, horario: decisao.agendamento.horario };
+
+    // Nenhum agendamento ativo, ou cancelamento concluido: nada fica pendurado.
+    case 'sem_agendamento_para_cancelar':
+    case 'cancelamento_criado':
+      return { tipo: 'limpar' };
+
     case 'saudacao':
     case 'duvida_livre':
     case 'mensagem_nao_compreendida':

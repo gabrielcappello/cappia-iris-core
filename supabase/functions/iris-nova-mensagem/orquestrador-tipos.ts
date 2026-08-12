@@ -11,6 +11,7 @@ import type { InstanteAtual, OpcaoHorario, ResultadoDisponibilidade } from './di
 import type { ResultadoResolucaoTemporal } from './temporal-tipos.ts';
 import type { MotivoErroReserva } from './reservar-agendamento.ts';
 import type { MotivoErroRemarcacao } from './remarcar-agendamento.ts';
+import type { MotivoErroCancelamento } from './cancelar-agendamento.ts';
 import type { AgendamentoAtivo } from './buscar-agendamento-ativo.ts';
 import type { HistoricoConversa } from './tipos.ts';
 
@@ -224,7 +225,18 @@ export type DecisaoOrquestrador =
   // palpite sobre um campo que ninguem le. `motivo` aceita o vocabulario das
   // DUAS RPCs: `Exclude<..., 'horario_ocupado'>` porque esse motivo especifico
   // da remarcacao sempre vira `reserva_conflito` acima, nunca chega aqui.
-  | { tipo: 'reserva_falhou'; motivo: MotivoErroReserva | Exclude<MotivoErroRemarcacao, 'horario_ocupado'> }
+  //
+  // REUTILIZADA TAMBEM pelo cancelamento (2026-08-11,
+  // specs/cancelamento-conversacional-v1.md secao 7), pela MESMA auditoria
+  // reaplicada sem mudanca de raciocinio: `agendamento_nao_encontrado` e
+  // `nao_confirmado` colapsam na mesma corrida real (o agendamento mudou entre
+  // a busca e a confirmacao -- o turno seguinte se autocorrige devolvendo
+  // `sem_agendamento_para_cancelar`, a mensagem verdadeira), e `erro_insercao`
+  // e tecnico. Nenhum dos tres tem consumidor que leia `motivo`.
+  | {
+      tipo: 'reserva_falhou';
+      motivo: MotivoErroReserva | Exclude<MotivoErroRemarcacao, 'horario_ocupado'> | MotivoErroCancelamento;
+    }
   // Nenhum agendamento ativo encontrado para remarcar -- zero resultados da
   // busca, ou paciente sem ficha (specs/remarcacao-conversacional-v1.md
   // secao 2). Paciente sem cadastro nao recebe oferta de cadastro aqui: sem
@@ -257,6 +269,61 @@ export type DecisaoOrquestrador =
       dentista_id: string;
       procedimento_id: string;
       duracao_min: number;
+      data: string;
+      horario: string;
+    }
+  // --- Cancelamento (2026-08-11, specs/cancelamento-conversacional-v1.md) ---
+  //
+  // Nenhum agendamento ativo encontrado para cancelar -- zero resultados da
+  // busca, ou paciente sem ficha (spec secao 2). Mesma disciplina de
+  // `sem_agendamento_para_remarcar`: paciente sem cadastro nao recebe oferta
+  // de cadastro aqui, porque sem ficha nao ha agendamento por definicao.
+  | { tipo: 'sem_agendamento_para_cancelar' }
+  // Mais de um agendamento ativo -- a Iris precisa perguntar qual CANCELAR
+  // (spec secao 5). Decisao SEPARADA de `aguardando_escolha_agendamento`
+  // apenas porque o texto ao paciente difere ("qual voce quer cancelar?" vs
+  // "remarcar?") -- o MECANISMO inteiro e reusado sem uma linha de mudanca:
+  // mesmo `agendamentos_ativos` no payload, mesma instrucao (que ja e generica
+  // -- "QUAL DESSES AGENDAMENTOS", sem verbo), mesmo `agendamento_id` validado
+  // contra a lista oferecida, mesmo marcador `escolha_agendamento_pendente`.
+  | { tipo: 'aguardando_escolha_agendamento_cancelamento'; agendamentos: readonly AgendamentoAtivo[] }
+  // O agendamento esta localizado e a Iris esta PERGUNTANDO se pode cancelar
+  // (spec secao 4) -- a protecao central desta spec. `intencao = cancelamento`
+  // NUNCA, por si so, executa cancelamento: um falso positivo da classificacao
+  // so pode, na pior hipotese, chegar ate aqui e ser negado pelo paciente.
+  //
+  // Carrega o agendamento INTEIRO (procedimento, dentista, data, horario)
+  // porque a exigencia e mostrar CLARAMENTE o que sera cancelado -- nunca um
+  // "confirma?" generico.
+  //
+  // `confirmacao_nao_compreendida` (2026-08-11, spec secao 4): a pergunta JA
+  // tinha sido feita para ESTE mesmo agendamento e a resposta do paciente nao
+  // autorizou nem encerrou o fluxo -- ou seja, a confirmacao nao ficou clara.
+  // A Iris deve reconhecer isso e pedir esclarecimento de forma natural, em
+  // vez de repetir a mesma pergunta mecanicamente.
+  //
+  // DERIVADO no turno, NUNCA persistido: sai da comparacao entre a
+  // `proposta_pendente` lida no inicio do turno e o agendamento em questao.
+  // Nao existe contador de tentativas -- a primeira resposta que nao resolve
+  // ja produz o esclarecimento (docs: "nao criar complexidade para casos que
+  // uma pergunta natural resolve").
+  //
+  // Mesma forma de `preferencia_nao_localizada` em `aguardando_escolha_dentista`
+  // e de `procedimento_oferecido` em `sem_dentista_disponivel`: campo opcional
+  // numa decisao que ja existe, nunca decisao nova.
+  | {
+      tipo: 'aguardando_confirmacao_cancelamento';
+      agendamento: AgendamentoAtivo;
+      confirmacao_nao_compreendida?: true;
+    }
+  // Cancelamento concluido com sucesso (spec secao 7), inclusive replay
+  // (`ja_cancelado: true` na RPC) -- o desfecho para o paciente e o mesmo:
+  // uma confirmacao verdadeira, nunca um erro de retentativa.
+  | {
+      tipo: 'cancelamento_criado';
+      agendamento_id: string;
+      procedimento_id: string | null;
+      dentista_id: string | null;
       data: string;
       horario: string;
     };
