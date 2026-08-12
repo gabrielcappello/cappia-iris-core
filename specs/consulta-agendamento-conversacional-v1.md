@@ -1,8 +1,9 @@
 # Consulta do próprio agendamento — spec mínima v1
 
-**Status:** especificação **aprovada pelo Gabriel em 2026-08-12, ainda não
-implementada.** Nenhuma migration, RPC, coluna, tipo ou linha de código é
-criada por este documento.
+**Status:** **implementada e publicada em 2026-08-12** — commit `4843bc1`,
+Edge `iris-nova-mensagem` v20 `ACTIVE` no operacional `udizowyfjnhuhgxkeayk`,
+suíte 1171/1171, paridade Core/Edge confirmada. Nenhuma migration, RPC,
+coluna ou tabela — exatamente como planejado (seção 8).
 
 Escopo: o paciente identificado poder perguntar naturalmente sobre o próprio
 agendamento futuro ("quando é minha consulta?", "tenho horário marcado?",
@@ -218,6 +219,8 @@ Gabriel, 2026-08-12).
 
 ## 8. Desenho final — arquivos afetados
 
+**Status: implementado, publicado (commit `4843bc1`, Edge v20).**
+
 Seis arquivos, todos aditivos:
 
 | arquivo | mudança |
@@ -231,6 +234,20 @@ Seis arquivos, todos aditivos:
 
 Zero: intenção, campo raiz, evento, parser, estado, RPC, tabela, migration,
 regra de prompt.
+
+### 8.1 Dois ajustes da revisão independente (Codex), incorporados ao desenho final
+
+- **`procedimento_id` nunca é fallback de texto.** A descrição do agendamento
+  usa `agendamento.procedimento ?? 'atendimento'` — nunca
+  `agendamento.procedimento_id`. Este caminho termina na redatora, ou seja, no
+  texto enviado ao paciente; nenhum identificador interno e opaco pode
+  atravessar essa fronteira.
+- **Falha de banco nunca vira "sem agendamento".** `buscarAgendamentosParaContexto`
+  não tem `try/catch` próprio — um erro de `buscarAgendamentoAtivo` propaga
+  pelo mesmo caminho técnico já usado por `decidirRemarcacao` e
+  `decidirCancelamento`. "Sem agendamento" é um fato (o paciente não tem
+  nenhum); um erro de leitura não é esse fato e nunca deveria virar
+  silenciosamente a mesma coisa.
 
 ## 9. Testes mínimos
 
@@ -269,9 +286,15 @@ regra de prompt.
   não corrigida.
 - **Nome do paciente (seção 7)** continua fora — se entrar, é decisão de PII
   própria.
-- **Dia da semana na descrição.** `descreverAgendamentoAtivo` e
-  `diaDaSemanaCivil` já existem e estão medidos, mas são privados de
-  `orquestrador.ts`. Reaproveitar exige exportar ou reimplementar (a convenção
-  documentada do projeto é reimplementar). Decisão pequena, sem bloqueio.
+- **Dia da semana na descrição — reimplementado, não reaproveitado; risco de
+  divergência coberto por teste.** `diaDaSemanaCivil` foi reimplementado em
+  `fatos-autorizados.ts` (a convenção documentada do projeto), em vez de
+  exportar o helper privado de `orquestrador.ts`. Duas implementações
+  independentes do mesmo algoritmo abrem risco real de divergência silenciosa
+  — fechado por `src/core/paridade-dia-semana.test.ts`, que observa as duas
+  pelas saídas públicas já existentes (nunca exportando nada) e compara,
+  lado a lado, 8 datas: comuns, virada de ano, bissexto comum (2024, 2028) e
+  o caso secular 2000 (bissexto por múltiplo de 400). Continuam sendo duas
+  implementações — a proteção é o teste, não a unificação.
 - **A guarda valida horário, nunca data.** Se a redatora errar a data, nada
   detecta. Limitação pré-existente, não introduzida aqui.
