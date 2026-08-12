@@ -285,33 +285,35 @@ test('correcao4c: divergencia durante a execucao gera conflito, remove o campo d
   assert.equal(comoRegistro(tabelas.estado_conversa[0].dados).data_texto, 'sabado');
 });
 
-// --- Correcao (revisao sobre 7123493): validarDadosAtuais nao pode vazar
-// a chave bruta do snapshot oficial (nome/campo.desconhecido) ---
+// --- Correcao (bug real de producao, 2026-08-12): campo fora do contrato
+// ATUAL no snapshot oficial persistido (ex.: de uma versao anterior do
+// contrato) e descartado em silencio, nunca bloqueia a conversa. Substitui o
+// teste anterior (revisao sobre 7123493), que cobria o comportamento antigo
+// -- rejeitar e nunca chamar o modelo -- hoje deliberadamente removido. ---
 
-test('correcao_dados_atuais: chave desconhecida no snapshot oficial com PII no proprio nome e rejeitada antes do modelo, sem vazar no erro', async () => {
+test('snapshot oficial com campo legado desconhecido: conversa continua normalmente, campo nunca vaza ao modelo', async () => {
   const tabelas = criarTabelasFalsasVazias();
   const chavePerigosa = 'nome_Maria_Silva_cpf_12345678900_email_maria.silva@example.com';
-  const conversa = semearEstado(tabelas, { [chavePerigosa]: 'x' });
+  // `periodo` e um campo que CONTINUA no contrato hoje -- prova que o filtro
+  // e seletivo (descarta so o desconhecido), nunca destroi o snapshot inteiro.
+  const conversa = semearEstado(tabelas, { [chavePerigosa]: 'x', periodo: 'tarde' });
   const clienteBanco = new ClienteFalso(tabelas);
-  const clienteModelo = new ClienteModeloNuncaDeveSerChamado();
+  const clienteModelo = new ClienteModeloFalso([{ natureza_mensagem: 'saudacao', alteracoes: {} }]);
 
-  let erroCapturado: unknown;
-  try {
-    await interpretarEAplicar(clienteModelo, clienteBanco, contexto(conversa.id, ['oi']));
-  } catch (erro) {
-    erroCapturado = erro;
-  }
+  const resultado = await interpretarEAplicar(clienteModelo, clienteBanco, contexto(conversa.id, ['oi']));
 
-  assert.ok(erroCapturado instanceof EntradaInvalidaError);
-  const erroTipado = erroCapturado as EntradaInvalidaError;
-  assert.equal(erroTipado.campo, 'campo_desconhecido', 'erro.campo deve usar identificador generico fixo');
+  // chegou ate o modelo -- nao foi rejeitada.
+  assert.equal(clienteModelo.chamadas.length, 1);
+  assert.equal(resultado.natureza_mensagem, 'saudacao');
 
-  const representacao = JSON.stringify(erroTipado) + erroTipado.message + erroTipado.campo;
-  assert.ok(!representacao.includes(chavePerigosa), 'a chave completa nao pode aparecer no erro');
-  assert.ok(!representacao.includes('Maria_Silva'), 'nome embutido na chave nao pode aparecer');
-  assert.ok(!representacao.includes('12345678900'), 'cpf embutido na chave nao pode aparecer');
-  assert.ok(!representacao.includes('maria.silva@example.com'), 'e-mail embutido na chave nao pode aparecer');
+  const payloadEnviado = JSON.stringify(clienteModelo.chamadas[0]!.payload);
+  assert.ok(!payloadEnviado.includes(chavePerigosa), 'a chave completa nao pode chegar ao payload do modelo');
+  assert.ok(!payloadEnviado.includes('Maria_Silva'), 'nome embutido na chave nao pode chegar ao modelo');
+  assert.ok(!payloadEnviado.includes('12345678900'), 'cpf embutido na chave nao pode chegar ao modelo');
+  assert.ok(!payloadEnviado.includes('maria.silva@example.com'), 'e-mail embutido na chave nao pode chegar ao modelo');
 
-  // nenhuma atualizacao ocorre (a rejeicao acontece antes de qualquer chamada ao modelo/UPDATE)
-  assert.equal(clienteBanco.estatisticas.chamadasUpdate['estado_conversa'] ?? 0, 0);
+  // o campo que continua valido no contrato de hoje sobrevive ao filtro.
+  const dadosAtuaisEnviados = (clienteModelo.chamadas[0]!.payload as { dados_atuais?: Record<string, unknown> })
+    .dados_atuais;
+  assert.equal(dadosAtuaisEnviados?.periodo, 'tarde');
 });

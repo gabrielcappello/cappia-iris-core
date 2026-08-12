@@ -435,10 +435,13 @@ export async function interpretarEAplicar(
   // 2-3. buscar estado_conversa oficial e obter dados diretamente da linha
   // (mesma consulta que aplicarDados usa — nunca o dados_atuais do chamador).
   const linhaOficial = await buscarEstadoConversa(clienteBanco, entrada);
-  const snapshotOficial = (linhaOficial.dados as SnapshotOficialConversa) ?? {};
 
-  // 4. validar que os dados oficiais respeitam os dez campos do contrato.
-  validarSnapshotOficial(snapshotOficial);
+  // 4. validar os dados oficiais contra o contrato ATUAL e usar o snapshot
+  // ja filtrado dai em diante (nunca o bruto lido do banco). Um campo que
+  // pertenceu a uma versao anterior do contrato (ex.: `procedimento_texto`,
+  // substituido por `procedimento_id`) e descartado em silencio aqui, nunca
+  // bloqueia a conversa -- ver validarSnapshotOficial.
+  const snapshotOficial = validarSnapshotOficial(linhaOficial.dados ?? {});
 
   // 5. derivar do snapshot oficial APENAS o contexto autorizado e enviar
   // ao modelo. Os campos operacionais seguem por valor; os cadastrais

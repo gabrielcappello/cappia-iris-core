@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { INTENCOES_PERMITIDAS } from './aplicar-dados.ts';
 import { EntradaInvalidaError, InterpretacaoInvalidaError } from './erros.ts';
-import { extrairAlteracoes } from './interpretacao-extrator.ts';
+import { extrairAlteracoes, validarDadosAtuais, validarSnapshotOficial } from './interpretacao-extrator.ts';
 import { INSTRUCOES_EXTRATOR } from './interpretacao-instrucoes.ts';
 import { ClienteModeloFalso, ClienteModeloNuncaDeveSerChamado } from './teste-cliente-modelo-falso.ts';
 
@@ -464,4 +464,57 @@ test('troca_telefone_pendente: fechado a `true`, rejeitado em qualquer outro val
       `esperava rejeitar troca_telefone_pendente=${JSON.stringify(valor)}`
     );
   }
+});
+
+// --- Correcao (bug real de producao, 2026-08-12): estado_conversa.dados pode
+// conter campos persistidos por uma versao anterior do contrato (ex.:
+// `procedimento_texto`, substituido por `procedimento_id` em
+// procedimento-semantico-v1.md). Antes desta correcao, `validarSnapshotOficial`
+// rejeitava a conversa inteira ao encontrar qualquer campo fora de
+// CAMPOS_PERMITIDOS -- bloqueando permanentemente qualquer conversa com
+// resíduo de contrato antigo, mesmo antes de qualquer mensagem nova ser
+// processada. Estes testes cobrem exatamente os dois lados da correcao:
+// snapshot PERSISTIDO filtra em silencio; dado NOVO continua rejeitando. ---
+
+test('validarSnapshotOficial: campo legado fora do contrato atual (procedimento_texto) e descartado em silencio', () => {
+  const snapshot = {
+    periodo: 'manha',
+    data_texto: 'amanhã',
+    procedimento_texto: 'Avaliação né',
+  };
+
+  const filtrado = validarSnapshotOficial(snapshot);
+
+  assert.deepEqual(filtrado, { periodo: 'manha', data_texto: 'amanhã' });
+  assert.equal('procedimento_texto' in filtrado, false);
+});
+
+test('validarSnapshotOficial: snapshot sem nenhum campo legado passa identico', () => {
+  const snapshot = { procedimento_id: 'clareamento', dentista_id: crypto.randomUUID() };
+
+  const filtrado = validarSnapshotOficial(snapshot);
+
+  assert.deepEqual(filtrado, snapshot);
+});
+
+test('validarSnapshotOficial: valor invalido em campo que AINDA pertence ao contrato continua rejeitado', () => {
+  // `periodo` esta em CAMPOS_PERMITIDOS -- o filtro e so para campo
+  // DESCONHECIDO, nunca para valor invalido de campo conhecido.
+  assert.throws(() => validarSnapshotOficial({ periodo: 'meio-dia' }), EntradaInvalidaError);
+});
+
+test('validarDadosAtuais: campo desconhecido em dado NOVO continua sendo rejeitado', () => {
+  let erroCapturado: unknown;
+  try {
+    validarDadosAtuais({ procedimento_texto: 'Avaliação' });
+  } catch (erro) {
+    erroCapturado = erro;
+  }
+
+  assert.ok(erroCapturado instanceof EntradaInvalidaError);
+  assert.equal((erroCapturado as EntradaInvalidaError).campo, 'campo_desconhecido');
+});
+
+test('validarDadosAtuais: campo operacional valido continua aceito normalmente', () => {
+  assert.doesNotThrow(() => validarDadosAtuais({ periodo: 'tarde' }));
 });

@@ -519,38 +519,50 @@ export function validarMensagensAtuais(mensagens: unknown): asserts mensagens is
 /**
  * Valida `dados_atuais` do PAYLOAD do modelo: somente os seis campos
  * operacionais. Um campo cadastral aqui e violacao do contrato de PII e
- * invalida a entrada inteira.
+ * invalida a entrada inteira. Dado NOVO, emitido agora -- continua rejeitando
+ * qualquer campo desconhecido (nunca filtra em silencio).
  */
 export function validarDadosAtuais(
   dadosAtuais: unknown
 ): asserts dadosAtuais is Partial<Record<CampoOperacionalInterpretacao, string>> {
-  validarMapaDeCampos(dadosAtuais, 'dados_atuais', CAMPOS_OPERACIONAIS_INTERPRETACAO);
+  validarMapaDeCampos(dadosAtuais, 'dados_atuais', CAMPOS_OPERACIONAIS_INTERPRETACAO, false);
 }
 
 /**
- * Valida o SNAPSHOT oficial lido de estado_conversa: os dez campos, com
- * valores cadastrais inclusive. Uso interno do servidor -- este objeto
+ * Valida o SNAPSHOT oficial lido de estado_conversa e devolve a versao ja
+ * FILTRADA -- nunca o objeto bruto. Uso interno do servidor -- este objeto
  * alimenta preAplicar e a reconciliacao, e nunca e entregue ao modelo.
+ *
+ * Ao contrario de `validarDadosAtuais`, um campo fora de `CAMPOS_PERMITIDOS`
+ * aqui NAO invalida a entrada: `estado_conversa.dados` e persistido, e pode
+ * conter campos de uma versao anterior do contrato (ex.: `procedimento_texto`,
+ * substituido por `procedimento_id` em procedimento-semantico-v1.md). Sem
+ * este filtro, toda mudanca futura de contrato bloquearia PERMANENTEMENTE
+ * qualquer conversa que ainda tenha o campo antigo persistido -- nao ha
+ * comando de correcao, so mais mensagens que nunca mais completam. O campo
+ * desconhecido e descartado em silencio; todo campo que ainda pertence ao
+ * contrato continua validado com o mesmo rigor de sempre.
  */
-export function validarSnapshotOficial(
-  snapshot: unknown
-): asserts snapshot is SnapshotOficialConversa {
-  validarMapaDeCampos(snapshot, 'dados_atuais', CAMPOS_PERMITIDOS);
+export function validarSnapshotOficial(snapshot: unknown): SnapshotOficialConversa {
+  return validarMapaDeCampos(snapshot, 'dados_atuais', CAMPOS_PERMITIDOS, true) as SnapshotOficialConversa;
 }
 
 function validarMapaDeCampos(
   mapa: unknown,
   rotulo: string,
-  camposAceitos: readonly string[]
-): void {
+  camposAceitos: readonly string[],
+  filtrarDesconhecidos: boolean
+): Record<string, string> {
   if (mapa === null || typeof mapa !== 'object' || Array.isArray(mapa)) {
     throw new EntradaInvalidaError(rotulo, `${rotulo} deve ser um objeto (nao nulo, nao array)`);
   }
+  const filtrado: Record<string, string> = {};
   for (const [campo, valor] of Object.entries(mapa as Record<string, unknown>)) {
     // A chave bruta nunca deve aparecer aqui: este validator tambem roda
     // sobre o snapshot oficial do banco, entao uma chave desconhecida
     // poderia conter PII no proprio nome. Identificador generico fixo.
     if (!camposAceitos.includes(campo)) {
+      if (filtrarDesconhecidos) continue;
       throw new EntradaInvalidaError('campo_desconhecido', `${rotulo} contem campo nao permitido`);
     }
     if (typeof valor !== 'string' || valor.trim() === '') {
@@ -565,7 +577,9 @@ function validarMapaDeCampos(
     if (campo === 'confirmacao' && !CONFIRMACOES_PERMITIDAS.includes(valor)) {
       throw new EntradaInvalidaError(campo, `valor de '${campo}' invalido`);
     }
+    filtrado[campo] = valor;
   }
+  return filtrado;
 }
 
 // --- Validacao integral da saida do modelo ---
