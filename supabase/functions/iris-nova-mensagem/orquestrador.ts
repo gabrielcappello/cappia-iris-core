@@ -19,7 +19,7 @@ import { aplicarDados } from './aplicar-dados.ts';
 import { formatarData } from './gerar-resposta-paciente.ts';
 import { ErroRpcTecnico } from './erros.ts';
 import { CAMPOS_CADASTRAIS_INTERPRETACAO } from './interpretacao-tipos.ts';
-import type { CadastroPaciente, ClienteBancoDados, ContextoConversa } from './tipos.ts';
+import type { CadastroPaciente, CampoDadosConversa, ClienteBancoDados, ContextoConversa } from './tipos.ts';
 import type { ClienteModeloEstruturado, NaturezaMensagem, RespostaTrocaTelefone } from './interpretacao-tipos.ts';
 import type { ClienteRpc } from './mensagens-recebidas-tipos.ts';
 import type { InstanteAtual, ModoConsulta, OpcaoHorario } from './disponibilidade-tipos.ts';
@@ -211,20 +211,24 @@ export async function processarMensagem(
   ): Promise<ResultadoOrquestrador> => {
     let atualizadoEmParaContexto = atualizadoEmDaDecisao;
 
-    // LIMPEZA DE intencao/agendamento_id (specs/remarcacao-conversacional-v1.md,
-    // ciclo de vida, decisao do Gabriel 2026-08-11): sucesso ou desistencia
-    // DENTRO do fluxo de remarcacao encerram definitivamente. Sem isso, o
-    // turno seguinte reentraria em remarcacao sobre um agendamento que
-    // acabou de virar 'remarcado', ou continuaria "preso" numa intencao que
-    // o paciente ja abandonou.
-    if (deveLimparRemarcacaoPendente(decisao, dados)) {
-      atualizadoEmParaContexto = await limparIntencaoEAgendamentoId(
+    // LIMPEZA DE ESTADO OPERACIONAL AO CONCLUIR (specs/remarcacao-conversacional-v1.md,
+    // ciclo de vida, decisao do Gabriel 2026-08-11 -- estendida a reserva_criada
+    // em 2026-08-12, mesmo padrao, bug real de producao). Sucesso ou
+    // desistencia DENTRO de um fluxo encerram o estado operacional daquele
+    // fluxo definitivamente. Sem isso, o turno seguinte sem conteudo novo
+    // (ex.: "obrigado" apos reserva_criada) reentraria no mesmo fluxo com os
+    // campos velhos, ou continuaria "preso" numa intencao que o paciente ja
+    // abandonou.
+    const camposParaLimpar = camposParaLimparAoConcluir(decisao, dados);
+    if (camposParaLimpar !== null) {
+      atualizadoEmParaContexto = await limparCamposDeEstadoConcluido(
         clienteBanco,
         {
           conversa_id: identificacao.conversa.id,
           clinica_id: identificacao.clinica_id,
           telefone_normalizado: entrada.telefone_normalizado,
         },
+        camposParaLimpar,
         atualizadoEmParaContexto
       );
     }
@@ -416,51 +420,78 @@ async function buscarAgendamentosParaContexto(
 const INTENCOES_SOBRE_AGENDAMENTO_EXISTENTE: readonly string[] = ['remarcacao', 'cancelamento'];
 
 /**
- * Decisao conversacional (fora de `decidir`/`decidirRemarcacao`/
- * `decidirCancelamento`): sucesso ou desistencia DENTRO de um fluxo sobre
- * agendamento existente precisam encerrar `intencao` e `agendamento_id`
- * definitivamente. A checagem de `dados.intencao` na desistencia garante que
- * uma negacao qualquer, sem relacao com esses fluxos, nunca dispara esta
- * limpeza -- zero regressao para o fluxo de novo agendamento, que nunca
- * escreve `intencao`.
+ * Campos de preenchimento do NOVO agendamento (specs/novo-agendamento.md) --
+ * tudo que `decidir()` le de `dados` para resolver procedimento, dentista,
+ * data/horario e confirmacao. Lista propria, separada de
+ * `intencao`+`agendamento_id` (remarcacao/cancelamento): sao os dois conjuntos
+ * de campos que os dois fluxos acumulam, nunca a mesma coisa.
  */
-function deveLimparRemarcacaoPendente(
+const CAMPOS_NOVO_AGENDAMENTO: readonly CampoDadosConversa[] = [
+  'intencao',
+  'procedimento_id',
+  'dentista_id',
+  'data_texto',
+  'periodo',
+  'horario_texto',
+  'confirmacao',
+];
+
+/**
+ * Decisao conversacional (fora de `decidir`/`decidirRemarcacao`/
+ * `decidirCancelamento`): toda decisao que ENCERRA um fluxo operacional --
+ * reserva criada, remarcacao criada, cancelamento criado, ou desistencia
+ * DENTRO de um fluxo sobre agendamento existente -- precisa fechar o estado
+ * operacional que levou ate ali, para a proxima mensagem sem conteudo novo
+ * (ex.: "obrigado") nunca reentrar no mesmo fluxo com dados velhos. Cada
+ * desfecho limpa exatamente os campos que ELE acumulou -- nunca os dois
+ * conjuntos ao mesmo tempo, nunca um campo do outro fluxo. A checagem de
+ * `dados.intencao` na desistencia garante que uma negacao qualquer, sem
+ * relacao com remarcacao/cancelamento, nunca dispara aquela limpeza.
+ */
+function camposParaLimparAoConcluir(
   decisao: DecisaoOrquestrador,
   dados: Record<string, string | undefined>
-): boolean {
-  if (decisao.tipo === 'remarcacao_criada' || decisao.tipo === 'cancelamento_criado') return true;
-  return (
+): readonly CampoDadosConversa[] | null {
+  if (decisao.tipo === 'reserva_criada') return CAMPOS_NOVO_AGENDAMENTO;
+  if (decisao.tipo === 'remarcacao_criada' || decisao.tipo === 'cancelamento_criado') {
+    return ['intencao', 'agendamento_id'];
+  }
+  if (
     decisao.tipo === 'desistencia' &&
     typeof dados.intencao === 'string' &&
     INTENCOES_SOBRE_AGENDAMENTO_EXISTENTE.includes(dados.intencao)
-  );
+  ) {
+    return ['intencao', 'agendamento_id'];
+  }
+  return null;
 }
 
 /**
- * Segunda escrita do turno, SOMENTE quando `deveLimparRemarcacaoPendente`
- * autoriza. `aplicarDados` faz sua propria leitura+CAS internamente (nunca
- * usa `atualizadoEmAtual` como base) -- o parametro serve so para o caso de
- * falha, abaixo.
+ * Segunda escrita do turno, SOMENTE quando `camposParaLimparAoConcluir`
+ * devolve uma lista. `aplicarDados` faz sua propria leitura+CAS internamente
+ * (nunca usa `atualizadoEmAtual` como base) -- o parametro serve so para o
+ * caso de falha, abaixo.
  *
- * BEST-EFFORT, NUNCA LANCA (mesmo padrao de `gravarContextoHorarios`): uma
- * remarcacao ja bem-sucedida (ou uma desistencia ja aceita) nunca pode virar
- * erro tecnico para o paciente so porque esta limpeza auxiliar falhou. Pior
- * caso de falha: o turno seguinte reencontra `intencao='remarcacao'` com o
- * agendamento antigo (ja 'remarcado', portanto fora da busca de ativos) e
- * recomeca a pergunta -- nunca um risco de escrita duplicada, porque
- * `confirmacao` sempre exige uma nova proposta pendente para autorizar de
- * novo (interpretar-e-aplicar.ts).
+ * BEST-EFFORT, NUNCA LANCA (mesmo padrao de `gravarContextoHorarios`): um
+ * fluxo ja concluido com sucesso (ou uma desistencia ja aceita) nunca pode
+ * virar erro tecnico para o paciente so porque esta limpeza auxiliar falhou.
+ * Pior caso de falha: o turno seguinte reencontra os campos antigos (ex.:
+ * `procedimento_id`/`data_texto`/`horario_texto` do agendamento ja
+ * reservado, ou `intencao='remarcacao'` com o agendamento antigo, ja
+ * 'remarcado' e portanto fora da busca de ativos) e reprocessa/recomeca a
+ * pergunta -- nunca um risco de escrita duplicada, porque `confirmacao`
+ * sempre exige uma nova proposta pendente para autorizar de novo
+ * (interpretar-e-aplicar.ts).
  */
-async function limparIntencaoEAgendamentoId(
+async function limparCamposDeEstadoConcluido(
   clienteBanco: ClienteBancoDados,
   contexto: ContextoConversa,
+  campos: readonly CampoDadosConversa[],
   atualizadoEmAtual: string
 ): Promise<string> {
   try {
-    const resultado = await aplicarDados(clienteBanco, {
-      ...contexto,
-      alteracoes: { intencao: { acao: 'remover' }, agendamento_id: { acao: 'remover' } },
-    });
+    const alteracoes = Object.fromEntries(campos.map((campo) => [campo, { acao: 'remover' as const }]));
+    const resultado = await aplicarDados(clienteBanco, { ...contexto, alteracoes });
     return resultado.atualizado_em;
   } catch {
     return atualizadoEmAtual;

@@ -550,6 +550,99 @@ test('escolha + confirmacao + paciente cadastrado: reserva_criada, chamando capp
   });
 });
 
+test('reserva_criada: limpa intencao/procedimento_id/dentista_id/data_texto/periodo/horario_texto/confirmacao de dados', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const { clinicaId, procedimentoId, dentistaId } = montarCenarioReserva(tabelas);
+  semearPaciente(tabelas, clinicaId);
+  const clienteBanco = new ClienteFalso(tabelas);
+  const agendamentoId = crypto.randomUUID();
+  const clienteRpc = new ClienteRpcFalso({
+    cappia_reservar_agendamento: {
+      data: {
+        sucesso: true,
+        agendamento_id: agendamentoId,
+        dentista_id: dentistaId,
+        duracao_min: 30,
+        data: '2026-08-03',
+        horario: '10:00',
+      },
+      error: null,
+    } satisfies RespostaRpc,
+  });
+
+  const resultado = await processarMensagem(clienteModeloEscolha(procedimentoId, 'sim'), clienteBanco, clienteRpc, {
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA,
+    telefone_normalizado: TELEFONE,
+    mensagens_atuais: ['sim, confirmo'],
+    instante_atual: INSTANTE_ATUAL,
+  });
+
+  assert.equal(resultado.decisao.tipo, 'reserva_criada');
+  const dadosPersistidos = tabelas.estado_conversa[0]!.dados as Record<string, unknown>;
+  for (const campo of [
+    'intencao',
+    'procedimento_id',
+    'dentista_id',
+    'data_texto',
+    'periodo',
+    'horario_texto',
+    'confirmacao',
+  ]) {
+    assert.equal(campo in dadosPersistidos, false, `${campo} deveria ter sido removido de dados apos reserva_criada`);
+  }
+});
+
+test('mensagem seguinte sem conteudo novo (ex.: "obrigado") apos reserva_criada nao reentra em disponibilidade/reserva', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const { clinicaId, procedimentoId, dentistaId } = montarCenarioReserva(tabelas);
+  semearPaciente(tabelas, clinicaId);
+  const clienteBanco = new ClienteFalso(tabelas);
+  const agendamentoId = crypto.randomUUID();
+  const clienteRpcReserva = new ClienteRpcFalso({
+    cappia_reservar_agendamento: {
+      data: {
+        sucesso: true,
+        agendamento_id: agendamentoId,
+        dentista_id: dentistaId,
+        duracao_min: 30,
+        data: '2026-08-03',
+        horario: '10:00',
+      },
+      error: null,
+    } satisfies RespostaRpc,
+  });
+
+  await processarMensagem(clienteModeloEscolha(procedimentoId, 'sim'), clienteBanco, clienteRpcReserva, {
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA,
+    telefone_normalizado: TELEFONE,
+    mensagens_atuais: ['sim, confirmo'],
+    instante_atual: INSTANTE_ATUAL,
+  });
+
+  // Segundo turno, MESMA conversa: "obrigado" -- zero alteracoes extraidas,
+  // natureza 'resposta' (sem decisao conversacional propria). Se os campos
+  // antigos nao tivessem sido limpos, isto reentraria em disponibilidade
+  // sobre o procedimento/horario do agendamento que acabou de ser criado
+  // (bug real de producao, incidente 2026-08-12).
+  const clienteRpcSegundoTurno = clienteRpcNuncaChamado();
+  const clienteModeloAgradecimento = new ClienteModeloFalso([{ natureza_mensagem: 'resposta', alteracoes: {} }]);
+
+  const resultadoSegundoTurno = await processarMensagem(clienteModeloAgradecimento, clienteBanco, clienteRpcSegundoTurno, {
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA,
+    telefone_normalizado: TELEFONE,
+    mensagens_atuais: ['obrigado'],
+    instante_atual: INSTANTE_ATUAL,
+  });
+
+  // Sem procedimento_id em dados, decidir() para no primeiro passo -- ANTES
+  // de resolver dentista, duracao, temporal ou consultar disponibilidade.
+  assert.equal(resultadoSegundoTurno.decisao.tipo, 'aguardando_procedimento');
+  assert.equal(clienteRpcSegundoTurno.chamadas.length, 0, 'nenhuma RPC de reserva foi chamada para "obrigado"');
+});
+
 test('RPC recusa por sobreposicao real (corrida): reserva_conflito, nunca insiste sozinho', async () => {
   const tabelas = criarTabelasFalsasVazias();
   const { clinicaId, procedimentoId } = montarCenarioReserva(tabelas);
