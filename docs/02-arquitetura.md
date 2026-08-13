@@ -1,5 +1,18 @@
 # Arquitetura
 
+> **SUPERADO em 2026-08-12 por `docs/07-arquitetura-v2.md`**, aprovado pelo Gabriel na
+> mesma data. Especificamente, o princípio *"um controlador determinístico decide o próximo
+> passo a partir do estado; a IA somente interpreta e redige"* foi substituído por *"a Iris
+> é a autoridade semântica; o Core é a autoridade factual e operacional"*.
+>
+> Este arquivo é preservado como **registro histórico**, sem edição do conteúdo original —
+> ele descreve a arquitetura que o código ainda implementa hoje, e continua sendo a
+> referência correta para entender o código atual enquanto a migração da V2 não avança.
+>
+> Duas decisões deste documento **permanecem integralmente válidas** na V2: a IA nunca
+> acessa banco, calendário, credenciais ou ferramentas; e não se usa Agent autônomo com
+> tools.
+
 > Decisões já aprovadas por Gabriel. Este documento não adiciona nada além do que foi
 > decidido — mudanças aqui exigem aprovação nova.
 
