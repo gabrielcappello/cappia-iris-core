@@ -181,6 +181,12 @@ async function main(): Promise<void> {
     data: reservaAnterior.data,
     horario: reservaAnterior.horario,
     telefone_normalizado: TELEFONE_PACIENTE_FICTICIO,
+    // Irrelevantes para ESTA checagem (o desfecho esperado e `conflito`, que a
+    // RPC decide antes de qualquer insercao), mas obrigatorios pelo contrato --
+    // ver ReservarAgendamentoEntrada.
+    paciente_nome: 'Paciente Ficticio',
+    paciente_documento: '52998224725',
+    procedimento_nome: 'Limpeza dental (profilaxia)',
   });
   imprimir('segunda tentativa -- resultado (esperado: conflito)', segundaTentativa);
   if (segundaTentativa.tipo !== 'conflito') {

@@ -45,6 +45,25 @@ export interface ReservarAgendamentoEntrada {
   data: string; // YYYY-MM-DD
   horario: string; // HH:MM
   telefone_normalizado: string;
+  /**
+   * Os tres campos abaixo sao gravados NA PROPRIA LINHA de `agendamentos`
+   * (colunas `nome`, `documento`, `procedimento`), ao lado dos identificadores.
+   * A RPC sempre os aceitou (todos com DEFAULT NULL); ate 2026-08-13 este
+   * adaptador simplesmente nao os enviava, e toda linha nascia com os tres
+   * nulos -- visivel no painel como "—" em paciente/documento/procedimento.
+   *
+   * FONTE OFICIAL, nunca texto livre da conversa:
+   * - `paciente_nome`/`paciente_documento` vem da visao efetiva do cadastro
+   *   (ficha persistida + o que a conversa ja oficializou), a MESMA que
+   *   `persistirPaciente` acabou de gravar em `pacientes` -- e o que mantem a
+   *   linha do agendamento coerente com a ficha, nunca uma segunda verdade;
+   * - `procedimento_nome` vem do catalogo, resolvido a partir do
+   *   `procedimento_id` EFETIVO (o que de fato sera reservado, ja considerada
+   *   uma eventual substituicao por Consulta/Avaliacao).
+   */
+  paciente_nome: string;
+  paciente_documento: string;
+  procedimento_nome: string;
 }
 
 export type ResultadoReservaAgendamento =
@@ -73,6 +92,9 @@ export async function reservarAgendamento(
     p_paciente_id: entrada.paciente_id,
     p_dentista_id: entrada.dentista_id,
     p_telefone: entrada.telefone_normalizado,
+    p_nome: entrada.paciente_nome,
+    p_documento: entrada.paciente_documento,
+    p_procedimento: entrada.procedimento_nome,
   });
 
   if (error) {
@@ -98,6 +120,16 @@ function validarEntrada(entrada: ReservarAgendamentoEntrada): void {
   }
   if (typeof entrada.telefone_normalizado !== 'string' || entrada.telefone_normalizado.trim() === '') {
     throw new EntradaInvalidaError('telefone_normalizado', 'telefone_normalizado deve ser uma string nao vazia');
+  }
+  // FALHA FECHADO, como os demais: chegar aqui sem estes tres seria gravar de
+  // novo uma linha incompleta em silencio -- exatamente o defeito corrigido.
+  // Nenhum deles e opcional no fluxo real: a reserva so acontece depois de
+  // `calcularCadastroFaltante` garantir nome e CPF, e o procedimento efetivo
+  // sempre existe no catalogo (o Core acabou de resolve-lo).
+  for (const campo of ['paciente_nome', 'paciente_documento', 'procedimento_nome'] as const) {
+    if (typeof entrada[campo] !== 'string' || entrada[campo].trim() === '') {
+      throw new EntradaInvalidaError(campo, `${campo} deve ser uma string nao vazia`);
+    }
   }
 }
 

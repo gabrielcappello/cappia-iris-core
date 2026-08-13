@@ -12,6 +12,9 @@ const ENTRADA = {
   data: '2026-08-03',
   horario: '09:00',
   telefone_normalizado: '5511999999999',
+  paciente_nome: 'Marilda Sinval Quadros',
+  paciente_documento: '52998224725',
+  procedimento_nome: 'Limpeza dental (profilaxia)',
 };
 
 test('sucesso: retorno escalar (nao array) e aceito e traduzido', async () => {
@@ -63,6 +66,11 @@ test('parametros enviados usam os identificadores ja resolvidos, nunca recalcula
     p_paciente_id: ENTRADA.paciente_id,
     p_dentista_id: ENTRADA.dentista_id,
     p_telefone: ENTRADA.telefone_normalizado,
+    // Gravados na propria linha de `agendamentos` -- ate 2026-08-13 nao eram
+    // enviados e toda reserva nascia com nome/documento/procedimento nulos.
+    p_nome: ENTRADA.paciente_nome,
+    p_documento: ENTRADA.paciente_documento,
+    p_procedimento: ENTRADA.procedimento_nome,
   });
 });
 

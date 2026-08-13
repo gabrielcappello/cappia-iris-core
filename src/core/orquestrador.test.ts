@@ -547,6 +547,10 @@ test('escolha + confirmacao + paciente cadastrado: reserva_criada, chamando capp
     p_paciente_id: pacienteId,
     p_dentista_id: dentistaId,
     p_telefone: TELEFONE,
+    // Da FICHA/visao efetiva e do CATALOGO -- nunca texto livre da conversa.
+    p_nome: 'Marilda Sinval Quadros',
+    p_documento: '52998224725',
+    p_procedimento: 'Limpeza',
   });
 });
 
@@ -662,4 +666,99 @@ test('RPC recusa por sobreposicao real (corrida): reserva_conflito, nunca insist
 
   assert.deepEqual(resultado.decisao, { tipo: 'reserva_conflito' });
   assert.equal(clienteRpc.chamadas.length, 1, 'chamou a RPC exatamente uma vez, nunca reinsiste sozinho');
+});
+
+// --- Linha de `agendamentos` COMPLETA (2026-08-13). Ate esta data a reserva
+// gravava `nome`, `documento` e `procedimento` nulos na propria linha, porque
+// o adaptador nao enviava os tres parametros -- visivel no painel como "—".
+// Os testes abaixo fixam a ORIGEM de cada um, que e a parte que importa. ---
+
+test('reserva grava nome/documento da mesma fonte que a FICHA -- nunca duas verdades', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const { clinicaId, procedimentoId, dentistaId } = montarCenarioReserva(tabelas);
+  semearPaciente(tabelas, clinicaId);
+  const pacienteIdNovo = crypto.randomUUID();
+  const clienteRpc = new ClienteRpcFalso({
+    cappia_persistir_paciente: {
+      data: { sucesso: true, paciente_id: pacienteIdNovo },
+      error: null,
+    } satisfies RespostaRpc,
+    cappia_reservar_agendamento: {
+      data: {
+        sucesso: true,
+        agendamento_id: crypto.randomUUID(),
+        dentista_id: dentistaId,
+        duracao_min: 30,
+        data: '2026-08-03',
+        horario: '10:00',
+      },
+      error: null,
+    } satisfies RespostaRpc,
+  });
+
+  // A conversa informa um nome DIFERENTE do que esta na ficha. O sistema
+  // persiste esse valor no cadastro (comportamento existente, nao alterado
+  // aqui) -- e o ponto desta garantia e que a linha do agendamento recebe
+  // EXATAMENTE o mesmo valor, nunca um segundo nome divergente.
+  const clienteModelo = new ClienteModeloFalso([
+    {
+      natureza_mensagem: 'resposta',
+      alteracoes: {
+        procedimento_id: { acao: 'informar', valor: procedimentoId },
+        data_texto: { acao: 'informar', valor: 'hoje' },
+        horario_texto: { acao: 'informar', valor: '10:00' },
+        confirmacao: { acao: 'informar', valor: 'sim' },
+        nome: { acao: 'corrigir', valor: 'Gabriel Cappello' },
+      },
+    },
+  ]);
+
+  const resultado = await processarMensagem(clienteModelo, new ClienteFalso(tabelas), clienteRpc, {
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA,
+    telefone_normalizado: TELEFONE,
+    mensagens_atuais: ['sim, confirmo'],
+    instante_atual: INSTANTE_ATUAL,
+  });
+
+  assert.equal(resultado.decisao.tipo, 'reserva_criada');
+  const persistir = clienteRpc.chamadas.find((c) => c.nome === 'cappia_persistir_paciente');
+  const reservar = clienteRpc.chamadas.find((c) => c.nome === 'cappia_reservar_agendamento');
+  assert.ok(persistir && reservar);
+  assert.equal(reservar.parametros.p_nome, persistir.parametros.p_nome, 'ficha e agendamento com o MESMO nome');
+  assert.equal(
+    reservar.parametros.p_documento,
+    persistir.parametros.p_documento,
+    'ficha e agendamento com o MESMO documento'
+  );
+});
+
+test('reserva grava o nome do procedimento resolvido no CATALOGO', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const { clinicaId, procedimentoId, dentistaId } = montarCenarioReserva(tabelas);
+  semearPaciente(tabelas, clinicaId);
+  const clienteRpc = new ClienteRpcFalso({
+    cappia_reservar_agendamento: {
+      data: {
+        sucesso: true,
+        agendamento_id: crypto.randomUUID(),
+        dentista_id: dentistaId,
+        duracao_min: 30,
+        data: '2026-08-03',
+        horario: '10:00',
+      },
+      error: null,
+    } satisfies RespostaRpc,
+  });
+
+  await processarMensagem(clienteModeloEscolha(procedimentoId, 'sim'), new ClienteFalso(tabelas), clienteRpc, {
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA,
+    telefone_normalizado: TELEFONE,
+    mensagens_atuais: ['sim, confirmo'],
+    instante_atual: INSTANTE_ATUAL,
+  });
+
+  // Nome de exibicao do catalogo -- nunca o `procedimento_id` opaco.
+  assert.equal(clienteRpc.chamadas[0]!.parametros.p_procedimento, 'Limpeza');
 });

@@ -1262,6 +1262,7 @@ async function decidir(
             pacienteId,
             telefoneNormalizado,
             procedimentoIdEfetivo,
+            nomeProcedimentoEfetivo(procedimentoIdEfetivo, catalogo),
             resolucaoDentista.dentistaId,
             resultadoDuracao.duracao_min,
             carregado.resultado.opcao,
@@ -1322,6 +1323,7 @@ async function decidirConfirmacaoOuReserva(
   pacienteId: string | null,
   telefoneNormalizado: string,
   procedimentoId: string,
+  procedimentoNome: string,
   dentistaId: string,
   duracaoMin: number,
   opcao: OpcaoHorario,
@@ -1396,10 +1398,12 @@ async function decidirConfirmacaoOuReserva(
     return await reservar(clienteRpc, {
       clinicaId,
       procedimentoId,
+      procedimentoNome,
       dentistaId,
       pacienteId: troca.paciente_id,
       opcao,
       telefoneNormalizado,
+      visaoEfetiva,
     });
   }
 
@@ -1454,9 +1458,11 @@ async function decidirConfirmacaoOuReserva(
   return await reservar(clienteRpc, {
     clinicaId,
     procedimentoId,
+    procedimentoNome,
     dentistaId,
     pacienteId: pacienteIdParaReserva,
     opcao,
+    visaoEfetiva,
     telefoneNormalizado,
   });
 }
@@ -1470,15 +1476,35 @@ async function decidirConfirmacaoOuReserva(
  * Recebe o `paciente_id` ja resolvido; nunca decide qual e nem persiste
  * paciente.
  */
+/**
+ * Nome de exibicao do procedimento que sera REALMENTE reservado, para gravar
+ * na coluna `agendamentos.procedimento`.
+ *
+ * Recebe o `procedimento_id` EFETIVO, nunca o pedido original: quando o Core
+ * substitui o procedimento por Consulta/Avaliacao para preservar o dentista
+ * escolhido (specs/dentista-semantico-v1.md), e a avaliacao que fica agendada
+ * -- gravar o nome do pedido original seria registrar um atendimento que nao
+ * vai acontecer.
+ *
+ * O `find` nao tem ramo de ausencia porque o id efetivo acabou de ser resolvido
+ * contra este mesmo catalogo em `decidir`. Se ainda assim vier vazio,
+ * `validarEntrada` do adaptador falha fechado -- nunca grava linha incompleta.
+ */
+function nomeProcedimentoEfetivo(procedimentoId: string, catalogo: CatalogoClinica): string {
+  return catalogo.procedimentos.find((p) => p.procedimento_id === procedimentoId)?.nome_pt ?? '';
+}
+
 async function reservar(
   clienteRpc: ClienteRpc,
   entrada: {
     clinicaId: string;
     procedimentoId: string;
+    procedimentoNome: string;
     dentistaId: string;
     pacienteId: string;
     opcao: OpcaoHorario;
     telefoneNormalizado: string;
+    visaoEfetiva: CadastroPaciente;
   }
 ): Promise<DecisaoOrquestrador> {
   const horario = minutosParaHHMM(entrada.opcao.inicio_min);
@@ -1490,6 +1516,14 @@ async function reservar(
     data: entrada.opcao.data,
     horario,
     telefone_normalizado: entrada.telefoneNormalizado,
+    // `nome`/`cpf` estao necessariamente preenchidos aqui: o fluxo so alcanca
+    // a reserva depois de `calcularCadastroFaltante` confirmar que nenhum
+    // obrigatorio falta. As asercoes documentam essa garantia -- se ela deixar
+    // de valer, `validarEntrada` falha fechado em vez de gravar linha
+    // incompleta.
+    paciente_nome: entrada.visaoEfetiva.nome as string,
+    paciente_documento: entrada.visaoEfetiva.cpf as string,
+    procedimento_nome: entrada.procedimentoNome,
   });
 
   switch (resultadoReserva.tipo) {
