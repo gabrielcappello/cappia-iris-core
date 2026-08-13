@@ -396,4 +396,38 @@ export interface ResultadoOrquestrador {
    * disciplina das demais chaves opcionais do Core.
    */
   agendamentos_do_paciente?: readonly AgendamentoAtivo[];
+  /**
+   * ETAPA 2 da Arquitetura V2 (docs/07-arquitetura-v2.md secao 10) --
+   * EXPERIMENTAL, SOMENTE PARA MEDICAO EM SHADOW MODE.
+   *
+   * Contexto factual, ja disponivel neste turno, para o despachante-sombra
+   * comparar sua propria decisao contra a decisao REAL do orquestrador --
+   * em paralelo, depois da resposta ja estar decidida, sem nenhum efeito no
+   * fluxo real. NUNCA lido por nenhuma decisao de producao (nem
+   * `decidirPorNatureza`, nem `decidir`, nem a redatora); existe somente
+   * para ser consumido pelo comparador-sombra em `index.ts`.
+   *
+   * NENHUM dado cadastral (nome/cpf/data_nascimento/email) -- so os campos
+   * operacionais ja existentes em `dados` e o agendamento futuro ja
+   * calculado, quando houver. AUSENTE (nunca objeto vazio) quando nao ha
+   * nada a oferecer, mesma disciplina das demais chaves opcionais do Core.
+   */
+  contexto_sombra_v2?: ContextoSombraCapacidadeV2;
+}
+
+/** Ver o comentario de `ResultadoOrquestrador.contexto_sombra_v2`. */
+export interface ContextoSombraCapacidadeV2 {
+  dados_conhecidos?: {
+    procedimento?: string;
+    data?: string;
+    horario?: string;
+    periodo?: string;
+  };
+  horarios_oferecidos?: readonly string[];
+  agendamento_futuro?: {
+    data: string;
+    horario: string;
+    procedimento?: string;
+    dentista_nome?: string;
+  };
 }

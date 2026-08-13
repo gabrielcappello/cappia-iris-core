@@ -19,13 +19,20 @@ import { aplicarDados } from './aplicar-dados.ts';
 import { formatarData } from './gerar-resposta-paciente.ts';
 import { ErroRpcTecnico } from './erros.ts';
 import { CAMPOS_CADASTRAIS_INTERPRETACAO } from './interpretacao-tipos.ts';
-import type { CadastroPaciente, CampoDadosConversa, ClienteBancoDados, ContextoConversa } from './tipos.ts';
+import type { CadastroPaciente, CampoDadosConversa, ClienteBancoDados, ContextoConversa, ContextoHorarios } from './tipos.ts';
 import type { ClienteModeloEstruturado, NaturezaMensagem, RespostaTrocaTelefone } from './interpretacao-tipos.ts';
 import type { ClienteRpc } from './mensagens-recebidas-tipos.ts';
 import type { InstanteAtual, ModoConsulta, OpcaoHorario } from './disponibilidade-tipos.ts';
 import type { ResolucaoTemporalOficial } from './temporal-tipos.ts';
 import type { AgendamentoAtivo } from './buscar-agendamento-ativo.ts';
-import type { CatalogoClinica, DecisaoOrquestrador, EntradaOrquestrador, ResultadoOrquestrador } from './orquestrador-tipos.ts';
+import type {
+  CatalogoClinica,
+  ContextoSombraCapacidadeV2,
+  DecisaoOrquestrador,
+  EntradaOrquestrador,
+  ResultadoOrquestrador,
+} from './orquestrador-tipos.ts';
+import type { ResultadoCarregarCatalogo } from './carregar-catalogo.ts';
 
 /**
  * Orquestrador minimo do primeiro fluxo: identificacao -> interpretacao ->
@@ -204,6 +211,53 @@ export async function processarMensagem(
   // decisao final e so entao devolve o resultado. A gravacao e auxiliar e
   // best-effort por contrato -- nunca lanca, nunca altera a decisao ja
   // tomada, nunca afeta a resposta ao paciente.
+  // ETAPA 2 da Arquitetura V2 (docs/07-arquitetura-v2.md secao 10) --
+  // EXPERIMENTAL, SOMENTE PARA MEDICAO EM SHADOW MODE.
+  //
+  // Monta o contexto que o comparador-sombra (index.ts) vai usar -- puramente
+  // dados ja calculados neste turno, ZERO chamada de rede, ZERO decisao. Este
+  // helper nao pode, por construcao, influenciar `decisao`: e chamado DEPOIS
+  // que `decisao` ja chegou em `finalizar`, e seu resultado so e anexado ao
+  // objeto de retorno, nunca lido de volta por nenhuma logica deste arquivo.
+  function montarContextoSombraV2(
+    dadosAtuais: Record<string, string | undefined>,
+    contextoHorarios: ContextoHorarios | null,
+    catalogo: ResultadoCarregarCatalogo,
+    agendamentosDoPaciente: readonly AgendamentoAtivo[] | undefined
+  ): ContextoSombraCapacidadeV2 | undefined {
+    const nomeProcedimento =
+      catalogo.tipo === 'carregado' && typeof dadosAtuais.procedimento_id === 'string'
+        ? catalogo.catalogo.procedimentos.find((p) => p.procedimento_id === dadosAtuais.procedimento_id)?.nome_pt
+        : undefined;
+
+    const dadosConhecidos: NonNullable<ContextoSombraCapacidadeV2['dados_conhecidos']> = {};
+    if (nomeProcedimento !== undefined) dadosConhecidos.procedimento = nomeProcedimento;
+    if (typeof dadosAtuais.data_texto === 'string') dadosConhecidos.data = dadosAtuais.data_texto;
+    if (typeof dadosAtuais.horario_texto === 'string') dadosConhecidos.horario = dadosAtuais.horario_texto;
+    if (typeof dadosAtuais.periodo === 'string') dadosConhecidos.periodo = dadosAtuais.periodo;
+
+    const primeiroAgendamento = agendamentosDoPaciente?.[0];
+
+    const resultado: ContextoSombraCapacidadeV2 = {
+      ...(Object.keys(dadosConhecidos).length > 0 ? { dados_conhecidos: dadosConhecidos } : {}),
+      ...(contextoHorarios?.horarios !== undefined ? { horarios_oferecidos: contextoHorarios.horarios } : {}),
+      ...(primeiroAgendamento !== undefined
+        ? {
+            agendamento_futuro: {
+              data: primeiroAgendamento.data,
+              horario: primeiroAgendamento.horario,
+              ...(primeiroAgendamento.procedimento !== null ? { procedimento: primeiroAgendamento.procedimento } : {}),
+              ...(primeiroAgendamento.dentista_nome !== null
+                ? { dentista_nome: primeiroAgendamento.dentista_nome }
+                : {}),
+            },
+          }
+        : {}),
+    };
+
+    return Object.keys(resultado).length > 0 ? resultado : undefined;
+  }
+
   const finalizar = async (
     decisao: DecisaoOrquestrador,
     substituicao?: { dentista_nome_exibido: string },
@@ -254,6 +308,15 @@ export async function processarMensagem(
       ...(agendamentosDoPaciente !== undefined && agendamentosDoPaciente.length > 0
         ? { agendamentos_do_paciente: agendamentosDoPaciente }
         : {}),
+      ...((() => {
+        const contextoSombra = montarContextoSombraV2(
+          dados,
+          identificacao.conversa.contexto_horarios,
+          catalogoCarregado,
+          agendamentosDoPaciente
+        );
+        return contextoSombra !== undefined ? { contexto_sombra_v2: contextoSombra } : {};
+      })()),
     };
   };
 

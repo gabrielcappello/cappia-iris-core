@@ -17,6 +17,7 @@ import {
   TIMEOUT_POR_TENTATIVA_MS_APROVADO,
 } from "./cliente-modelo-openai.ts";
 import { criarClienteModeloRedatorOpenAI, TIMEOUT_REDATOR_MS_APROVADO } from "./cliente-modelo-redator-openai.ts";
+import { compararComSombraCapacidadeV2, registrarResultadoSombra } from "./sombra-capacidade-v2.ts";
 import { ClinicaNaoEncontradaError, EntradaInvalidaError } from "./erros.ts";
 import type { ClienteBancoDados } from "./tipos.ts";
 import type { ClienteRpc } from "./mensagens-recebidas-tipos.ts";
@@ -184,6 +185,37 @@ Deno.serve(async (req: Request) => {
       mensagem_paciente: payload.mensagem,
       resposta_iris: resposta,
     });
+
+    // ETAPA 2 da Arquitetura V2 (docs/07-arquitetura-v2.md secao 10) --
+    // SHADOW MODE, autorizado pelo Gabriel em 2026-08-12. A resposta ao
+    // paciente ja foi decidida e gravada nas linhas acima -- daqui em
+    // diante nada mais pode influenciar o atendimento deste turno.
+    //
+    // `compararComSombraCapacidadeV2` NUNCA lanca (garantia de tipo do
+    // proprio modulo, coberta por teste em sombra-capacidade-v2.test.ts) --
+    // o `.catch` abaixo e so uma segunda rede de seguranca, para uma
+    // excecao que nunca deveria escapar da funcao. Nada aqui e `await`ado
+    // antes do `return`: a chamada roda em paralelo, nunca atrasa a
+    // resposta ao paciente.
+    const promessaSombra = compararComSombraCapacidadeV2({
+      chaveApi: openaiKey,
+      mensagemAtual: payload.mensagem,
+      historicoConversa: resultado.historico_conversa,
+      contexto: resultado.contexto_sombra_v2,
+      decisaoAtual: resultado.decisao.tipo,
+    })
+      .then(registrarResultadoSombra)
+      .catch(() => {});
+
+    // `EdgeRuntime.waitUntil` mantem o isolado vivo ate a promessa acima
+    // terminar, mesmo depois da resposta ja ter sido enviada -- sem isso, o
+    // runtime pode encerrar o isolado antes do log-sombra rodar. Quando o
+    // global nao existe (fora do runtime real da Edge Function), a
+    // promessa roda melhor-esforco, sem bloquear nada -- o `return` abaixo
+    // nunca espera por ela de nenhuma forma.
+    if (typeof EdgeRuntime !== "undefined") {
+      EdgeRuntime.waitUntil(promessaSombra);
+    }
 
     return jsonResponse({ resposta }, 200);
   } catch (erro) {
