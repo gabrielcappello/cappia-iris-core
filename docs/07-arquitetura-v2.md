@@ -382,6 +382,34 @@ comportamento visível ao paciente. É o par A/B exigido pelo princípio do test
 > comportamento da V2 melhor que o atual; isso é exatamente o tipo de dado que a Etapa 2
 > foi desenhada para acumular antes da Etapa 3, não para corrigir a cada ocorrência. O
 > contrato, o prompt e o Core permanecem intocados por causa deste caso.
+>
+> **Evidência adicional de não-regressão:** após o deploy da v23, o lembrete automático de
+> 24h do agendamento criado nesse mesmo turno (14/08 às 10:00) foi enviado normalmente
+> pelo fluxo real, sem intervenção manual — confirma que o shadow mode não interferiu em
+> nenhum efeito assíncrono do atendimento além da resposta imediata.
+>
+> **Critérios de encerramento da Etapa 2 (aprovados pelo Gabriel, 2026-08-13).** Não há
+> gate absoluto de volume — 30 comparações com `estado=ok` serve só como **referência**,
+> não como número que por si só encerra a etapa. O critério principal é cobertura e
+> padrão:
+>
+> - amostra real cobrindo as capacidades relevantes (não só a que apareceu primeiro);
+> - divergências lidas **por capacidade**, não como taxa global — a barra de tolerância
+>   sobe com o risco (leitura < criação/remarcação < cancelamento, mesma ordem de corte
+>   da Etapa 3);
+> - toda divergência classificada como **isolada** (par único, sem repetição) ou
+>   **padrão recorrente** (mesmo par se repetindo) antes de qualquer conclusão — só
+>   padrão recorrente justifica investigar contrato/prompt/contexto, nunca uma ocorrência
+>   isolada;
+> - `certeza_v2` considerada junto com `concordou`: divergência com certeza alta pesa
+>   mais que com certeza baixa (a segunda já é o modelo reconhecendo ambiguidade real,
+>   compatível com o caso 4e da seção 11);
+> - saúde de infraestrutura (`estado != 'ok'`: timeout, erro de rede, erro estrutural,
+>   recusa/filtro) mantida **separada** da qualidade da decisão — mede a chamada isolada
+>   em si, nunca a arquitetura V2.
+>
+> Nenhum desses critérios foi ainda avaliado como cumprido — a Etapa 2 segue em
+> acumulação de amostra. **Etapa 3 não autorizada.**
 
 **Etapa 3 — Corte, capacidade por capacidade.** Trocar o roteamento real de uma capacidade
 por vez, na ordem de menor risco: **consulta** (somente leitura, falso positivo não executa
