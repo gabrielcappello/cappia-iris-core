@@ -168,14 +168,8 @@ function montarPayload(entrada: EntradaComparacaoSombra): unknown {
     ...(entrada.contexto?.horarios_oferecidos !== undefined
       ? { horarios_oferecidos: entrada.contexto.horarios_oferecidos }
       : {}),
-    ...(entrada.contexto?.confirmacao_pendente !== undefined
-      ? { confirmacao_pendente: entrada.contexto.confirmacao_pendente }
-      : {}),
-    ...(entrada.contexto?.agendamentos_futuros !== undefined
-      ? { agendamentos_futuros: entrada.contexto.agendamentos_futuros }
-      : {}),
-    ...(entrada.contexto?.ultimo_desfecho !== undefined
-      ? { ultimo_desfecho: entrada.contexto.ultimo_desfecho }
+    ...(entrada.contexto?.agendamento_futuro !== undefined
+      ? { agendamento_futuro: entrada.contexto.agendamento_futuro }
       : {}),
   };
 }

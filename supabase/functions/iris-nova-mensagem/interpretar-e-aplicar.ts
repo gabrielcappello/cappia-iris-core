@@ -525,19 +525,8 @@ export async function interpretarEAplicar(
   let alteracoesAplicaveis = { ...preAplicacao.alteracoes_aplicaveis };
 
   // 7. chamar aplicarDados somente com as alteracoes inicialmente aplicaveis.
-  //
-  // OU quando ha um `ultimo_desfecho` publicado pelo turno anterior a
-  // REIVINDICAR (docs/07-arquitetura-v2.md secao 10, Etapa 2): a reivindicacao
-  // acontece dentro do CAS autoritativo de `aplicarDados`, entao um turno sem
-  // nenhuma alteracao de dados -- o caso tipico logo apos uma reserva
-  // ("entao esta confirmado?") -- precisa passar por ele mesmo assim. Sem
-  // isso, justamente o turno que a medicao mais precisa nunca reivindicaria o
-  // marcador, e ele ficaria pendurado para turnos seguintes.
-  //
-  // O marcador vem do snapshot oficial ja lido acima -- nenhuma consulta
-  // extra, e nenhum parametro novo vindo do chamador.
   let aplicacao: ResultadoAplicarDados | null = null;
-  if (Object.keys(alteracoesAplicaveis).length > 0 || linhaOficial.ultimo_desfecho !== null) {
+  if (Object.keys(alteracoesAplicaveis).length > 0) {
     aplicacao = await aplicarDados(clienteBanco, {
       conversa_id: entrada.conversa_id,
       clinica_id: entrada.clinica_id,

@@ -9,7 +9,6 @@ import {
   validarContextoHorarios,
   type AcaoContextoHorarios,
 } from './contexto-horarios.ts';
-import { derivarUltimoDesfecho, validarUltimoDesfecho } from './ultimo-desfecho.ts';
 import type { DecisaoOrquestrador } from './orquestrador-tipos.ts';
 import type { ClienteBancoDados, ConsultaEncadeavel } from './tipos.ts';
 import type { OpcaoHorario as OpcaoHorarioDisponibilidade } from './disponibilidade-tipos.ts';
@@ -87,12 +86,7 @@ test('propor: aguardando_confirmacao grava a proposta concreta (data + horario d
     dentista_id: 'dentista-1',
     opcao: opcao(540),
   };
-  assert.deepEqual(derivarAcaoContextoHorarios(decisao), {
-    tipo: 'propor',
-    operacao: 'criar',
-    data: '2026-08-05',
-    horario: '09:00',
-  });
+  assert.deepEqual(derivarAcaoContextoHorarios(decisao), { tipo: 'propor', data: '2026-08-05', horario: '09:00' });
 });
 
 test('limpar: sem_disponibilidade (a pergunta virou sobre DATA -- lista antiga faria "dia 15" virar 15:00)', () => {
@@ -193,9 +187,6 @@ const ENTRADA_BASE = {
   clinica_id: '22222222-2222-4222-8222-222222222222',
   telefone_normalizado: '5511999999999',
   atualizado_em_da_decisao: '2026-08-05T12:00:00.000Z',
-  // Caso neutro (nao havia marcador, nao ha marcador novo): a coluna nao
-  // entra no UPDATE e o comportamento e exatamente o de antes da Etapa 2.
-  // Os testes que exercitam o marcador sobrescrevem estes dois.
 };
 
 test('gravacao: preservar nao emite NENHUMA instrucao (nem select, nem update)', async () => {
@@ -283,13 +274,13 @@ test('gravacao: propor grava SOMENTE proposta_pendente, sem merge com horarios a
   const { cliente, instrucoes } = criarClienteRegistrador(1);
   await gravarContextoHorarios(cliente, {
     ...ENTRADA_BASE,
-    acao: { tipo: 'propor', operacao: 'criar', data: '2026-08-05', horario: '09:00' },
+    acao: { tipo: 'propor', data: '2026-08-05', horario: '09:00' },
   });
 
   const updates = instrucoes.filter((i) => i.operacao === 'update');
   assert.equal(updates.length, 1, 'exatamente um UPDATE');
   const contexto = updates[0].valores?.contexto_horarios as Record<string, unknown>;
-  assert.deepEqual(contexto.proposta_pendente, { operacao: 'criar', data: '2026-08-05', horario: '09:00' });
+  assert.deepEqual(contexto.proposta_pendente, { data: '2026-08-05', horario: '09:00' });
   assert.equal('horarios' in contexto, false, 'propor nunca carrega horarios -- substitui o snapshot por inteiro');
 });
 
@@ -500,91 +491,4 @@ test('troca de telefone: qualquer valor que nao seja `true` invalida o snapshot 
   for (const caso of invalidos) {
     assert.equal(validarContextoHorarios(caso), null, `esperava null para ${JSON.stringify(caso)}`);
   }
-});
-
-// --- `ultimo_desfecho` (Etapa 2 da Arquitetura V2, docs/07-arquitetura-v2.md
-// secao 10). Marcador declarativo com vida util de EXATAMENTE UM TURNO. ---
-
-test('derivarUltimoDesfecho: so os tres desfechos que CONCLUEM uma operacao gravam rotulo', () => {
-  assert.deepEqual(derivarUltimoDesfecho({ tipo: 'reserva_criada' } as DecisaoOrquestrador), {
-    tipo: 'reserva_criada',
-  });
-  assert.deepEqual(derivarUltimoDesfecho({ tipo: 'remarcacao_criada' } as DecisaoOrquestrador), {
-    tipo: 'remarcacao_criada',
-  });
-  assert.deepEqual(derivarUltimoDesfecho({ tipo: 'cancelamento_criado' } as DecisaoOrquestrador), {
-    tipo: 'cancelamento_criado',
-  });
-});
-
-test('derivarUltimoDesfecho: TODO o resto apaga -- e dai que sai a vida util de um turno', () => {
-  const naoConcluem: DecisaoOrquestrador['tipo'][] = [
-    'saudacao',
-    'duvida_livre',
-    'mensagem_nao_compreendida',
-    'desistencia',
-    'aguardando_procedimento',
-    'aguardando_confirmacao',
-    'cadastro_necessario',
-    'horarios_disponiveis',
-    'reserva_conflito',
-    'reserva_falhou',
-    'aguardando_confirmacao_remarcacao',
-    'aguardando_confirmacao_cancelamento',
-    'clinica_sem_catalogo',
-  ];
-  for (const tipo of naoConcluem) {
-    assert.equal(derivarUltimoDesfecho({ tipo } as DecisaoOrquestrador), null, `esperava null para ${tipo}`);
-  }
-});
-
-test('validarUltimoDesfecho: falha ABERTA -- malformado vira null, nunca lanca', () => {
-  const invalidos: unknown[] = [
-    null,
-    undefined,
-    'reserva_criada',
-    42,
-    [],
-    {},
-    { tipo: 'valor_fora_do_vocabulario' },
-    { tipo: 42 },
-    { outro_campo: 'reserva_criada' },
-  ];
-  for (const caso of invalidos) {
-    assert.equal(validarUltimoDesfecho(caso), null, `esperava null para ${JSON.stringify(caso)}`);
-  }
-  assert.deepEqual(validarUltimoDesfecho({ tipo: 'reserva_criada' }), { tipo: 'reserva_criada' });
-});
-
-test('gravacao: marcador INALTERADO (null -> null) nao entra no UPDATE', async () => {
-  // Caso esmagadoramente mais comum. A coluna nem aparece no payload: zero
-  // custo adicional no turno normal.
-  const { cliente, instrucoes } = criarClienteRegistrador(1);
-  await gravarContextoHorarios(cliente, { ...ENTRADA_BASE, acao: { tipo: 'limpar' } });
-
-  const update = instrucoes.find((i) => i.operacao === 'update');
-  assert.ok(update);
-  assert.ok(!('ultimo_desfecho' in (update.valores ?? {})));
-});
-
-test('gravacao: esta escrita NUNCA toca ultimo_desfecho -- nem publica, nem apaga', async () => {
-  // Ate 2026-08-13 esta escrita publicava (e, antes disso, tambem apagava).
-  // Nao faz mais nem uma coisa nem outra: publicar e da transicao autoritativa
-  // que oficializa o turno concluinte, apagar e da reivindicacao no CAS do
-  // turno seguinte. Uma escrita best-effort, que pode falhar em silencio e
-  // chegar ATRASADA, nao pode sustentar nenhuma das duas garantias.
-  for (const acao of [{ tipo: 'limpar' as const }, { tipo: 'substituir' as const, horarios: ['09:00'] }]) {
-    const { cliente, instrucoes } = criarClienteRegistrador(1);
-    await gravarContextoHorarios(cliente, { ...ENTRADA_BASE, acao });
-
-    const update = instrucoes.find((i) => i.operacao === 'update');
-    assert.ok(update);
-    assert.ok(!('ultimo_desfecho' in (update.valores ?? {})), `acao ${acao.tipo} nunca toca a coluna`);
-  }
-});
-
-test('gravacao: PRESERVAR sem mudanca de marcador continua sem emitir NENHUMA instrucao', async () => {
-  const { cliente, instrucoes } = criarClienteRegistrador(1);
-  await gravarContextoHorarios(cliente, { ...ENTRADA_BASE, acao: { tipo: 'preservar' } });
-  assert.equal(instrucoes.length, 0);
 });

@@ -14,20 +14,12 @@ import { persistirPaciente } from './persistir-paciente.ts';
 import { trocarTelefonePaciente } from './trocar-telefone-paciente.ts';
 import { calcularCadastroFaltante, comporVisaoEfetivaCadastro } from './cadastro-paciente.ts';
 import { derivarAcaoContextoHorarios, gravarContextoHorarios } from './contexto-horarios.ts';
-import { derivarUltimoDesfecho } from './ultimo-desfecho.ts';
 import { historicoValidoParaEnvio } from './historico-conversa.ts';
 import { aplicarDados } from './aplicar-dados.ts';
 import { formatarData } from './gerar-resposta-paciente.ts';
 import { ErroRpcTecnico } from './erros.ts';
 import { CAMPOS_CADASTRAIS_INTERPRETACAO } from './interpretacao-tipos.ts';
-import type {
-  CadastroPaciente,
-  CampoDadosConversa,
-  ClienteBancoDados,
-  ContextoConversa,
-  ContextoHorarios,
-  UltimoDesfecho,
-} from './tipos.ts';
+import type { CadastroPaciente, CampoDadosConversa, ClienteBancoDados, ContextoConversa, ContextoHorarios } from './tipos.ts';
 import type { ClienteModeloEstruturado, NaturezaMensagem, RespostaTrocaTelefone } from './interpretacao-tipos.ts';
 import type { ClienteRpc } from './mensagens-recebidas-tipos.ts';
 import type { InstanteAtual, ModoConsulta, OpcaoHorario } from './disponibilidade-tipos.ts';
@@ -148,20 +140,8 @@ export async function processarMensagem(
     // Proposta concreta aguardando confirmacao, quando houver -- e o que
     // permite a IA reconhecer "pode confirmar"/"esse mesmo" como resposta a
     // ELA especificamente (specs/resposta-conversacional-v1.md secao 5).
-    // SO `data` e `horario`: o contrato do payload da interpretadora e
-    // fechado (`interpretacao-extrator.ts` rejeita qualquer chave extra), e
-    // `operacao` existe para a decisao-sombra V2, nunca para a interpretadora
-    // -- que nunca precisou saber SE confirma criacao, remarcacao ou
-    // cancelamento (isso sempre foi do Core). Reconstruido campo a campo, nao
-    // repassado por referencia, justamente para que um campo novo no snapshot
-    // nunca vaze para este contrato por acidente.
     ...(identificacao.conversa.contexto_horarios?.proposta_pendente !== undefined
-      ? {
-          proposta_pendente: {
-            data: identificacao.conversa.contexto_horarios.proposta_pendente.data,
-            horario: identificacao.conversa.contexto_horarios.proposta_pendente.horario,
-          },
-        }
+      ? { proposta_pendente: identificacao.conversa.contexto_horarios.proposta_pendente }
       : {}),
     // Ultimos turnos da conversa, quando houver algum dentro da janela de
     // validade -- reversao declarada de memoria-conversacional-minima-v1.md
@@ -243,8 +223,7 @@ export async function processarMensagem(
     dadosAtuais: Record<string, string | undefined>,
     contextoHorarios: ContextoHorarios | null,
     catalogo: ResultadoCarregarCatalogo,
-    agendamentosFuturos: readonly AgendamentoAtivo[] | undefined,
-    ultimoDesfecho: UltimoDesfecho | null
+    agendamentosDoPaciente: readonly AgendamentoAtivo[] | undefined
   ): ContextoSombraCapacidadeV2 | undefined {
     const nomeProcedimento =
       catalogo.tipo === 'carregado' && typeof dadosAtuais.procedimento_id === 'string'
@@ -257,38 +236,23 @@ export async function processarMensagem(
     if (typeof dadosAtuais.horario_texto === 'string') dadosConhecidos.horario = dadosAtuais.horario_texto;
     if (typeof dadosAtuais.periodo === 'string') dadosConhecidos.periodo = dadosAtuais.periodo;
 
-    // Ordem preservada exatamente como veio de `buscarAgendamentoAtivo` (do
-    // mais proximo para o mais distante) -- a ordem e informacao. Sem
-    // identificadores opacos: a decisao desta etapa e QUAL capacidade, nunca
-    // com quais parametros.
-    const listaAgendamentos = agendamentosFuturos?.map((agendamento) => ({
-      data: agendamento.data,
-      horario: agendamento.horario,
-      ...(agendamento.procedimento !== null ? { procedimento: agendamento.procedimento } : {}),
-      ...(agendamento.dentista_nome !== null ? { dentista_nome: agendamento.dentista_nome } : {}),
-    }));
+    const primeiroAgendamento = agendamentosDoPaciente?.[0];
 
     const resultado: ContextoSombraCapacidadeV2 = {
       ...(Object.keys(dadosConhecidos).length > 0 ? { dados_conhecidos: dadosConhecidos } : {}),
       ...(contextoHorarios?.horarios !== undefined ? { horarios_oferecidos: contextoHorarios.horarios } : {}),
-      // Snapshot antigo, sem `operacao`: OMITE o bloco. Nunca infere a
-      // operacao a partir de `dados.intencao` nem de qualquer outro sinal --
-      // um palpite aqui contaminaria justamente a medicao das capacidades de
-      // maior risco.
-      ...(contextoHorarios?.proposta_pendente?.operacao !== undefined
+      ...(primeiroAgendamento !== undefined
         ? {
-            confirmacao_pendente: {
-              operacao: contextoHorarios.proposta_pendente.operacao,
-              data: contextoHorarios.proposta_pendente.data,
-              horario: contextoHorarios.proposta_pendente.horario,
+            agendamento_futuro: {
+              data: primeiroAgendamento.data,
+              horario: primeiroAgendamento.horario,
+              ...(primeiroAgendamento.procedimento !== null ? { procedimento: primeiroAgendamento.procedimento } : {}),
+              ...(primeiroAgendamento.dentista_nome !== null
+                ? { dentista_nome: primeiroAgendamento.dentista_nome }
+                : {}),
             },
           }
         : {}),
-      // AUSENTE, nunca `[]` -- mesma disciplina das demais chaves.
-      ...(listaAgendamentos !== undefined && listaAgendamentos.length > 0
-        ? { agendamentos_futuros: listaAgendamentos }
-        : {}),
-      ...(ultimoDesfecho !== null ? { ultimo_desfecho: ultimoDesfecho } : {}),
     };
 
     return Object.keys(resultado).length > 0 ? resultado : undefined;
@@ -296,45 +260,9 @@ export async function processarMensagem(
 
   const finalizar = async (
     decisao: DecisaoOrquestrador,
-    substituicao?: { dentista_nome_exibido: string }
+    substituicao?: { dentista_nome_exibido: string },
+    agendamentosDoPaciente?: readonly AgendamentoAtivo[]
   ): Promise<ResultadoOrquestrador> => {
-    // PONTO UNICO DE BUSCA DOS AGENDAMENTOS FUTUROS (Etapa 2 da Arquitetura
-    // V2, especificacao de 2026-08-13). Antes, esta busca vivia DENTRO do
-    // ramo conversacional e so acontecia em tres decisoes -- por isso o
-    // contexto da V2 dependia do caminho escolhido pelo roteador antigo.
-    // Agora acontece em todo turno, e cada consumidor aplica a sua propria
-    // regra sobre o MESMO resultado (uma consulta, nunca duas).
-    //
-    // A FALHA E TRATADA DE FORMA DIFERENTE PARA CADA CONSUMIDOR, de proposito:
-    // a redatora mantem exatamente o comportamento anterior (erro propaga,
-    // decisao de 2026-08-12); o contexto-sombra absorve o erro e fica sem o
-    // bloco. Sem essa divisao, tornar a busca incondicional criaria um modo de
-    // falha NOVO nos fluxos operacionais -- um erro em `agendamentos`
-    // derrubaria uma reserva bem-sucedida por causa de medicao, exatamente o
-    // que a Etapa 2 proibe.
-    let agendamentosFuturos: readonly AgendamentoAtivo[] | undefined;
-    let erroBuscaAgendamentos: unknown = null;
-    try {
-      agendamentosFuturos = await buscarAgendamentosParaContexto(
-        clienteBanco,
-        identificacao.clinica_id,
-        identificacao.paciente.id,
-        entrada.instante_atual
-      );
-    } catch (erro) {
-      erroBuscaAgendamentos = erro;
-    }
-
-    // A redatora so recebe o fato nas decisoes conversacionais da spec -- lista
-    // inalterada, incluindo a exclusao deliberada de `desistencia`. E aqui que
-    // a falha volta a propagar, para o comportamento visivel continuar
-    // identico ao de antes desta mudanca.
-    const decisaoRecebeContextoDeAgendamento = DECISOES_COM_CONTEXTO_DE_AGENDAMENTO.includes(decisao.tipo);
-    if (erroBuscaAgendamentos !== null && decisaoRecebeContextoDeAgendamento) {
-      throw erroBuscaAgendamentos;
-    }
-    const agendamentosDoPaciente = decisaoRecebeContextoDeAgendamento ? agendamentosFuturos : undefined;
-
     let atualizadoEmParaContexto = atualizadoEmDaDecisao;
 
     // LIMPEZA DE ESTADO OPERACIONAL AO CONCLUIR (specs/remarcacao-conversacional-v1.md,
@@ -345,20 +273,8 @@ export async function processarMensagem(
     // (ex.: "obrigado" apos reserva_criada) reentraria no mesmo fluxo com os
     // campos velhos, ou continuaria "preso" numa intencao que o paciente ja
     // abandonou.
-    //
-    // ESTE E TAMBEM O PONTO DE PUBLICACAO DO `ultimo_desfecho` (Etapa 2,
-    // correcao de 2026-08-13). E o ponto autoritativo MINIMO onde este turno
-    // ja tem a decisao final E ainda participa do CAS de estado -- por isso a
-    // publicacao viaja aqui, na MESMA transicao que oficializa o turno, em vez
-    // de numa escrita separada depois. Publicada a parte, ela podia chegar
-    // ATRASADA: um turno posterior entrava no intervalo e o marcador acabava
-    // sendo lido como se fosse do turno dele.
-    const desfechoAPublicar = derivarUltimoDesfecho(decisao);
     const camposParaLimpar = camposParaLimparAoConcluir(decisao, dados);
-    // A condicao inclui `desfechoAPublicar` para nao depender de os tres
-    // desfechos concluintes SEMPRE terem campos a limpar: se um deles deixar
-    // de ter, a publicacao continua acontecendo em vez de sumir em silencio.
-    if (camposParaLimpar !== null || desfechoAPublicar !== null) {
+    if (camposParaLimpar !== null) {
       atualizadoEmParaContexto = await limparCamposDeEstadoConcluido(
         clienteBanco,
         {
@@ -366,9 +282,8 @@ export async function processarMensagem(
           clinica_id: identificacao.clinica_id,
           telefone_normalizado: entrada.telefone_normalizado,
         },
-        camposParaLimpar ?? [],
-        atualizadoEmParaContexto,
-        desfechoAPublicar
+        camposParaLimpar,
+        atualizadoEmParaContexto
       );
     }
 
@@ -398,14 +313,7 @@ export async function processarMensagem(
           dados,
           identificacao.conversa.contexto_horarios,
           catalogoCarregado,
-          // O contexto-sombra recebe SEMPRE o que existe, nunca a versao
-          // filtrada pela decisao -- e exatamente essa independencia que a
-          // Etapa 2 precisa provar.
-          agendamentosFuturos,
-          // REIVINDICADO no CAS autoritativo, nunca simplesmente lido: um
-          // processo que perdeu o CAS recebe `null` aqui e portanto nunca
-          // mede com um marcador que outro processo consumiu.
-          interpretacao.aplicacao?.ultimo_desfecho_consumido ?? null
+          agendamentosDoPaciente
         );
         return contextoSombra !== undefined ? { contexto_sombra_v2: contextoSombra } : {};
       })()),
@@ -422,7 +330,17 @@ export async function processarMensagem(
       // Este e o UNICO ponto de busca, e e aqui de proposito: so aqui ja se
       // sabe que a decisao e conversacional. Os fluxos operacionais nunca
       // passam por este `return` e portanto nunca fazem esta consulta extra.
-      return await finalizar(decisaoConversacional);
+      return await finalizar(
+        decisaoConversacional,
+        undefined,
+        await buscarAgendamentosParaContexto(
+          clienteBanco,
+          decisaoConversacional,
+          identificacao.clinica_id,
+          identificacao.paciente.id,
+          entrada.instante_atual
+        )
+      );
     }
   }
 
@@ -527,25 +445,22 @@ const DECISOES_COM_CONTEXTO_DE_AGENDAMENTO: readonly DecisaoOrquestrador['tipo']
  * da lista, paciente sem ficha, ou nenhum agendamento futuro. A disciplina
  * "ausente, nunca vazio" ja e canonica no Core.
  *
- * FALHA DE BANCO NAO E ENGOLIDA AQUI (revisao independente, 2026-08-12): esta
+ * FALHA DE BANCO NAO E ENGOLIDA (revisao independente, 2026-08-12): esta
  * funcao NAO tem try/catch proprio. Um erro de `buscarAgendamentoAtivo`
  * propaga normalmente, pelo mesmo caminho tecnico ja existente para qualquer
  * outra falha de leitura no orquestrador (`decidirRemarcacao`,
  * `decidirCancelamento` tampouco engolem). "Sem agendamento" e um FATO ("o
  * paciente nao tem nenhum"); um erro de banco nao e esse fato, e nunca deveria
  * virar silenciosamente a mesma coisa.
- *
- * QUEM decide se essa falha derruba o turno e `finalizar`, nao esta funcao --
- * e la que a distincao importa: para a redatora a falha continua propagando
- * (comportamento inalterado); para o contexto-sombra ela e absorvida, porque
- * a sombra nunca pode transformar um atendimento bem-sucedido em erro.
  */
 async function buscarAgendamentosParaContexto(
   clienteBanco: ClienteBancoDados,
+  decisao: DecisaoOrquestrador,
   clinicaId: string,
   pacienteId: string | null,
   instanteAtual: InstanteAtual
 ): Promise<readonly AgendamentoAtivo[] | undefined> {
+  if (!DECISOES_COM_CONTEXTO_DE_AGENDAMENTO.includes(decisao.tipo)) return undefined;
   // Paciente sem ficha nao tem agendamento por definicao -- sem consulta ao
   // banco (spec secao 3).
   if (pacienteId === null) return undefined;
@@ -635,24 +550,11 @@ async function limparCamposDeEstadoConcluido(
   clienteBanco: ClienteBancoDados,
   contexto: ContextoConversa,
   campos: readonly CampoDadosConversa[],
-  atualizadoEmAtual: string,
-  publicarUltimoDesfecho: UltimoDesfecho | null
+  atualizadoEmAtual: string
 ): Promise<string> {
   try {
     const alteracoes = Object.fromEntries(campos.map((campo) => [campo, { acao: 'remover' as const }]));
-    const resultado = await aplicarDados(clienteBanco, {
-      ...contexto,
-      alteracoes,
-      // CAS ESTRITO: esta transicao so acontece se o estado ainda estiver
-      // exatamente no ponto sobre o qual este turno decidiu. Se outro turno ja
-      // avancou, NADA e escrito -- nem a limpeza, nem a publicacao. Sem isso, o
-      // retry padrao releria o estado NOVO e reaplicaria as remocoes sobre ele,
-      // apagando campos do turno seguinte.
-      cas_estrito: { base_atualizado_em: atualizadoEmAtual },
-      // Indivisivel da limpeza: ou as duas coisas acontecem nesta transicao,
-      // ou nenhuma das duas.
-      ...(publicarUltimoDesfecho !== null ? { publicar_ultimo_desfecho: publicarUltimoDesfecho } : {}),
-    });
+    const resultado = await aplicarDados(clienteBanco, { ...contexto, alteracoes });
     return resultado.atualizado_em;
   } catch {
     return atualizadoEmAtual;
