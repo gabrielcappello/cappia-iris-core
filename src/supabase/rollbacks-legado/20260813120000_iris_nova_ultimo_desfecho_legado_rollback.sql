@@ -1,0 +1,32 @@
+-- Rollback de 20260813120000_iris_nova_ultimo_desfecho_legado.sql
+--
+-- Projeto-alvo: udizowyfjnhuhgxkeayk (OPERACIONAL).
+--
+-- ORDEM OBRIGATORIA DO ROLLBACK -- E O INVERSO DO DEPLOY. Executar os tres
+-- passos NESTA sequencia:
+--
+--   1. REDEPLOY do codigo anterior, que nao seleciona `ultimo_desfecho`
+--      (a versao imediatamente antes da Etapa 2 do contexto estruturado V2).
+--   2. CONFIRMAR que o codigo novo nao esta mais ativo -- nenhuma instancia
+--      da Edge Function servindo a versao que le a coluna.
+--   3. SOMENTE ENTAO remover a coluna, executando este arquivo.
+--
+-- ATENCAO -- POR QUE A ORDEM NAO E OPCIONAL: `ultimo_desfecho` faz parte da
+-- lista de colunas do SELECT de `identificacao.ts` e de `aplicar-dados.ts`.
+-- Um SELECT de coluna inexistente e ERRO do PostgREST, nunca `undefined` --
+-- a falha ABERTA do validador cobre valor malformado, jamais coluna ausente.
+-- Dropar a coluna com o codigo novo ainda ativo faz TODO turno falhar na
+-- identificacao e devolver erro ao paciente. Nao ha fallback dinamico, e nao
+-- deve haver: a ordem e a garantia.
+--
+-- Perder o CONTEUDO da coluna, uma vez respeitada a ordem, e seguro por
+-- construcao: `ultimo_desfecho` e um marcador auxiliar com vida util de UM
+-- turno, lido apenas para montar o contexto estruturado da decisao-sombra V2
+-- (shadow mode, docs/07-arquitetura-v2.md secao 10). Nada operacional depende
+-- dele: nenhuma reserva, remarcacao ou cancelamento consulta esta coluna, e a
+-- resposta ao paciente nunca e derivada dela. Pior caso: a decisao V2 em
+-- sombra deixa de saber que uma operacao acabou de concluir -- efeito
+-- exclusivamente de MEDICAO, zero efeito no atendimento.
+
+alter table estado_conversa
+  drop column if exists ultimo_desfecho;

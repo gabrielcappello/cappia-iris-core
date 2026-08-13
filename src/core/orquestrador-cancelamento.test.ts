@@ -231,6 +231,7 @@ test('unico agendamento: PERGUNTA a confirmacao mostrando qual sera cancelado --
 
   // O contexto grava a proposta pendente CRUA, que e o que o turno seguinte confere.
   assert.deepEqual(linhaConversa(tabelas).contexto_horarios?.proposta_pendente, {
+    operacao: 'cancelar',
     data: '2026-08-10',
     horario: '14:00',
   });
@@ -465,6 +466,7 @@ test('resposta que nao confirma, com pergunta JA feita para ESTE agendamento: co
   assert.equal(rpc.chamadas.length, 0);
   // O gate continua armado para o turno seguinte.
   assert.deepEqual(linhaConversa(tabelas).contexto_horarios?.proposta_pendente, {
+    operacao: 'cancelar',
     data: '2026-08-10',
     horario: '14:00',
   });

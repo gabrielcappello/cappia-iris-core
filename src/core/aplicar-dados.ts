@@ -1,5 +1,6 @@
 import { ConflitoConcorrenteError, ConversaNaoEncontradaError, EntradaInvalidaError } from './erros.ts';
 import { telefoneNormalizadoValido } from './telefone.ts';
+import { validarUltimoDesfecho } from './ultimo-desfecho.ts';
 import type {
   AcaoAlteracaoDados,
   AlteracoesDados,
@@ -8,6 +9,7 @@ import type {
   ClienteBancoDados,
   ContextoConversa,
   ResultadoAplicarDados,
+  UltimoDesfecho,
 } from './tipos.ts';
 
 // Exportados para reuso em outros modulos (ex.: validacao da interpretacao
@@ -73,6 +75,8 @@ export interface LinhaEstadoConversa {
   id: string;
   dados: unknown;
   atualizado_em: string;
+  /** Marcador publicado pelo turno anterior, a ser REIVINDICADO por este CAS. */
+  ultimo_desfecho: UltimoDesfecho | null;
 }
 
 interface CalculoAlteracoes {
@@ -106,25 +110,68 @@ export async function aplicarDados(
 
   let atual = await buscarEstadoConversa(cliente, entrada);
 
-  for (let tentativa = 1; tentativa <= MAX_TENTATIVAS; tentativa++) {
+  // TRANSICAO SUPERADA (CAS estrito): outro turno ja avancou o estado desde
+  // que este turno decidiu. Nao escreve, nao rele, nao reaplica -- devolve na
+  // hora, com o timestamp deliberadamente obsoleto.
+  if (entrada.cas_estrito !== undefined && atual.atualizado_em !== entrada.cas_estrito.base_atualizado_em) {
+    return montarResultadoSuperado(atual.id, atual.dados, entrada.cas_estrito.base_atualizado_em);
+  }
+
+  // Sob CAS estrito nao existe segunda tentativa: perder o CAS significa que
+  // outro turno escreveu entre a leitura e a escrita, e a conclusao e a mesma
+  // de acima -- este turno perdeu a autoridade sobre o estado conversacional.
+  const maxTentativas = entrada.cas_estrito !== undefined ? 1 : MAX_TENTATIVAS;
+
+  for (let tentativa = 1; tentativa <= maxTentativas; tentativa++) {
     const dadosAtuais = (atual.dados as Record<string, string>) ?? {};
     const calculo = calcularNovosDados(dadosAtuais, entrada.alteracoes);
+    // REIVINDICACAO DO MARCADOR (docs/07-arquitetura-v2.md secao 10, Etapa 2).
+    // O marcador vem da leitura DESTA tentativa -- se outro processo o
+    // consumiu no meio-tempo, a releitura ja o traz nulo.
+    const desfechoParaReivindicar = atual.ultimo_desfecho;
 
-    if (dadosIguais(calculo.dadosNovos, dadosAtuais)) {
-      // Nenhuma mudanca real no JSON: nenhum UPDATE e executado, e
-      // `atualizado_em` permanece o mesmo (cobre tanto `alteracoes: {}`
-      // quanto acoes efetivamente idempotentes, informar repetido ou
-      // remocao de campo inexistente) -- e por isso e ele que viaja no
-      // resultado, nao um valor novo.
-      return montarResultado(atual.id, dadosAtuais, calculo, atual.atualizado_em);
+    // A publicacao nao precisa de guarda propria: ela so e pedida junto do
+    // CAS estrito, e chegar ate aqui ja significa que o estado nao avancou
+    // desde a decisao deste turno. Um marcador atrasado e impossivel por
+    // construcao, nao por uma segunda verificacao.
+    const publicar = entrada.publicar_ultimo_desfecho;
+
+    // Nenhuma mudanca real no JSON, nenhum marcador a reivindicar E nada a
+    // publicar: nenhum UPDATE e executado, e `atualizado_em` permanece o mesmo
+    // (cobre tanto `alteracoes: {}` quanto acoes efetivamente idempotentes,
+    // informar repetido ou remocao de campo inexistente) -- e por isso e ele
+    // que viaja no resultado, nao um valor novo.
+    if (
+      dadosIguais(calculo.dadosNovos, dadosAtuais) &&
+      desfechoParaReivindicar === null &&
+      publicar === undefined
+    ) {
+      return montarResultado(atual.id, dadosAtuais, calculo, atual.atualizado_em, null, false);
     }
 
     const timestampLido = atual.atualizado_em;
     const novoTimestamp = proximoTimestamp(timestampLido);
 
+    // O marcador e apagado NA MESMA instrucao que oficializa a interpretacao:
+    // e o proprio CAS que decide quem o consome. Um turno sem alteracao de
+    // dados que precise reivindicar emite este UPDATE so por isso -- e o
+    // preco de a expiracao ser autoritativa em vez de best-effort.
+    const alteracoesDaLinha: Record<string, unknown> = {
+      dados: calculo.dadosNovos,
+      atualizado_em: novoTimestamp,
+    };
+    // PUBLICAR vence REIVINDICAR quando os dois coincidem: o desfecho novo
+    // supera qualquer marcador anterior, e os dois nunca podem coexistir na
+    // mesma coluna.
+    if (publicar !== undefined) {
+      alteracoesDaLinha.ultimo_desfecho = publicar;
+    } else if (desfechoParaReivindicar !== null) {
+      alteracoesDaLinha.ultimo_desfecho = null;
+    }
+
     const { data: atualizado, error: erroUpdate } = await cliente
       .from('estado_conversa')
-      .update({ dados: calculo.dadosNovos, atualizado_em: novoTimestamp })
+      .update(alteracoesDaLinha)
       .eq('id', entrada.conversa_id)
       .eq('clinica_id', entrada.clinica_id)
       .eq('telefone_normalizado', entrada.telefone_normalizado)
@@ -138,9 +185,31 @@ export async function aplicarDados(
       // atualizado_em nao esta no select (ja e conhecido: e o proprio
       // novoTimestamp que acabou de ser gravado por este UPDATE) -- somando
       // aqui para reutilizar o mesmo validador estrutural, sem alterar o
-      // select nem criar uma segunda consulta.
-      const linha = validarLinhaEstadoConversa({ ...atualizado, atualizado_em: novoTimestamp });
-      return montarResultado(linha.id, (linha.dados as Record<string, unknown>) ?? {}, calculo, linha.atualizado_em);
+      // select nem criar uma segunda consulta. `ultimo_desfecho` idem: este
+      // UPDATE acabou de zera-lo.
+      const linha = validarLinhaEstadoConversa({
+        ...atualizado,
+        atualizado_em: novoTimestamp,
+        ultimo_desfecho: publicar ?? null,
+      });
+      // VENCEU o CAS: so este processo pode usar o marcador na medicao. Quando
+      // este turno PUBLICOU, ele nao consome nada -- o marcador que acabou de
+      // gravar e para o turno seguinte, nunca para si mesmo.
+      return montarResultado(
+        linha.id,
+        (linha.dados as Record<string, unknown>) ?? {},
+        calculo,
+        linha.atualizado_em,
+        publicar !== undefined ? null : desfechoParaReivindicar,
+        publicar !== undefined
+      );
+    }
+
+    // Sob CAS estrito, perder aqui encerra: NUNCA relê o estado novo para
+    // reaplicar remocoes sobre ele -- era exatamente assim que campos
+    // pertencentes ao turno seguinte eram apagados.
+    if (entrada.cas_estrito !== undefined) {
+      return montarResultadoSuperado(atual.id, atual.dados, entrada.cas_estrito.base_atualizado_em);
     }
 
     // Outra chamada alterou a conversa entre a leitura e esta tentativa
@@ -152,11 +221,37 @@ export async function aplicarDados(
   throw new ConflitoConcorrenteError(MAX_TENTATIVAS);
 }
 
+/**
+ * Resultado de uma transicao SUPERADA: nada foi escrito. Nenhum campo consta
+ * como adicionado/corrigido/removido, nenhum marcador foi consumido nem
+ * publicado, e `atualizado_em` volta obsoleto de proposito -- e o que faz a
+ * escrita auxiliar seguinte falhar o proprio CAS e tambem nao escrever.
+ */
+function montarResultadoSuperado(
+  conversaId: string,
+  dadosAtuais: unknown,
+  baseAtualizadoEm: string
+): ResultadoAplicarDados {
+  return {
+    conversa_id: conversaId,
+    dados: (dadosAtuais as Record<string, unknown>) ?? {},
+    campos_adicionados: [],
+    campos_corrigidos: [],
+    campos_removidos: [],
+    campos_preservados: [],
+    atualizado_em: baseAtualizadoEm,
+    ultimo_desfecho_consumido: null,
+    ultimo_desfecho_publicado: false,
+  };
+}
+
 function montarResultado(
   conversaId: string,
   dados: Record<string, unknown>,
   calculo: CalculoAlteracoes,
-  atualizadoEm: string
+  atualizadoEm: string,
+  ultimoDesfechoConsumido: UltimoDesfecho | null,
+  ultimoDesfechoPublicado: boolean
 ): ResultadoAplicarDados {
   return {
     conversa_id: conversaId,
@@ -166,6 +261,8 @@ function montarResultado(
     campos_removidos: calculo.camposRemovidos,
     campos_preservados: calculo.camposPreservados,
     atualizado_em: atualizadoEm,
+    ultimo_desfecho_consumido: ultimoDesfechoConsumido,
+    ultimo_desfecho_publicado: ultimoDesfechoPublicado,
   };
 }
 
@@ -180,7 +277,7 @@ export async function buscarEstadoConversa(
   // parametro do contexto ja identificado pelo Core, nunca parte de `alteracoes`.
   const { data, error } = await cliente
     .from('estado_conversa')
-    .select('id, dados, atualizado_em')
+    .select('id, dados, atualizado_em, ultimo_desfecho')
     .eq('id', entrada.conversa_id)
     .eq('clinica_id', entrada.clinica_id)
     .eq('telefone_normalizado', entrada.telefone_normalizado)
@@ -205,7 +302,14 @@ function validarLinhaEstadoConversa(valor: Record<string, unknown>): LinhaEstado
   if (typeof valor.atualizado_em !== 'string' || Number.isNaN(Date.parse(valor.atualizado_em))) {
     throw new Error('estado_conversa retornou atualizado_em em formato invalido');
   }
-  return { id: valor.id, dados: valor.dados, atualizado_em: valor.atualizado_em };
+  return {
+    id: valor.id,
+    dados: valor.dados,
+    atualizado_em: valor.atualizado_em,
+    // Falha ABERTA (ver ultimo-desfecho.ts): marcador malformado vira
+    // ausencia de marcador, nunca derruba a oficializacao da interpretacao.
+    ultimo_desfecho: validarUltimoDesfecho(valor.ultimo_desfecho),
+  };
 }
 
 function calcularNovosDados(dadosAtuais: Record<string, string>, alteracoes: AlteracoesDados): CalculoAlteracoes {

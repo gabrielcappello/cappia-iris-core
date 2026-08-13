@@ -168,7 +168,7 @@ test('integrado: aguardando_confirmacao grava proposta_pendente e SUBSTITUI hora
   assert.equal(resultado.decisao.tipo, 'aguardando_confirmacao');
   const contexto = contextoDa(tabelas);
   assert.ok(contexto, 'snapshot deveria ter sido gravado');
-  assert.deepEqual(contexto.proposta_pendente, { data: '2026-08-03', horario: '10:00' });
+  assert.deepEqual(contexto.proposta_pendente, { operacao: 'criar', data: '2026-08-03', horario: '10:00' });
   assert.equal('horarios' in contexto, false, 'propor substitui o snapshot por inteiro, nunca faz merge');
 });
 

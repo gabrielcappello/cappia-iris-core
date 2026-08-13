@@ -22,6 +22,14 @@ export type EstadoConversa =
 // specs/resposta-conversacional-v1.md secao 5). Serve EXCLUSIVAMENTE para a
 // IA interpretar uma resposta curta ("15", "o segundo", "pode confirmar") no
 // turno seguinte -- nunca e fonte de disponibilidade, nunca autoriza reserva.
+/**
+ * Vocabulario FECHADO das operacoes que podem aguardar confirmacao explicita.
+ * Derivado deterministicamente da decisao que criou a proposta -- nunca de
+ * `dados.intencao`, que e campo interpretado pela IA e nao autoridade sobre
+ * qual pergunta o Core realmente fez.
+ */
+export type OperacaoConfirmacaoPendente = 'criar' | 'remarcar' | 'cancelar';
+
 export interface ContextoHorarios {
   /**
    * Horarios ja apresentados, na ordem exata em que apareceram -- da
@@ -37,7 +45,23 @@ export interface ContextoHorarios {
    * permite a IA reconhecer "pode confirmar"/"esse mesmo" como resposta a
    * ESSA proposta especifica, mesmo sem repetir data/horario no texto.
    */
-  proposta_pendente?: { data: string; horario: string };
+  proposta_pendente?: {
+    /**
+     * QUAL operacao aguarda confirmacao (2026-08-13). As tres decisoes de
+     * confirmacao -- criar, remarcar, cancelar -- reusam este mesmo snapshot,
+     * e sem este campo era impossivel distingui-las sem recorrer a
+     * `dados.intencao`.
+     *
+     * OPCIONAL de proposito: snapshots gravados antes desta data nao tem o
+     * campo, e invalida-los faria a Iris esquecer confirmacoes pendentes em
+     * andamento -- mudanca de comportamento visivel, proibida nesta etapa.
+     * Quem consome sem inferir e o contexto da V2: sem `operacao`, ele OMITE
+     * `confirmacao_pendente` em vez de adivinhar.
+     */
+    operacao?: OperacaoConfirmacaoPendente;
+    data: string;
+    horario: string;
+  };
   /**
    * Procedimento que a Iris ofereceu ao paciente no turno anterior e cuja
    * resposta ainda nao veio (specs/contexto-pendente-interpretacao-v1.md
@@ -95,6 +119,32 @@ export interface ContextoHorarios {
   escolha_agendamento_pendente?: { agendamento_ids: string[] };
   /** ISO, somente auditoria -- nunca usado como versao nem para ordenar escritas. */
   criado_em: string;
+}
+
+/**
+ * Desfecho operacional concluido no turno IMEDIATAMENTE ANTERIOR
+ * (docs/07-arquitetura-v2.md secao 10, Etapa 2 -- especificacao do contexto
+ * estruturado aprovada pelo Gabriel em 2026-08-13).
+ *
+ * Existe porque este e o unico fato que nenhum dos dois espacos ja existentes
+ * consegue carregar: `dados` e `contexto_horarios` sao ambos LIMPOS
+ * exatamente nestes tres desfechos. Sem ele, o turno seguinte a uma reserva
+ * nao tem nenhum sinal ESTRUTURADO de que ela acabou de acontecer -- so o
+ * texto solto do historico, que depende da redacao daquele turno.
+ *
+ * SO O ROTULO, deliberadamente. Data, horario, procedimento e dentista chegam
+ * por `agendamentos_futuros` (busca fresca): uma fonte por fato, nunca duas.
+ *
+ * VIDA UTIL DE EXATAMENTE UM TURNO (contexto-horarios.ts): escrito no turno
+ * que conclui a operacao, lido no turno seguinte, apagado por esse mesmo
+ * turno. Nao ha "preservar" e nao ha envelhecimento -- por isso nao carrega
+ * timestamp nem contador.
+ *
+ * NAO CONFUNDIR com a coluna legada `ultima_troca` (memoria de 1 turno,
+ * superada por `historico_conversa`): nomes proximos, coisas diferentes.
+ */
+export interface UltimoDesfecho {
+  tipo: 'reserva_criada' | 'remarcacao_criada' | 'cancelamento_criado';
 }
 
 // Um par completo de turno (specs/historico-conversacional-v1.md). Serve
@@ -164,6 +214,12 @@ export interface ResultadoIdentificacao {
     atualizado_em: string;
     contexto_horarios: ContextoHorarios | null;
     historico_conversa: HistoricoConversa | null;
+    /**
+     * Lido no INICIO do turno: presente significa que o turno imediatamente
+     * anterior concluiu esta operacao. Alimenta EXCLUSIVAMENTE o contexto da
+     * decisao-sombra V2 -- nenhuma decisao de producao le este campo.
+     */
+    ultimo_desfecho: UltimoDesfecho | null;
   };
 }
 
@@ -274,6 +330,37 @@ export interface ContextoConversa {
 
 export interface AplicarDadosInput extends ContextoConversa {
   alteracoes: AlteracoesDados;
+  /**
+   * Marcador a PUBLICAR nesta mesma transicao autoritativa
+   * (docs/07-arquitetura-v2.md secao 10, Etapa 2).
+   *
+   * Publicar aqui -- e nao numa escrita separada depois -- e o que impede um
+   * turno de publicar um desfecho ATRASADO: a publicacao vira parte
+   * indivisivel da transicao de estado que oficializa o proprio turno que
+   * concluiu a operacao. So faz sentido junto de `cas_estrito`, que e quem
+   * garante que a publicacao nunca chega atrasada.
+   */
+  publicar_ultimo_desfecho?: UltimoDesfecho;
+  /**
+   * CAS ESTRITO -- uma unica tentativa, ancorada neste `atualizado_em`, SEM
+   * releitura e SEM retry (docs/07-arquitetura-v2.md secao 10, Etapa 2).
+   *
+   * Existe para a transicao POS-CONCLUSAO: depois que este turno decidiu com
+   * base num estado, se outro turno ja avancou esse estado, este turno perdeu
+   * a autoridade de alterar o estado conversacional -- e nao deve escrever
+   * absolutamente nada. Sem isso, o retry padrao releria o estado NOVO e
+   * reaplicaria as remocoes sobre ele, apagando campos que pertencem ao turno
+   * seguinte (perda de atualizacao).
+   *
+   * A operacao externa ja concluida (a reserva, a remarcacao, o cancelamento)
+   * continua valida: o que se perde e so a autoridade sobre `estado_conversa`.
+   *
+   * Quando a transicao e superada, `atualizado_em` volta DELIBERADAMENTE
+   * obsoleto (o proprio `base_atualizado_em`), para que a escrita auxiliar
+   * seguinte falhe o proprio CAS por conta propria e tambem nao escreva --
+   * mesmo mecanismo, nunca um segundo.
+   */
+  cas_estrito?: { base_atualizado_em: string };
 }
 
 export interface ResultadoAplicarDados {
@@ -283,6 +370,27 @@ export interface ResultadoAplicarDados {
   campos_corrigidos: string[];
   campos_removidos: string[];
   campos_preservados: string[];
+  /**
+   * Marcador do turno anterior que ESTE processo reivindicou com sucesso no
+   * CAS (docs/07-arquitetura-v2.md secao 10, Etapa 2). `null` quando nao
+   * havia marcador, ou quando este processo PERDEU o CAS -- nos dois casos a
+   * medicao em sombra deste turno nunca pode conter `ultimo_desfecho`.
+   *
+   * E a unica forma legitima de obter o marcador: ler a coluna diretamente
+   * (identificacao.ts) diz apenas que ele existia no inicio do turno, nunca
+   * que este processo tem direito de usa-lo.
+   */
+  ultimo_desfecho_consumido: UltimoDesfecho | null;
+  /**
+   * `true` somente quando `publicar_ultimo_desfecho` foi pedido E a primeira
+   * tentativa de CAS venceu -- ou seja, quando nenhum outro turno avancou o
+   * estado entre a decisao deste turno e esta escrita.
+   *
+   * `false` quando nada havia a publicar OU quando este turno perdeu a
+   * corrida: nesse caso o desfecho fica SEM marcador, e nunca aparece
+   * atrasado para um turno posterior.
+   */
+  ultimo_desfecho_publicado: boolean;
   /**
    * `atualizado_em` da linha APOS esta aplicacao -- o valor novo quando
    * houve UPDATE, ou o valor inalterado quando nada mudou (curto-circuito

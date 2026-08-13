@@ -53,7 +53,7 @@ test('derivacao: aguardando_confirmacao_remarcacao vira propor, com a OPCAO NOVA
       fim_min: 580,
     },
   };
-  assert.deepEqual(derivarAcaoContextoHorarios(decisao), { tipo: 'propor', data: '2026-08-20', horario: '09:00' });
+  assert.deepEqual(derivarAcaoContextoHorarios(decisao), { tipo: 'propor', operacao: 'remarcar', data: '2026-08-20', horario: '09:00' });
 });
 
 test('derivacao: sem_agendamento_para_remarcar e remarcacao_criada limpam o contexto', () => {

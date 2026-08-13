@@ -22,12 +22,17 @@
 // `confirmacao === 'sim'` continua a unica autoridade para reservar.
 
 import { formatarMinutos } from './gerar-resposta-paciente.ts';
-import type { ClienteBancoDados, ContextoHorarios } from './tipos.ts';
+import type { ClienteBancoDados, ContextoHorarios, OperacaoConfirmacaoPendente } from './tipos.ts';
 import type { DecisaoOrquestrador } from './orquestrador-tipos.ts';
 
 export type AcaoContextoHorarios =
   | { tipo: 'substituir'; horarios: string[] }
-  | { tipo: 'propor'; data: string; horario: string }
+  // `operacao` (2026-08-13): QUAL operacao aguarda confirmacao. Derivada
+  // deterministicamente da decisao que criou a proposta -- as tres decisoes
+  // de confirmacao reusam o mesmo `proposta_pendente`, e sem este campo era
+  // impossivel distinguir "confirma a criacao" de "confirma o cancelamento"
+  // sem recorrer a `dados.intencao`.
+  | { tipo: 'propor'; operacao: OperacaoConfirmacaoPendente; data: string; horario: string }
   | { tipo: 'oferecer'; procedimento_id: string }
   | { tipo: 'perguntar_troca_telefone' }
   | { tipo: 'perguntar_qual_agendamento'; agendamento_ids: string[] }
@@ -72,7 +77,12 @@ export function derivarAcaoContextoHorarios(decisao: DecisaoOrquestrador): AcaoC
     // aqui, no lugar onde a decisao realmente e tomada, em vez de deixada
     // solta perto de uma funcao nao relacionada.
     case 'aguardando_confirmacao':
-      return { tipo: 'propor', data: decisao.opcao.data, horario: formatarMinutos(decisao.opcao.inicio_min) };
+      return {
+        tipo: 'propor',
+        operacao: 'criar',
+        data: decisao.opcao.data,
+        horario: formatarMinutos(decisao.opcao.inicio_min),
+      };
 
     // OFERECER (2026-08-09, specs/contexto-pendente-interpretacao-v1.md
     // secao 11): a Iris acabou de oferecer um procedimento e aguarda
@@ -131,7 +141,12 @@ export function derivarAcaoContextoHorarios(decisao: DecisaoOrquestrador): AcaoC
     // e so a REDACAO (de onde para onde), nunca o mecanismo de pergunta
     // pendente.
     case 'aguardando_confirmacao_remarcacao':
-      return { tipo: 'propor', data: decisao.opcao.data, horario: formatarMinutos(decisao.opcao.inicio_min) };
+      return {
+        tipo: 'propor',
+        operacao: 'remarcar',
+        data: decisao.opcao.data,
+        horario: formatarMinutos(decisao.opcao.inicio_min),
+      };
 
     // Nenhum agendamento ativo, ou remarcacao concluida: a pergunta (se
     // havia alguma) deixou de fazer sentido -- nada fica pendurado.
@@ -161,7 +176,12 @@ export function derivarAcaoContextoHorarios(decisao: DecisaoOrquestrador): AcaoC
     // estes valores exatos que o orquestrador confere a condicao 3 da spec no
     // turno seguinte.
     case 'aguardando_confirmacao_cancelamento':
-      return { tipo: 'propor', data: decisao.agendamento.data, horario: decisao.agendamento.horario };
+      return {
+        tipo: 'propor',
+        operacao: 'cancelar',
+        data: decisao.agendamento.data,
+        horario: decisao.agendamento.horario,
+      };
 
     // Nenhum agendamento ativo, ou cancelamento concluido: nada fica pendurado.
     case 'sem_agendamento_para_cancelar':
@@ -279,13 +299,26 @@ export async function gravarContextoHorarios(
   entrada: GravarContextoHorariosEntrada
 ): Promise<string> {
   // Preservar nao emite nenhuma instrucao -- nem UPDATE, nem SELECT.
+  //
+  // Esta escrita NAO toca `ultimo_desfecho` em nenhuma direcao: PUBLICAR e da
+  // transicao autoritativa que oficializa o turno concluinte (aplicar-dados.ts,
+  // via limparCamposDeEstadoConcluido) e LIMPAR e da reivindicacao no CAS do
+  // turno seguinte. Uma escrita best-effort, que pode falhar em silencio e
+  // chegar atrasada, nunca poderia sustentar nenhuma das duas garantias.
   if (entrada.acao.tipo === 'preservar') return entrada.atualizado_em_da_decisao;
 
   const contexto: ContextoHorarios | null =
     entrada.acao.tipo === 'substituir'
       ? { horarios: entrada.acao.horarios, criado_em: new Date().toISOString() }
       : entrada.acao.tipo === 'propor'
-        ? { proposta_pendente: { data: entrada.acao.data, horario: entrada.acao.horario }, criado_em: new Date().toISOString() }
+        ? {
+            proposta_pendente: {
+              operacao: entrada.acao.operacao,
+              data: entrada.acao.data,
+              horario: entrada.acao.horario,
+            },
+            criado_em: new Date().toISOString(),
+          }
         : entrada.acao.tipo === 'oferecer'
           ? {
               oferta_procedimento_pendente: { procedimento_id: entrada.acao.procedimento_id },
@@ -305,10 +338,7 @@ export async function gravarContextoHorarios(
   try {
     const { data } = await cliente
       .from('estado_conversa')
-      .update({
-        contexto_horarios: contexto,
-        atualizado_em: proximoValor,
-      })
+      .update({ contexto_horarios: contexto, atualizado_em: proximoValor })
       .eq('id', entrada.conversa_id)
       .eq('clinica_id', entrada.clinica_id)
       .eq('telefone_normalizado', entrada.telefone_normalizado)
@@ -394,7 +424,15 @@ export function validarContextoHorarios(valor: unknown): ContextoHorarios | null
 
   return {
     ...(horarios !== undefined ? { horarios: horarios as string[] } : {}),
-    ...(proposta_pendente !== undefined ? { proposta_pendente: proposta_pendente as { data: string; horario: string } } : {}),
+    ...(proposta_pendente !== undefined
+      ? {
+          proposta_pendente: proposta_pendente as {
+            operacao?: OperacaoConfirmacaoPendente;
+            data: string;
+            horario: string;
+          },
+        }
+      : {}),
     ...(oferta_procedimento_pendente !== undefined
       ? { oferta_procedimento_pendente: oferta_procedimento_pendente as { procedimento_id: string } }
       : {}),
@@ -428,8 +466,22 @@ function horariosValidos(valor: unknown): valor is string[] {
   return valor.every((h) => typeof h === 'string' && h.trim() !== '');
 }
 
-function propostaPendenteValida(valor: unknown): valor is { data: string; horario: string } {
+/**
+ * `operacao` e OPCIONAL: snapshots gravados antes de 2026-08-13 nao a tem, e
+ * invalida-los faria a Iris esquecer confirmacoes pendentes em andamento.
+ * Quando PRESENTE, precisa pertencer ao vocabulario fechado -- um valor
+ * desconhecido invalida o snapshot inteiro, mesma disciplina das demais
+ * variantes.
+ */
+function propostaPendenteValida(
+  valor: unknown
+): valor is { operacao?: OperacaoConfirmacaoPendente; data: string; horario: string } {
   if (valor === null || typeof valor !== 'object' || Array.isArray(valor)) return false;
-  const { data, horario } = valor as Record<string, unknown>;
+  const { data, horario, operacao } = valor as Record<string, unknown>;
+  if (operacao !== undefined && !OPERACOES_CONFIRMACAO.includes(operacao as OperacaoConfirmacaoPendente)) {
+    return false;
+  }
   return typeof data === 'string' && data.trim() !== '' && typeof horario === 'string' && horario.trim() !== '';
 }
+
+const OPERACOES_CONFIRMACAO: readonly OperacaoConfirmacaoPendente[] = ['criar', 'remarcar', 'cancelar'];

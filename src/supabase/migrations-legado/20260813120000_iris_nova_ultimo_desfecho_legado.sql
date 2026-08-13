@@ -1,0 +1,70 @@
+-- Iris Nova - marcador declarativo do desfecho recem-concluido (LEGADO).
+--
+-- Projeto-alvo: udizowyfjnhuhgxkeayk -- projeto OPERACIONAL, com clinica,
+-- instancia WhatsApp e fluxo real conectados. PROIBIDO aplicar em
+-- bcmuqautblvjdqzhjfbw, que tem migration irma propria em
+-- src/supabase/migrations/ (mesma coluna, mesmo efeito, arquivo separado
+-- pela convencao ja estabelecida de pastas por projeto-alvo).
+--
+-- Conteudo executavel IDENTICO ao da migration irma -- a separacao e de
+-- destino, nunca de efeito.
+--
+-- Base normativa: docs/07-arquitetura-v2.md secao 10 (Etapa 2), especificacao
+-- do contexto estruturado da V2 aprovada pelo Gabriel em 2026-08-13.
+--
+-- ESCOPO -- estritamente aditivo, 1 tabela, 1 coluna, nenhum dado alterado,
+-- nenhuma constraint, nenhuma mudanca de ACL ou RLS:
+--
+--   estado_conversa.ultimo_desfecho (jsonb, nullable): {tipo: string} onde
+--   `tipo` pertence ao vocabulario FECHADO {reserva_criada,
+--   remarcacao_criada, cancelamento_criado}. Informa ao turno SEGUINTE que
+--   uma operacao acabou de ser concluida -- o unico fato que nem
+--   `dados` nem `contexto_horarios` conseguem carregar, porque ambos sao
+--   LIMPOS justamente nesses desfechos.
+--
+-- POR QUE COLUNA PROPRIA (decisao do Gabriel, 2026-08-13): `dados` e o
+-- espaco dos campos interpretados pela IA, com regras proprias de limpeza;
+-- `contexto_horarios` e o snapshot da pergunta pendente, e
+-- `derivarAcaoContextoHorarios` manda LIMPAR exatamente em `reserva_criada`
+-- / `remarcacao_criada` / `cancelamento_criado` -- o marcador seria apagado
+-- no mesmo turno em que precisa ser gravado. Espaco proprio, responsabilidade
+-- propria.
+--
+-- VIDA UTIL DE EXATAMENTE UM TURNO, deterministica (contexto-horarios.ts):
+-- escrito no turno em que a operacao conclui, lido no turno imediatamente
+-- seguinte, apagado por esse mesmo turno. Nao ha "preservar", nao ha
+-- acumulo, nao ha envelhecimento -- por isso NAO existe timestamp nem
+-- contador nesta coluna, e esta migration nao cria job, rotina de limpeza
+-- nem trigger de expiracao.
+--
+-- SEM PII por construcao: so o rotulo do desfecho. Data, horario,
+-- procedimento e dentista chegam a V2 por `agendamentos_futuros` (busca
+-- fresca), nunca duplicados aqui -- uma fonte por fato.
+--
+-- SHADOW MODE: esta coluna alimenta EXCLUSIVAMENTE o contexto da decisao-V2
+-- em sombra, que nunca executa capacidade, nunca altera estado e nunca muda
+-- a resposta ao paciente. Aplicar esta migration nao altera, por si so,
+-- nenhum comportamento visivel.
+--
+-- Nullable e sem default de proposito: "nenhuma operacao concluida no turno
+-- anterior" se representa pela AUSENCIA (NULL), nunca por um objeto vazio --
+-- mesma disciplina de `contexto_horarios` e `ultima_troca`.
+--
+-- RLS: nenhuma alteracao. `estado_conversa` ja tem RLS ativa sem policy --
+-- uma coluna nova herda exatamente esse regime: so service_role, que ignora
+-- RLS, acessa.
+--
+-- PREFLIGHT (executar imediatamente antes de aplicar): confirmar que
+-- `ultimo_desfecho` ainda nao existe em `estado_conversa`. Nenhum ADD COLUMN
+-- usa IF NOT EXISTS: colisao de nome falha explicitamente em vez de ser
+-- ignorada em silencio.
+--
+-- ATENCAO AO NOME: a coluna legada `ultima_troca` (memoria de 1 turno,
+-- superada por `historico_conversa`) continua no banco e tem nome
+-- visualmente proximo. Sao coisas DIFERENTES e nenhum codigo novo le
+-- `ultima_troca`.
+--
+-- NAO APLICADA no momento desta escrita.
+
+alter table estado_conversa
+  add column ultimo_desfecho jsonb;

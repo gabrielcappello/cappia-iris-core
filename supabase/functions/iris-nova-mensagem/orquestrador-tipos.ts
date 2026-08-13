@@ -13,7 +13,7 @@ import type { MotivoErroReserva } from './reservar-agendamento.ts';
 import type { MotivoErroRemarcacao } from './remarcar-agendamento.ts';
 import type { MotivoErroCancelamento } from './cancelar-agendamento.ts';
 import type { AgendamentoAtivo } from './buscar-agendamento-ativo.ts';
-import type { HistoricoConversa } from './tipos.ts';
+import type { HistoricoConversa, OperacaoConfirmacaoPendente, UltimoDesfecho } from './tipos.ts';
 
 /**
  * Catalogo de UMA clinica. Montado internamente pelo orquestrador, via
@@ -415,19 +415,77 @@ export interface ResultadoOrquestrador {
   contexto_sombra_v2?: ContextoSombraCapacidadeV2;
 }
 
-/** Ver o comentario de `ResultadoOrquestrador.contexto_sombra_v2`. */
+/**
+ * Ver o comentario de `ResultadoOrquestrador.contexto_sombra_v2`.
+ *
+ * REGRA DE LEITURA (especificacao aprovada pelo Gabriel em 2026-08-13): a
+ * ausencia de um campo significa **o fato nao existe** -- nunca "o ramo do
+ * roteador nao carregou". Todos os campos sao montados no MESMO ponto, em
+ * TODOS os turnos, a partir de (a) estado lido no inicio do turno, (b) a
+ * decisao do proprio turno, (c) uma busca fresca de agendamentos. Nenhum
+ * deles depende de qual caminho o roteamento antigo seguiu.
+ */
 export interface ContextoSombraCapacidadeV2 {
+  /** Fluxo em andamento, do estado persistido (`dados`). */
   dados_conhecidos?: {
     procedimento?: string;
     data?: string;
     horario?: string;
     periodo?: string;
   };
+  /** Do estado persistido (`contexto_horarios.horarios`), na ordem exata em que foram apresentados. */
   horarios_oferecidos?: readonly string[];
-  agendamento_futuro?: {
+  /**
+   * Do estado persistido (`contexto_horarios.proposta_pendente`): o Core
+   * propos ESTE horario e aguarda um "sim" explicito.
+   *
+   * `operacao` e derivada deterministicamente da DECISAO que criou a
+   * proposta, nunca de `dados.intencao` (campo interpretado pela IA, que nao
+   * e autoridade sobre qual pergunta o Core fez). Sem ela, as tres
+   * confirmacoes seriam indistinguiveis para a V2 -- exatamente a ambiguidade
+   * apontada na revisao independente de 2026-08-13.
+   *
+   * AUSENTE por inteiro quando o snapshot persistido nao tem `operacao`
+   * (gravado antes desta data): sem operacao estruturalmente conhecida o
+   * contexto OMITE o bloco, nunca infere.
+   */
+  confirmacao_pendente?: {
+    operacao: OperacaoConfirmacaoPendente;
+    data: string;
+    horario: string;
+  };
+  /**
+   * Busca FRESCA a cada turno. PLURAL de proposito (decisao do Gabriel,
+   * 2026-08-13): o paciente pode ter varios agendamentos simultaneos, e o
+   * contexto nunca deve assumir em silencio qual deles e o relevante.
+   *
+   * Ordenado do mais proximo para o mais distante -- a ordem e informacao (e
+   * o que da sentido a "o proximo"/"o primeiro"), ja garantida por
+   * `buscarAgendamentoAtivo`, que ordena por minuto.
+   *
+   * MINIMO NECESSARIO para distinguir um agendamento do outro. Os
+   * identificadores opacos (`agendamento_id`, `dentista_id`,
+   * `procedimento_id`) ficam DE FORA: a decisao desta etapa e so QUAL
+   * capacidade acionar, nunca com quais parametros -- extracao de parametros
+   * segue explicitamente fora de escopo (secao 11.1).
+   *
+   * AUSENTE (nunca `[]`) quando nao ha agendamento futuro ou o paciente ainda
+   * nao foi identificado.
+   */
+  agendamentos_futuros?: readonly {
     data: string;
     horario: string;
     procedimento?: string;
     dentista_nome?: string;
-  };
+  }[];
+  /**
+   * Do estado persistido (`estado_conversa.ultimo_desfecho`): operacao
+   * concluida no turno IMEDIATAMENTE ANTERIOR. Sem ele, o turno seguinte a
+   * uma reserva so tem o texto solto do historico como sinal de que ela
+   * aconteceu -- e isso depende de como aquele turno foi redigido.
+   *
+   * So o rotulo: data/horario do que foi criado chegam por
+   * `agendamentos_futuros`, uma fonte por fato.
+   */
+  ultimo_desfecho?: UltimoDesfecho;
 }
