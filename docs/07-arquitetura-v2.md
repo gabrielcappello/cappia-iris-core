@@ -4,9 +4,12 @@
 > de arquitetura e **substitui `docs/02-arquitetura.md`**, que fica preservado como
 > registro histórico.
 >
-> **Nenhuma mudança de comportamento foi implementada.** Etapas 0 e 1 concluídas e
-> aprovadas (registros dentro da seção 10) — ambas somente em `src/eval/`, zero linha de
-> produção alterada. **A Etapa 2 não está autorizada.**
+> **Nenhuma mudança de comportamento ao paciente foi implementada.** Etapas 0 e 1
+> concluídas e aprovadas (registros dentro da seção 10) — ambas somente em `src/eval/`,
+> zero linha de produção alterada. **Etapa 2 (despachante-sombra) deployada e validada em
+> produção em 2026-08-13** — decide em paralelo, só para medição; nunca executa
+> capacidade, nunca altera estado, nunca muda a resposta. **A Etapa 3 (corte real de
+> comportamento) não está autorizada.**
 >
 > Escrito em 2026-08-12, a partir da auditoria arquitetural e da auditoria de medições
 > feitas na mesma data.
@@ -346,6 +349,39 @@ comportamento visível ao paciente. É o par A/B exigido pelo princípio do test
 > exista (confirmado via `deno run --no-check`), e o pior cenário se `waitUntil` não
 > funcionar como esperado em produção é log-sombra incompleto, nunca efeito no paciente.
 > Só um ambiente real resolve essa dúvida — ver próximos passos.
+
+> **DEPLOYADO e VALIDADO em produção em 2026-08-13**, projeto operacional
+> `udizowyfjnhuhgxkeayk` (clínica de teste "cleardent", instância WhatsApp real
+> `CAPPIA-IRIS-976154375`), `iris-nova-mensagem` v22 → v23. Commits `39ff797` (docs +
+> instrumentos de medição) e `84109ca` (código do despachante-sombra).
+>
+> **Mecanismo de shadow mode validado com evidência real, não só teste local:**
+> mensagem real de paciente às 2026-08-13T12:46 UTC (09:46 BRT) gerou, nos logs do
+> projeto:
+>
+> - `edge_logs`: pipeline real completo (catálogo, disponibilidade,
+>   `POST /rpc/cappia_reservar_agendamento`, `PATCH estado_conversa` de limpeza) —
+>   todos `200`, terminando em `12:46:35.861Z`, sem nenhuma alteração de comportamento.
+> - `function_logs`: linha `sombra_v2 estado=ok decisao_atual=reserva_criada
+>   capacidade_atual=criar_agendamento capacidade_v2=consultar_agendamento_do_paciente
+>   certeza_v2=alta concordou=false duracao_ms=1213`, registrada em `12:46:37.274Z` —
+>   **depois** do pipeline real já ter terminado, confirmando que `EdgeRuntime.waitUntil`
+>   manteve o isolado vivo para a chamada-sombra em segundo plano, sem atrasar nem
+>   influenciar a resposta ao paciente. Sem PII: só rótulos estruturais.
+>
+> **Os cinco pontos exigidos pela autorização do Gabriel (2026-08-13) confirmados:**
+> `EdgeRuntime.waitUntil` executa no runtime real; a chamada V2 em shadow ocorre; a
+> resposta ao paciente continua sendo produzida normalmente; uma falha/divergência da
+> sombra não interfere no atendimento; os logs mostram decisão atual × capacidade V2 sem
+> PII. **O mecanismo de shadow mode está validado — este é o objetivo da Etapa 2.**
+>
+> **Primeira divergência observada:** atual `criar_agendamento` × V2
+> `consultar_agendamento_do_paciente`, certeza alta. **Nenhuma ação foi tomada sobre
+> ela** — decisão do Gabriel, 2026-08-13: uma única divergência não permite concluir se
+> a causa é contexto insuficiente enviado à V2, contrato de capacidade, prompt, ou um
+> comportamento da V2 melhor que o atual; isso é exatamente o tipo de dado que a Etapa 2
+> foi desenhada para acumular antes da Etapa 3, não para corrigir a cada ocorrência. O
+> contrato, o prompt e o Core permanecem intocados por causa deste caso.
 
 **Etapa 3 — Corte, capacidade por capacidade.** Trocar o roteamento real de uma capacidade
 por vez, na ordem de menor risco: **consulta** (somente leitura, falso positivo não executa
