@@ -4,12 +4,25 @@
 > de arquitetura e **substitui `docs/02-arquitetura.md`**, que fica preservado como
 > registro histórico.
 >
-> **Nenhuma mudança de comportamento ao paciente foi implementada.** Etapas 0 e 1
-> concluídas e aprovadas (registros dentro da seção 10) — ambas somente em `src/eval/`,
-> zero linha de produção alterada. **Etapa 2 (despachante-sombra) deployada e validada em
-> produção em 2026-08-13** — decide em paralelo, só para medição; nunca executa
-> capacidade, nunca altera estado, nunca muda a resposta. **A Etapa 3 (corte real de
-> comportamento) não está autorizada.**
+> **Etapas 0 e 1** concluídas e aprovadas (registros dentro da seção 10) — ambas somente
+> em `src/eval/`, zero linha de produção alterada **por elas**. (Produção mudou por outras
+> frentes no mesmo período — ver seção 11.2.)
+>
+> **Etapa 2 — o despachante-sombra CONTINUA ATIVO em produção.** Ele decide em paralelo,
+> só para medição: nunca executa capacidade, nunca altera estado, nunca muda a resposta.
+> Evidência: linhas `sombra_v2` nos logs, a mais recente em 2026-08-14T12:26 UTC.
+>
+> **Revertida foi apenas a AMPLIAÇÃO do contexto estruturado** (`9b58666` → `053a40b`,
+> v24 → v25): `agendamentos_futuros` no plural, `confirmacao_pendente.operacao` e o
+> marcador `ultimo_desfecho`, que trazia um CAS estrito comparando `atualizado_em` como
+> texto e quebrou a limpeza de estado pós-reserva. A sombra segue medindo com o contexto
+> **sobrevivente** de `84109ca`: `dados_conhecidos`, `horarios_oferecidos` e
+> `agendamento_futuro` (singular). Detalhe e evidência na seção 10.
+>
+> **A Etapa 3 (corte real de comportamento) não está autorizada.**
+>
+> **As mudanças de comportamento que entraram em produção hoje (v27) NÃO vêm desta
+> arquitetura** — são correções do roteamento atual, registradas na seção 11.2.
 >
 > Escrito em 2026-08-12, a partir da auditoria arquitetural e da auditoria de medições
 > feitas na mesma data.
@@ -157,7 +170,7 @@ Uma capacidade **não é**:
   tools" **permanece integralmente válida**).
 
 O conjunto exato de capacidades e a assinatura de cada uma **não são decididos por este
-documento** — ver seção 11.
+documento** — ver seção 11 (ambiguidade conhecida).
 
 ## 5. Como a Iris solicita capacidades
 
@@ -325,7 +338,11 @@ lacuna explícita da sonda de 2026-08-12). Nenhuma linha de produção alterada 
 comportamento visível ao paciente. É o par A/B exigido pelo princípio do teste isolado
 (`docs/00-principios.md`).
 
-> **CÓDIGO PRONTO em 2026-08-13, AINDA NÃO DEPLOYADO.** Autorizada em shadow mode: a
+> ⚠️ **HISTÓRICO — escrito ANTES do deploy.** Foi deployado no mesmo dia (v23) e o
+> despachante-sombra **continua ativo em produção**; ver o bloco de reversão parcial
+> adiante. Mantido como registro de como a etapa foi autorizada.
+>
+> **CÓDIGO PRONTO em 2026-08-13.** Autorizada em shadow mode: a
 > decisão V2 nunca executa capacidade, nunca altera estado, nunca muda a resposta — só é
 > comparada com a decisão real e registrada, sem PII, para medição.
 >
@@ -350,6 +367,10 @@ comportamento visível ao paciente. É o par A/B exigido pelo princípio do test
 > funcionar como esperado em produção é log-sombra incompleto, nunca efeito no paciente.
 > Só um ambiente real resolve essa dúvida — ver próximos passos.
 
+> ℹ️ **A v23 registrada abaixo NÃO foi revertida — é o código que roda em produção hoje**
+> (redeployado como v25 e mantido nas versões seguintes). O que foi revertido é a etapa
+> posterior, a ampliação do contexto (v24). Ver o bloco de reversão parcial adiante.
+>
 > **DEPLOYADO e VALIDADO em produção em 2026-08-13**, projeto operacional
 > `udizowyfjnhuhgxkeayk` (clínica de teste "cleardent", instância WhatsApp real
 > `CAPPIA-IRIS-976154375`), `iris-nova-mensagem` v22 → v23. Commits `39ff797` (docs +
@@ -409,7 +430,43 @@ comportamento visível ao paciente. É o par A/B exigido pelo princípio do test
 >   em si, nunca a arquitetura V2.
 >
 > Nenhum desses critérios foi ainda avaliado como cumprido — a Etapa 2 segue em
-> acumulação de amostra. **Etapa 3 não autorizada.**
+> acumulação de amostra, com o contexto reduzido descrito na reversão abaixo.
+> **Etapa 3 não autorizada.**
+
+> ### ⛔ REVERSÃO da AMPLIAÇÃO do contexto estruturado — 2026-08-13
+>
+> **A Etapa 2 não foi revertida.** O que saiu de produção foi a ampliação do contexto que
+> viria depois dela.
+>
+> **O que NÃO caiu:** o despachante-sombra de `84109ca` **continua ativo em produção** e
+> segue medindo a cada atendimento — `index.ts` importa o comparador, chama
+> `compararComSombraCapacidadeV2` em todo turno e mantém `EdgeRuntime.waitUntil`.
+> Evidência: `sombra_v2` nos logs, a mais recente em 2026-08-14T12:26 UTC.
+>
+> **O que caiu:** apenas a AMPLIAÇÃO do contexto estruturado, deployada como v24 — commit
+> `9b58666`, revertido por `053a40b`; produção voltou ao código de `84109ca` (v25).
+> Saíram `agendamentos_futuros` no plural, `confirmacao_pendente.operacao` e o marcador
+> `ultimo_desfecho`. **Permaneceram** `dados_conhecidos`, `horarios_oferecidos` e
+> `agendamento_futuro` (singular) — é com esse contexto que a sombra mede hoje.
+>
+> **Defeito:** o CAS estrito comparava `atualizado_em` como **string**. O valor gerado
+> pelo código (`...T19:36:32.377Z`) nunca é igual ao mesmo instante relido do banco
+> (`...T19:36:32.377+00:00`) — logo, a transição pós-conclusão era **sempre** considerada
+> superada. Consequência em produção: após `reserva_criada` os campos operacionais nunca
+> eram limpos e o marcador nunca era publicado; a Iris passou a responder *"ainda não
+> confirmamos o agendamento"* a uma saudação.
+>
+> **Evidência:** nos logs do turno das 19:36 UTC, nenhum `PATCH` com `select=id,dados`
+> após a escrita da interpretação — a limpeza simplesmente não foi emitida.
+>
+> **Correção conhecida, não aplicada:** comparar **instante**, nunca representação textual
+> do timestamp. Enquanto isso não for feito, a **ampliação** do contexto não volta — a
+> sombra básica segue rodando normalmente.
+>
+> **A coluna `estado_conversa.ultimo_desfecho` permanece no banco** (decisão do Gabriel),
+> e as migrations/rollbacks continuam versionadas — o código revertido apenas não a lê.
+> Rollback dessa coluna exige ordem inversa do deploy (código antes, coluna depois), como
+> os próprios arquivos de rollback documentam.
 
 **Etapa 3 — Corte, capacidade por capacidade.** Trocar o roteamento real de uma capacidade
 por vez, na ordem de menor risco: **consulta** (somente leitura, falso positivo não executa
@@ -484,6 +541,56 @@ foi marcado como devendo ser `nenhuma_apenas_conversar` e o modelo escolheu
 ir buscá-los é defensável, provavelmente melhor. Registrado como definição de caso
 imprecisa, nunca como falha do contrato.
 
+## 11.2 O que está em produção hoje (v27) — e não vem desta arquitetura
+
+Registrado aqui porque o documento descrevia uma Etapa 2 ativa enquanto ela estava
+revertida, e nada dizia sobre o que de fato entrou. Todas as mudanças abaixo são
+correções do **roteamento atual**, medidas em produção em 13–14/08. Nenhuma delas
+antecipa a Etapa 3.
+
+| commit | o que entrou | evidência |
+|---|---|---|
+| `b517a80` | agendamento nasce com `nome`, `documento` e `procedimento` na própria linha | a RPC sempre aceitou os três; o adaptador nunca os enviava, e **toda** linha nascia com os três nulos |
+| `7c2203e` | a Iris recebe os agendamentos do paciente em **todo** turno | antes só em 3 das 30 decisões: ela respondia sem saber que o paciente tinha consulta marcada |
+
+**`b517a80`** — origem: `reservar-agendamento.ts`. `nome`/`documento` vêm da visão efetiva
+do cadastro (a mesma que `persistirPaciente` grava, mantendo ficha e agendamento
+coerentes); `procedimento` vem do catálogo, pelo `procedimento_id` **efetivo** — já
+considerada eventual substituição por Consulta/Avaliação. Agendamentos criados **antes**
+seguem com os campos nulos: corrigi-los é decisão separada, sobre dado de produção.
+
+**`7c2203e`** — a busca virou ponto único dentro de `finalizar` e acontece **depois** da
+decisão, o que a torna sempre coerente com o desfecho do próprio turno (inclui a reserva
+recém-criada). Era exatamente essa a objeção registrada para não entregar o fato aos
+fluxos operacionais, e ela deixa de valer com leitura posterior. Política de falha
+**deliberadamente diferente por caminho**: nas três decisões conversacionais o erro
+continua propagando; nas demais é absorvido — propagar ali criaria modo de falha novo,
+transformando reserva bem-sucedida em erro para o paciente. `desistencia` segue fora.
+
+**Fora deste repositório**, no `iris-portal-v2` (mesma janela): dentista passa a nascer com
+`id` próprio — sem ele o Core o ignorava **em silêncio** (`if (!dentistaId) continue`), e
+todo dentista criado pela tela era invisível para a Iris; lista dinâmica com "+" no lugar
+de 10 espaços fixos; bloqueio de autofill do navegador no cadastro; duração por
+procedimento como padrão. Decisão de produto associada: **não haverá exclusão de
+dentista** — apenas desativar/atualizar —, o que dispensou trocar rota/login de índice
+para identidade.
+
+## 11.3 Pendências abertas em 2026-08-14
+
+Registradas para não se perderem entre uma frente e outra. Nenhuma tem ação em curso.
+
+1. **Correção do CAS estrito** — comparar instante, nunca texto. Destrava o retorno da
+   **ampliação do contexto estruturado** (`agendamentos_futuros` plural,
+   `confirmacao_pendente.operacao`, `ultimo_desfecho`). A Etapa 2 em si nunca saiu do ar.
+2. **Contaminação do nome do paciente** — `"Pablo"` (escolha de dentista) grava `nome`.
+   Spec própria escrita, medida e aprovada: `specs/contexto-conversacional-unificado-v1.md`.
+   Autorizada implementação **exclusivamente em shadow**, ainda não iniciada.
+3. **Nomes de dentista inventados** — a Iris citou "Dra. Ana Mendes" e "Dr. Felipe Souza",
+   inexistentes no cadastro. Sem investigação.
+4. **Invisibilidade silenciosa** — cadastro malformado desaparece sem aviso (dentista sem
+   `id`, procedimento sem `id`). Causa comum de vários defeitos do dia; sem tratamento
+   estrutural.
+
 ## 12. O que este documento NÃO decide
 
 Deliberadamente em aberto, para não fixar por escrito o que ainda não foi medido:
@@ -496,6 +603,9 @@ Deliberadamente em aberto, para não fixar por escrito o que ainda não foi medi
   reintroduzir estado grudento;
 - se `natureza_mensagem` sobrevive ou é removida;
 - como resolver a ambiguidade do caso 4e (seção 11).
+- o contrato de interpretação em si — isso é objeto de
+  `specs/contexto-conversacional-unificado-v1.md`, spec própria, aprovada em 2026-08-14 e
+  autorizada apenas em shadow.
 
 Cada um destes exige medição própria antes de virar decisão.
 

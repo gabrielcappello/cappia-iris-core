@@ -14,6 +14,7 @@ import type { MotivoErroRemarcacao } from './remarcar-agendamento.ts';
 import type { MotivoErroCancelamento } from './cancelar-agendamento.ts';
 import type { AgendamentoAtivo } from './buscar-agendamento-ativo.ts';
 import type { HistoricoConversa } from './tipos.ts';
+import type { ContextoUnificadoSemMensagem } from './sombra-contexto-unificado.ts';
 
 /**
  * Catalogo de UMA clinica. Montado internamente pelo orquestrador, via
@@ -413,6 +414,16 @@ export interface ResultadoOrquestrador {
    * nada a oferecer, mesma disciplina das demais chaves opcionais do Core.
    */
   contexto_sombra_v2?: ContextoSombraCapacidadeV2;
+  /**
+   * SOMBRA do contrato unificado (specs/contexto-conversacional-unificado-v1.md).
+   * EXPERIMENTAL, SOMENTE MEDICAO -- nunca lido por nenhuma decisao de
+   * producao, nunca alimenta escrita nenhuma. Montado em `finalizar` a partir
+   * de fatos ja calculados neste turno.
+   *
+   * SEM a mensagem crua do turno -- quem despacha completa com
+   * `completarContextoUnificado`. Ver `ContextoUnificadoSemMensagem`.
+   */
+  contexto_unificado_sombra?: ContextoUnificadoSemMensagem;
 }
 
 /** Ver o comentario de `ResultadoOrquestrador.contexto_sombra_v2`. */

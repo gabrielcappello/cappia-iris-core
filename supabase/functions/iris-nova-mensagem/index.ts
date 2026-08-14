@@ -18,6 +18,11 @@ import {
 } from "./cliente-modelo-openai.ts";
 import { criarClienteModeloRedatorOpenAI, TIMEOUT_REDATOR_MS_APROVADO } from "./cliente-modelo-redator-openai.ts";
 import { compararComSombraCapacidadeV2, registrarResultadoSombra } from "./sombra-capacidade-v2.ts";
+import {
+  completarContextoUnificado,
+  medirComContextoUnificado,
+  registrarMedicaoUnificada,
+} from "./sombra-contexto-unificado.ts";
 import { ClinicaNaoEncontradaError, EntradaInvalidaError } from "./erros.ts";
 import type { ClienteBancoDados } from "./tipos.ts";
 import type { ClienteRpc } from "./mensagens-recebidas-tipos.ts";
@@ -207,6 +212,26 @@ Deno.serve(async (req: Request) => {
       .then(registrarResultadoSombra)
       .catch(() => {});
 
+    // SEGUNDA SOMBRA, independente da primeira: mede o CONTRATO UNIFICADO
+    // (specs/contexto-conversacional-unificado-v1.md). Mesmas garantias --
+    // roda depois da resposta ja decidida e gravada, nunca e `await`ada
+    // antes do `return`, e `medirComContextoUnificado` NUNCA lanca (coberto
+    // em sombra-contexto-unificado.test.ts). Nao le nem escreve estado
+    // nenhum; so produz uma linha de log com rotulos, sem PII.
+    //
+    // A mensagem crua do turno e completada AQUI, e nao dentro do
+    // orquestrador -- ver `ContextoUnificadoSemMensagem`.
+    const contextoUnificado = resultado.contexto_unificado_sombra;
+    const promessaSombraUnificada =
+      contextoUnificado === undefined
+        ? Promise.resolve()
+        : medirComContextoUnificado({
+            chaveApi: openaiKey,
+            contexto: completarContextoUnificado(contextoUnificado, payload.mensagem),
+          })
+            .then(registrarMedicaoUnificada)
+            .catch(() => {});
+
     // `EdgeRuntime.waitUntil` mantem o isolado vivo ate a promessa acima
     // terminar, mesmo depois da resposta ja ter sido enviada -- sem isso, o
     // runtime pode encerrar o isolado antes do log-sombra rodar. Quando o
@@ -215,6 +240,7 @@ Deno.serve(async (req: Request) => {
     // nunca espera por ela de nenhuma forma.
     if (typeof EdgeRuntime !== "undefined") {
       EdgeRuntime.waitUntil(promessaSombra);
+      EdgeRuntime.waitUntil(promessaSombraUnificada);
     }
 
     return jsonResponse({ resposta }, 200);

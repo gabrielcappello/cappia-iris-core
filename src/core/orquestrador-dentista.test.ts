@@ -11,8 +11,19 @@
 // duas tornaria os dois arquivos mais dificeis de ler.
 //
 // Todos os dados sao sinteticos.
+//
+// ISOLAMENTO: os dois testes que varrem o resultado inteiro atras de um
+// profissional NAO escolhido inspecionam a decisao e o estado operacional --
+// e so isso. `contexto_unificado_sombra` fica de fora por construcao: e um
+// payload de MEDICAO, que por contrato (specs/contexto-conversacional-
+// unificado-v1.md §3.2) carrega TODOS os dentistas ativos justamente para a
+// Iris conseguir COMPREENDER uma mencao. Ele nunca chega a redatora, nunca
+// alimenta decisao, escrita ou resposta. Filtra-lo ali reintroduziria o
+// defeito que a spec existe para corrigir -- um dentista mencionado sumir do
+// payload e o Core seguir com outro em silencio.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import type { ResultadoOrquestrador } from './orquestrador-tipos.ts';
 import { CONSULTA_AVALIACAO_ID, processarMensagem } from './orquestrador.ts';
 import { ClienteFalso, criarTabelasFalsasVazias, type TabelasFalsas } from './teste-cliente-falso.ts';
 import { ClienteModeloFalso } from './teste-cliente-modelo-falso.ts';
@@ -22,6 +33,11 @@ const PROVIDER = 'evolution';
 const INSTANCIA = 'clinica-teste';
 const TELEFONE = '5511999999999';
 const INSTANTE_ATUAL = { data: '2026-08-03', minuto_min: 480 };
+function operacional(resultado: ResultadoOrquestrador): string {
+  const { contexto_unificado_sombra: _sombra, ...resto } = resultado;
+  return JSON.stringify(resto);
+}
+
 const PROCEDIMENTO = 'limpeza-teste';
 
 /** Se a reserva for chamada por engano, o dublê lanca -- prova de isolamento. */
@@ -396,9 +412,9 @@ test('CASO 2.3 -- a existencia de OUTRO dentista apto nunca autoriza troca silen
   const resultado = await processar(clienteModelo(PROCEDIMENTO, brunoId), tabelas, 'limpeza com o Bruno', 'amanha');
 
   assert.equal(
-    JSON.stringify(resultado).includes(anaId),
+    operacional(resultado).includes(anaId),
     false,
-    'nenhuma parte do resultado pode apontar para o dentista que o paciente NAO escolheu'
+    'nenhuma parte da decisao nem do estado operacional pode apontar para o dentista que o paciente NAO escolheu'
   );
   assert.deepEqual(resultado.substituicao_por_avaliacao, { dentista_nome_exibido: 'Dr. Bruno Lima' });
 });
@@ -483,7 +499,7 @@ test('dentista de OUTRA clinica nunca vale como preferencia (isolamento)', async
   const resultado = await processar(clienteModelo(PROCEDIMENTO, outroId), tabelas, 'com o Intruso');
 
   assert.equal(resultado.decisao.tipo, 'aguardando_escolha_dentista');
-  assert.equal(JSON.stringify(resultado).includes('Intruso'), false);
+  assert.equal(operacional(resultado).includes('Intruso'), false);
 });
 
 test('dentista INATIVO escolhido pela IA nao vale como preferencia', async () => {

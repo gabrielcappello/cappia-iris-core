@@ -15,6 +15,7 @@ import { trocarTelefonePaciente } from './trocar-telefone-paciente.ts';
 import { calcularCadastroFaltante, comporVisaoEfetivaCadastro } from './cadastro-paciente.ts';
 import { derivarAcaoContextoHorarios, gravarContextoHorarios } from './contexto-horarios.ts';
 import { historicoValidoParaEnvio } from './historico-conversa.ts';
+import { montarContextoUnificado } from './sombra-contexto-unificado.ts';
 import { aplicarDados } from './aplicar-dados.ts';
 import { formatarData } from './gerar-resposta-paciente.ts';
 import { ErroRpcTecnico } from './erros.ts';
@@ -361,6 +362,17 @@ export async function processarMensagem(
         );
         return contextoSombra !== undefined ? { contexto_sombra_v2: contextoSombra } : {};
       })()),
+      // SOMBRA do contrato unificado -- so medicao. Montado de fato ja
+      // calculado; zero rede, zero decisao, nunca lido de volta aqui.
+      contexto_unificado_sombra: montarContextoUnificado({
+        dados,
+        // `CadastroPaciente` tem chaves fixas; o montador só lê os NOMES dos
+        // campos preenchidos, nunca o conteúdo.
+        cadastro: { ...identificacao.paciente.cadastro },
+        agendamentos: agendamentosDoPaciente,
+        catalogo: catalogoCarregado.tipo === 'carregado' ? catalogoCarregado.catalogo : null,
+        historico: identificacao.conversa.historico_conversa,
+      }),
     };
   };
 
