@@ -402,3 +402,43 @@ test('nenhuma data perde o valor absoluto: o rotulo relativo ACOMPANHA, nunca su
     assert.ok(fatos.proposta_pendente?.data.includes(`${dia}/${mes}`), `${data} deve manter a data absoluta`);
   }
 });
+
+// ── DIA SEM EXPEDIENTE NAO E FALHA TECNICA ───────────────────────────────────
+
+test('dia sem expediente: objetivo proprio e pedido de outra data -- nunca falha tecnica', () => {
+  for (const motivo of ['domingo', 'profissional_nao_atende'] as const) {
+    const fatos = derivarFatosAutorizados(
+      {
+        tipo: 'horarios_disponiveis',
+        procedimento_id: 'p1',
+        dentista_id: 'd1',
+        duracao_min: 40,
+        resultado: { tipo: 'sem_expediente_no_dia', motivo },
+      },
+      HOJE
+    );
+
+    assert.equal(fatos.objetivo, 'informar_sem_expediente_e_pedir_outra_data');
+    assert.equal(fatos.motivo_sem_expediente, motivo);
+    assert.deepEqual(fatos.dados_faltantes, ['data']);
+    // O que o paciente ouviu em 15/08/2026 e que nao pode voltar a acontecer.
+    assert.notEqual(fatos.objetivo, 'informar_falha_tecnica');
+    assert.equal(fatos.falha_tecnica, undefined);
+  }
+});
+
+test('configuracao realmente invalida CONTINUA sendo falha tecnica', () => {
+  const fatos = derivarFatosAutorizados(
+    {
+      tipo: 'horarios_disponiveis',
+      procedimento_id: 'p1',
+      dentista_id: 'd1',
+      duracao_min: 40,
+      resultado: { tipo: 'configuracao_invalida', motivo: 'sem_jornada' },
+    },
+    HOJE
+  );
+
+  assert.equal(fatos.objetivo, 'informar_falha_tecnica');
+  assert.equal(fatos.falha_tecnica, true);
+});

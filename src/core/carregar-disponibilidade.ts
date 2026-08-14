@@ -18,6 +18,7 @@ import { resolverDuracao } from './resolver-duracao.ts';
 import { resolverDisponibilidade } from './resolver-disponibilidade.ts';
 import type { ConfiguracaoDuracao, ResultadoResolucaoDuracao } from './duracao-tipos.ts';
 import type {
+  MotivoSemExpediente,
   EntradaDisponibilidade,
   InstanteAtual,
   IntervaloIndisponivel,
@@ -72,7 +73,8 @@ export async function carregarEntradaDisponibilidade(
     return { tipo: 'duracao_nao_resolvida', resultado: resultadoDuracao };
   }
 
-  const jornadas = construirJornadas(entrada.clinica_id, entrada.dentista_id, entrada.data, dentista);
+  const resultadoJornadas = construirJornadas(entrada.clinica_id, entrada.dentista_id, entrada.data, dentista);
+  const jornadas = resultadoJornadas.tipo === 'expediente' ? resultadoJornadas.jornadas : [];
   const almoco = construirAlmoco(entrada.clinica_id, entrada.dentista_id, entrada.data, dentista);
   const bloqueios = await buscarBloqueios(cliente, entrada.clinica_id, entrada.dentista_id, entrada.data);
   const agendamentos = await buscarAgendamentosConfirmados(
@@ -90,6 +92,7 @@ export async function carregarEntradaDisponibilidade(
     fuso: clinica.fuso_horario,
     duracao_min: resultadoDuracao.duracao_min,
     jornadas,
+    sem_expediente_no_dia: resultadoJornadas.tipo === 'sem_expediente_no_dia' ? resultadoJornadas.motivo : null,
     indisponiveis: [...almoco, ...bloqueios, ...agendamentos],
     modo: entrada.modo,
     instante_atual: entrada.instante_atual,
@@ -197,23 +200,35 @@ function configuracoesDuracao(
 
 // --- Jornada do dia (template semanal -> UM dia concreto) ---
 
+/**
+ * Lista vazia dizia duas coisas OPOSTAS: "o profissional nao atende nesse dia"
+ * (normal) e "a configuracao esta ilegivel" (defeito). O resolvedor nao tinha
+ * como separar as duas, e as duas viravam falha tecnica para o paciente
+ * (caso real do sabado 15/08/2026). O motivo agora viaja junto.
+ */
+type ResultadoJornadas =
+  | { tipo: 'expediente'; jornadas: JornadaDentista[] }
+  | { tipo: 'sem_expediente_no_dia'; motivo: MotivoSemExpediente }
+  | { tipo: 'configuracao_ilegivel' };
+
 function construirJornadas(
   clinicaId: string,
   dentistaId: string,
   data: string,
   dentista: DentistaCarregado
-): JornadaDentista[] {
+): ResultadoJornadas {
   const diaSemana = diaDaSemanaLocal(data);
-  if (diaSemana === null) return [];
+  // Data que nao vira dia da semana e defeito, nunca "nao atende".
+  if (diaSemana === null) return { tipo: 'configuracao_ilegivel' };
 
   // 0=segunda .. 6=domingo (mesma convencao de resolver-temporal.ts,
   // reimplementada aqui isoladamente -- ver nota de rodape do arquivo).
-  if (diaSemana === 6) return []; // domingo: nenhuma clinica atende.
+  if (diaSemana === 6) return { tipo: 'sem_expediente_no_dia', motivo: 'domingo' };
 
   let inicio: unknown;
   let fim: unknown;
   if (diaSemana === 5) {
-    if (dentista.sabado !== true) return [];
+    if (dentista.sabado !== true) return { tipo: 'sem_expediente_no_dia', motivo: 'profissional_nao_atende' };
     inicio = dentista.sab_ini;
     fim = dentista.sab_fim;
   } else {
@@ -223,9 +238,13 @@ function construirJornadas(
 
   const inicioMin = minutosDeHHMM(inicio);
   const fimMin = minutosDeHHMM(fim);
-  if (inicioMin === null || fimMin === null) return [];
+  // Aqui o dia TEM expediente previsto -- o horario e que esta ilegivel.
+  if (inicioMin === null || fimMin === null) return { tipo: 'configuracao_ilegivel' };
 
-  return [{ clinica_id: clinicaId, dentista_id: dentistaId, data, inicio_min: inicioMin, fim_min: fimMin }];
+  return {
+    tipo: 'expediente',
+    jornadas: [{ clinica_id: clinicaId, dentista_id: dentistaId, data, inicio_min: inicioMin, fim_min: fimMin }],
+  };
 }
 
 function construirAlmoco(

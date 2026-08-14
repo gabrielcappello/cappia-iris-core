@@ -141,6 +141,22 @@ export interface EntradaDisponibilidade {
   indisponiveis: readonly IntervaloIndisponivel[];
   modo: ModoConsulta;
   instante_atual: InstanteAtual;
+
+  /**
+   * `null` quando HA expediente nessa data; o motivo quando nao ha.
+   *
+   * Quem sabe o motivo e quem monta a jornada; o resolvedor so ve
+   * `jornadas: []`, e essa lista vazia significava duas coisas opostas -- "nao
+   * atende nesse dia" e "configuracao ilegivel". Sem este campo a distincao se
+   * perde antes de chegar aqui.
+   *
+   * OBRIGATORIO, nunca ausente: `validarFormaEntrada` exige o conjunto exato de
+   * chaves, e um campo omitivel deixaria "nao sei" indistinguivel de "ha
+   * expediente" -- que e exatamente o tipo de ambiguidade que este campo
+   * existe para eliminar. Com `null`, `jornadas: []` significa inequivocamente
+   * configuracao quebrada.
+   */
+  sem_expediente_no_dia: MotivoSemExpediente | null;
 }
 
 /**
@@ -215,11 +231,30 @@ export type CodigoErroIntervalos =
  * Resultado tipado: exatamente uma das seis variantes previstas. Uniao
  * discriminada por `tipo`.
  */
+/**
+ * `domingo` e regra da clinica (nenhuma atende); `profissional_nao_atende` e do
+ * dentista naquele dia da semana. A diferenca importa para o paciente: num caso
+ * outro dia resolve, no outro talvez outro profissional resolva.
+ */
+export type MotivoSemExpediente = 'domingo' | 'profissional_nao_atende';
+
 export type ResultadoDisponibilidade =
   /** Modo `grade`: uma ou mais opcoes reais, ordenadas e deduplicadas. */
   | { tipo: 'opcoes'; opcoes: readonly OpcaoHorario[] }
-  /** Nenhuma opcao real na data (e no periodo, quando informado). */
+  /** Nenhuma opcao real na data (e no periodo, quando informado). AGENDA EXISTE. */
   | { tipo: 'sem_disponibilidade' }
+  /**
+   * NAO HA EXPEDIENTE nessa data -- resultado NORMAL de disponibilidade, nunca
+   * defeito (2026-08-14, apos o caso real do sabado 15/08).
+   *
+   * Antes, dia sem jornada caia em `configuracao_invalida/sem_jornada` e
+   * chegava ao paciente como "estamos com uma falha tecnica". Sao tres estados
+   * distintos e o Core precisa preservar a diferenca:
+   *   - `sem_expediente_no_dia`: o profissional nao atende nessa data;
+   *   - `sem_disponibilidade`:   atende, mas a agenda do dia esta cheia;
+   *   - `configuracao_invalida`: a configuracao esta de fato quebrada.
+   */
+  | { tipo: 'sem_expediente_no_dia'; motivo: MotivoSemExpediente }
   /** Modo `horario_exato`: o horario pedido cabe integralmente e esta livre. */
   | { tipo: 'horario_exato_disponivel'; opcao: OpcaoHorario }
   /**

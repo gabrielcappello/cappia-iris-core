@@ -316,6 +316,12 @@ function respostaHorariosDisponiveis(resultado: ResultadoDisponibilidade): strin
     }
     case 'sem_disponibilidade':
       return 'Não encontrei nenhum horário livre para essa data. Quer tentar outra data?';
+    // NAO e falha: e o expediente da clinica. O texto diz o que de fato houve e
+    // pede outra data -- nunca sugere que algo quebrou.
+    case 'sem_expediente_no_dia':
+      return resultado.motivo === 'domingo'
+        ? 'Não temos atendimento aos domingos. Quer escolher outro dia?'
+        : 'Esse profissional não atende nesse dia. Quer escolher outra data?';
     case 'horario_exato_disponivel':
       // Estruturalmente nunca ocorre aqui (orquestrador.ts intercepta esse
       // caso antes de montar 'horarios_disponiveis'), mas o tipo

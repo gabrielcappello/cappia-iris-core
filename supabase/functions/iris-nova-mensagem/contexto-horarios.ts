@@ -225,6 +225,8 @@ function acaoParaHorariosDisponiveis(
     }
 
     case 'sem_disponibilidade':
+    // Nenhum horario foi oferecido nesse dia -- nada a lembrar, como nos irmaos.
+    case 'sem_expediente_no_dia':
     case 'horario_exato_disponivel':
     case 'configuracao_invalida':
     case 'erro_intervalos':

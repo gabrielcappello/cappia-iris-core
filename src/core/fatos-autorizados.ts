@@ -11,6 +11,7 @@
 
 import { formatarData, formatarMinutos } from './gerar-resposta-paciente.ts';
 import type { DecisaoOrquestrador } from './orquestrador-tipos.ts';
+import type { MotivoSemExpediente } from './disponibilidade-tipos.ts';
 import type { AgendamentoAtivo } from './buscar-agendamento-ativo.ts';
 
 /**
@@ -47,6 +48,7 @@ export type ObjetivoResposta =
   | 'pedir_data_ou_horario'
   | 'apresentar_horarios'
   | 'informar_sem_disponibilidade'
+  | 'informar_sem_expediente_e_pedir_outra_data' // 2026-08-14 -- dia sem expediente e fato de agenda, nunca falha tecnica.
   | 'pedir_confirmacao'
   | 'informar_reserva_criada'
   | 'informar_horario_indisponivel'
@@ -122,6 +124,13 @@ export interface FatosAutorizados {
    */
   preferencia_nao_localizada?: true;
   data_referencia?: string;
+
+  /**
+   * Por que nao ha expediente na data pedida (2026-08-14). `domingo` e regra da
+   * clinica; `profissional_nao_atende`, do dentista naquele dia da semana -- e
+   * a diferenca muda o que faz sentido oferecer ao paciente.
+   */
+  motivo_sem_expediente?: MotivoSemExpediente;
   horarios_disponiveis?: string[];
   agendamento_confirmado?: { data: string; horario: string };
   proposta_pendente?: { data: string; horario: string };
@@ -523,6 +532,17 @@ function fatosParaHorariosDisponiveis(
 
     case 'sem_disponibilidade':
       return { objetivo: 'informar_sem_disponibilidade' };
+
+    // O profissional nao atende nessa data. Fato de agenda, com objetivo
+    // proprio: informar e pedir outra data. Antes caia em
+    // `informar_falha_tecnica` e o paciente ouvia que o sistema estava
+    // quebrado (caso real do sabado 15/08/2026).
+    case 'sem_expediente_no_dia':
+      return {
+        objetivo: 'informar_sem_expediente_e_pedir_outra_data',
+        motivo_sem_expediente: resultado.motivo,
+        dados_faltantes: ['data'],
+      };
 
     case 'horario_exato_disponivel':
       // Estruturalmente nunca ocorre aqui (orquestrador.ts intercepta esse

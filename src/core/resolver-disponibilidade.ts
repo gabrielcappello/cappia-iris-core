@@ -97,8 +97,18 @@ export function resolverDisponibilidade(
   const jornadas = entrada.jornadas.filter((j) => noEscopo(j, entrada));
   const indisponiveis = entrada.indisponiveis.filter((i) => noEscopo(i, entrada));
 
+  // Dia sem expediente NAO e defeito: e o resultado normal de perguntar por um
+  // sabado que o profissional nao atende, ou por um domingo. Vem antes da
+  // validacao estrutural porque nao ha nada de estrutural para validar -- nao
+  // existe agenda nesse dia, e nunca deveria existir (2026-08-14).
+  if (entrada.sem_expediente_no_dia !== null) {
+    return { tipo: 'sem_expediente_no_dia', motivo: entrada.sem_expediente_no_dia };
+  }
+
   // Ausencia estrutural de agenda e diferente de agenda cheia: sem jornada
-  // oficial nao existe minuto livre algum a considerar (secao 3).
+  // oficial nao existe minuto livre algum a considerar (secao 3). Chegar aqui
+  // com a lista vazia significa que o dia TINHA expediente previsto e a
+  // configuracao nao foi legivel -- isso sim e defeito.
   if (jornadas.length === 0) {
     return { tipo: 'configuracao_invalida', motivo: 'sem_jornada' };
   }
@@ -514,6 +524,7 @@ const CHAVES_ENTRADA = [
   'indisponiveis',
   'modo',
   'instante_atual',
+  'sem_expediente_no_dia',
 ] as const;
 
 const TIPOS_MODO: readonly string[] = ['grade', 'proximo_disponivel', 'horario_exato'];
@@ -706,5 +717,39 @@ function validarFormaEntrada(entrada: unknown): asserts entrada is EntradaDispon
   }
   validarItensDeColecao(bruta.indisponiveis, 'indisponiveis');
 
+  validarSemExpediente(bruta.sem_expediente_no_dia, bruta.jornadas);
+
   validarModo(bruta.modo);
+}
+
+const MOTIVOS_SEM_EXPEDIENTE: readonly string[] = ['domingo', 'profissional_nao_atende'];
+
+/**
+ * Vocabulario FECHADO, e coerencia com `jornadas`.
+ *
+ * O marcador diz "nao ha expediente nessa data". Vir acompanhado de jornada e
+ * entrada CONTRADITORIA -- as duas afirmacoes nao podem ser verdadeiras ao
+ * mesmo tempo. Recusar e o unico desfecho correto: aceitar significaria usar o
+ * marcador para ignorar a configuracao presente, que e como um dia com agenda
+ * suja passaria a responder "nao atendemos" em vez de expor o defeito.
+ *
+ * Fail-closed, na mesma linha do resto deste validador: entrada incoerente
+ * nunca vira resultado, vira erro.
+ */
+function validarSemExpediente(valor: unknown, jornadas: readonly unknown[]): void {
+  if (valor === null) return;
+
+  if (typeof valor !== 'string' || !MOTIVOS_SEM_EXPEDIENTE.includes(valor)) {
+    throw new EntradaInvalidaError(
+      'sem_expediente_no_dia',
+      'sem_expediente_no_dia deve ser null, "domingo" ou "profissional_nao_atende"'
+    );
+  }
+
+  if (jornadas.length > 0) {
+    throw new EntradaInvalidaError(
+      'sem_expediente_no_dia',
+      'sem_expediente_no_dia exige jornadas vazias -- marcador de ausencia de expediente com jornada e contraditorio'
+    );
+  }
 }

@@ -93,7 +93,7 @@ test('modo procedimento: duracao vem de procedimentos[] do dentista, nao de dur'
   assert.equal(resultado.entrada.duracao_min, 40);
 });
 
-test('domingo: nenhuma jornada, resolvedor devolve sem_jornada', async () => {
+test('domingo: sem expediente -- resultado NORMAL, nunca configuracao_invalida', async () => {
   const tabelas = criarTabelasFalsasVazias();
   semearClinica(tabelas, [dentistaAuto()]);
   const cliente = new ClienteFalso(tabelas);
@@ -110,10 +110,13 @@ test('domingo: nenhuma jornada, resolvedor devolve sem_jornada', async () => {
   assert.equal(resultado.tipo, 'carregado');
   if (resultado.tipo !== 'carregado') return;
   assert.deepEqual(resultado.entrada.jornadas, []);
-  assert.deepEqual(resultado.resultado, { tipo: 'configuracao_invalida', motivo: 'sem_jornada' });
+  // Ate 2026-08-14 isto era `configuracao_invalida/sem_jornada` e chegava ao
+  // paciente como "estamos com uma falha tecnica". Domingo nao e defeito.
+  assert.equal(resultado.entrada.sem_expediente_no_dia, 'domingo');
+  assert.deepEqual(resultado.resultado, { tipo: 'sem_expediente_no_dia', motivo: 'domingo' });
 });
 
-test('sabado sem sabado=true: sem jornada (nao trabalha)', async () => {
+test('sabado sem sabado=true: sem expediente do PROFISSIONAL -- nao e defeito', async () => {
   const tabelas = criarTabelasFalsasVazias();
   semearClinica(tabelas, [dentistaAuto({ sabado: false })]);
   const cliente = new ClienteFalso(tabelas);
@@ -130,6 +133,9 @@ test('sabado sem sabado=true: sem jornada (nao trabalha)', async () => {
   assert.equal(resultado.tipo, 'carregado');
   if (resultado.tipo !== 'carregado') return;
   assert.deepEqual(resultado.entrada.jornadas, []);
+  // O caso real de 15/08/2026: o paciente pediu sabado e ouviu "falha tecnica".
+  assert.equal(resultado.entrada.sem_expediente_no_dia, 'profissional_nao_atende');
+  assert.deepEqual(resultado.resultado, { tipo: 'sem_expediente_no_dia', motivo: 'profissional_nao_atende' });
 });
 
 test('sabado com sabado=true: usa sab_ini/sab_fim, nunca inicio/fim de semana', async () => {

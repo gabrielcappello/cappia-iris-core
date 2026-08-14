@@ -82,6 +82,7 @@ function entrada(overrides: Partial<EntradaDisponibilidade> = {}): EntradaDispon
     jornadas: [jornada(min(8), min(12))],
     indisponiveis: [],
     modo: { tipo: 'grade' },
+    sem_expediente_no_dia: null,
     instante_atual: ONTEM,
     ...overrides,
   };
@@ -1671,4 +1672,78 @@ test('a entrada nunca e mutada pelo resolvedor', () => {
   resolverDisponibilidade(original);
 
   assert.deepEqual(original, copia);
+});
+
+// ── DIA SEM EXPEDIENTE ≠ AGENDA CHEIA ≠ CONFIGURACAO QUEBRADA ────────────────
+//
+// Caso real, 2026-08-14: o paciente pediu um turno para sabado 15/08. Os dois
+// dentistas da clinica tem `sabado: false`, entao nao havia jornada nesse dia.
+// Lista de jornadas vazia caia em `configuracao_invalida/sem_jornada`, que
+// virava `informar_falha_tecnica`, e o paciente ouviu:
+//
+//   "estamos com uma falha tecnica e nao conseguimos confirmar agendamentos"
+//
+// Nao havia falha nenhuma. O profissional so nao atende no sabado.
+
+test('dia sem expediente: resultado NORMAL, nunca configuracao_invalida', () => {
+  const resultado = resolverDisponibilidade(
+    entrada({ jornadas: [], sem_expediente_no_dia: 'profissional_nao_atende' })
+  );
+
+  assert.deepEqual(resultado, { tipo: 'sem_expediente_no_dia', motivo: 'profissional_nao_atende' });
+});
+
+test('domingo: mesmo resultado, motivo proprio -- e regra da clinica, nao do dentista', () => {
+  const resultado = resolverDisponibilidade(entrada({ jornadas: [], sem_expediente_no_dia: 'domingo' }));
+
+  assert.deepEqual(resultado, { tipo: 'sem_expediente_no_dia', motivo: 'domingo' });
+});
+
+test('agenda EXISTE e esta cheia: continua sem_disponibilidade, nunca sem_expediente', () => {
+  const resultado = resolverDisponibilidade(
+    entrada({
+      jornadas: [jornada(min(8), min(12))],
+      indisponiveis: [bloqueio(min(8), min(12))],
+      sem_expediente_no_dia: null,
+    })
+  );
+
+  assert.equal(resultado.tipo, 'sem_disponibilidade');
+});
+
+test('configuracao REALMENTE quebrada: segue configuracao_invalida -- a correcao nao a mascarou', () => {
+  const resultado = resolverDisponibilidade(entrada({ jornadas: [], sem_expediente_no_dia: null }));
+
+  assert.deepEqual(resultado, { tipo: 'configuracao_invalida', motivo: 'sem_jornada' });
+});
+
+test('marcador de sem expediente JUNTO com jornada e contraditorio: recusado, nunca resolvido', () => {
+  // As duas afirmacoes nao podem ser verdadeiras ao mesmo tempo. Aceitar
+  // significaria usar o marcador para IGNORAR a configuracao presente -- e um
+  // dia com agenda suja passaria a responder "nao atendemos" em vez de expor o
+  // defeito. A primeira versao desta correcao aceitava; estava errada.
+  assert.throws(
+    () => resolverDisponibilidade(entrada({ jornadas: [jornada(min(8), min(12))], sem_expediente_no_dia: 'domingo' })),
+    EntradaInvalidaError
+  );
+
+  // Vale tambem com jornada estruturalmente invalida: a incoerencia da entrada
+  // e recusada antes de qualquer outro julgamento.
+  assert.throws(
+    () => resolverDisponibilidade(entrada({ jornadas: [jornada(min(12), min(8))], sem_expediente_no_dia: 'domingo' })),
+    EntradaInvalidaError
+  );
+});
+
+test('sem_expediente_no_dia tem vocabulario FECHADO: qualquer outro valor e recusado', () => {
+  for (const invalido of ['sabado', 'feriado', '', 'DOMINGO', 0, false, undefined, {}]) {
+    assert.throws(
+      () =>
+        resolverDisponibilidade(
+          entrada({ jornadas: [], sem_expediente_no_dia: invalido as never })
+        ),
+      EntradaInvalidaError,
+      `valor ${JSON.stringify(invalido)} deveria ser recusado`
+    );
+  }
 });
