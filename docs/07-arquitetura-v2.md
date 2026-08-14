@@ -584,12 +584,20 @@ Registradas para não se perderem entre uma frente e outra. Nenhuma tem ação e
    `confirmacao_pendente.operacao`, `ultimo_desfecho`). A Etapa 2 em si nunca saiu do ar.
 2. **Contaminação do nome do paciente** — `"Pablo"` (escolha de dentista) grava `nome`.
    Spec própria escrita, medida e aprovada: `specs/contexto-conversacional-unificado-v1.md`.
-   Autorizada implementação **exclusivamente em shadow**, ainda não iniciada.
+   Implementada **exclusivamente em shadow** e no ar desde a v28 (2026-08-14). O defeito
+   **continua ocorrendo** no atendimento real — a guarda só observa, não corrige.
 3. **Nomes de dentista inventados** — a Iris citou "Dra. Ana Mendes" e "Dr. Felipe Souza",
    inexistentes no cadastro. Sem investigação.
 4. **Invisibilidade silenciosa** — cadastro malformado desaparece sem aviso (dentista sem
    `id`, procedimento sem `id`). Causa comum de vários defeitos do dia; sem tratamento
    estrutural.
+5. **Fuso fixo em `America/Sao_Paulo`** — `obterInstanteAtual()` (`index.ts`) define o "hoje"
+   do turno com fuso fixo, enquanto a clínica tem `fuso_horario` próprio, já usado na
+   resolução de disponibilidade. Para uma clínica em outro fuso, o "hoje" pode divergir do
+   dia local dela. Sempre foi assim; passou a ser **visível ao paciente** com a relação
+   `hoje`/`amanhã` entregue à redatora (2026-08-14). Decisão do Gabriel no mesmo dia: não
+   bloqueia a correção — a clínica testada está no fuso certo —, mas **precisa ser tratado
+   antes de atender clínicas em outros fusos**.
 
 ## 12. O que este documento NÃO decide
 

@@ -139,12 +139,16 @@ Deno.serve(async (req: Request) => {
   });
 
   try {
+    // UMA leitura do instante por turno, compartilhada entre a decisao e os
+    // fatos da redatora: e o que garante que a relacao "hoje/amanha" entregue
+    // a redatora nunca divirja da data que o Core de fato resolveu.
+    const instanteAtual = obterInstanteAtual();
     const resultado = await processarMensagem(clienteModelo, clienteBanco, clienteRpc, {
       provider: payload.provider,
       instancia_whatsapp: payload.instancia_whatsapp,
       telefone_normalizado: payload.telefone_normalizado,
       mensagens_atuais: [payload.mensagem],
-      instante_atual: obterInstanteAtual(),
+      instante_atual: instanteAtual,
     });
 
     // specs/resposta-conversacional-v1.md: todo desfecho passa pela IA
@@ -156,6 +160,7 @@ Deno.serve(async (req: Request) => {
       mensagemPaciente: payload.mensagem,
       naturezaMensagem: resultado.natureza_mensagem,
       historicoConversa: resultado.historico_conversa,
+      dataHoje: instanteAtual.data,
       // Quando o procedimento cedeu lugar a Consulta/Avaliacao para preservar
       // o dentista escolhido (specs/dentista-semantico-v1.md), a redatora
       // PRECISA informar a troca -- ela dispensa nova aceitacao, nunca a

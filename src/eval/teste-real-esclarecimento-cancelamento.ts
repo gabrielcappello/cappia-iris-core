@@ -260,7 +260,7 @@ async function main(): Promise<void> {
   }
 
   // === REDATORA REAL sobre os fatos autorizados deste turno ===
-  const fatos = derivarFatosAutorizados(resultado2.decisao);
+  const fatos = derivarFatosAutorizados(resultado2.decisao, INSTANTE_ATUAL.data);
   console.log('');
   console.log(`fatos autorizados: ${JSON.stringify(fatos)}`);
 

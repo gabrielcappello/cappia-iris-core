@@ -61,6 +61,14 @@ export interface GerarRespostaConversacionalEntrada {
    * e o orquestrador.
    */
   agendamentosDoPaciente?: readonly AgendamentoAtivo[];
+
+  /**
+   * `instante_atual.data` do turno (YYYY-MM-DD), a MESMA referencia que o Core
+   * usou para resolver "hoje". Obrigatorio de proposito: sem ela a redatora
+   * volta a DEDUZIR se a data proposta e hoje ou amanha -- foi assim que, em
+   * 2026-08-14, uma proposta para hoje virou "amanha, 14/08".
+   */
+  dataHoje: string;
 }
 
 /**
@@ -75,6 +83,7 @@ export async function gerarRespostaConversacional(
 ): Promise<ResultadoRespostaConversacional> {
   const fatos = derivarFatosAutorizados(
     entrada.decisao,
+    entrada.dataHoje,
     entrada.substituicaoPorAvaliacao,
     entrada.agendamentosDoPaciente
   );

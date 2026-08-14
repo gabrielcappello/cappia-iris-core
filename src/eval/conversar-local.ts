@@ -207,12 +207,13 @@ async function main(): Promise<void> {
       if (mensagem.toLowerCase() === 'sair') break;
 
       try {
+        const instanteAtual = obterInstanteAtual();
         const resultado = await processarMensagem(clienteModelo, clienteBanco, clienteRpc, {
           provider: PROVIDER,
           instancia_whatsapp: INSTANCIA,
           telefone_normalizado: TELEFONE,
           mensagens_atuais: [mensagem],
-          instante_atual: obterInstanteAtual(),
+          instante_atual: instanteAtual,
         });
 
         const { resposta, motivo_fallback } = await gerarRespostaConversacional(clienteRedator, {
@@ -220,6 +221,7 @@ async function main(): Promise<void> {
           mensagemPaciente: mensagem,
           naturezaMensagem: resultado.natureza_mensagem,
           historicoConversa: resultado.historico_conversa,
+          dataHoje: instanteAtual.data,
         });
 
         await gravarHistoricoConversa(clienteBanco, {

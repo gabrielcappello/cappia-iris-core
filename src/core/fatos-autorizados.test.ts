@@ -2,9 +2,14 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { derivarFatosAutorizados, type FatosAutorizados } from './fatos-autorizados.ts';
+import { derivarFatosAutorizados, relacaoComHoje, type FatosAutorizados } from './fatos-autorizados.ts';
 import type { DecisaoOrquestrador } from './orquestrador-tipos.ts';
 import type { OpcaoHorario } from './disponibilidade-tipos.ts';
+
+// `HOJE` distante das datas dos casos existentes: a relacao fica 'outra' e a
+// data sai absoluta, exatamente como saia antes desta correcao. Os casos
+// hoje/amanha sao cobertos pelos testes proprios no fim deste arquivo.
+const HOJE = '2026-01-01';
 
 function opcao(overrides: Partial<OpcaoHorario> = {}): OpcaoHorario {
   return {
@@ -78,7 +83,7 @@ test('PII: dados_faltantes carrega somente NOMES de campo do vocabulario fechado
   ];
 
   for (const decisao of decisoes) {
-    const fatos = derivarFatosAutorizados(decisao);
+    const fatos = derivarFatosAutorizados(decisao, HOJE);
     for (const campo of fatos.dados_faltantes ?? []) {
       assert.ok(
         CAMPOS_FALTANTES_PERMITIDOS.includes(campo),
@@ -150,7 +155,7 @@ test('mapeamento: os 18 tipos produzem um objetivo, nenhum lanca', () => {
   ];
   assert.equal(decisoes.length, 22);
   for (const decisao of decisoes) {
-    const fatos = derivarFatosAutorizados(decisao);
+    const fatos = derivarFatosAutorizados(decisao, HOJE);
     assert.equal(typeof fatos.objetivo, 'string');
     assertNuncaContemFraseProntaOuId(fatos);
   }
@@ -159,7 +164,7 @@ test('mapeamento: os 18 tipos produzem um objetivo, nenhum lanca', () => {
 // --- Regra estrutural: nenhum campo carrega frase pronta ---
 
 test('estrutural: nenhum valor de FatosAutorizados e uma frase completa (nunca contem espacos multiplos de frase)', () => {
-  const fatos = derivarFatosAutorizados({ tipo: 'saudacao' });
+  const fatos = derivarFatosAutorizados({ tipo: 'saudacao' }, HOJE);
   for (const valor of Object.values(fatos)) {
     if (typeof valor === 'string') {
       assert.ok(valor.split(' ').length <= 3, `campo parece uma frase pronta: "${valor}"`);
@@ -176,7 +181,7 @@ test('aguardando_escolha_dentista: dentistas_candidatos carrega os nomes exibido
       { dentista_id: 'd1', clinica_id: 'c1', nome_exibido: 'Dra. Ana' },
       { dentista_id: 'd2', clinica_id: 'c1', nome_exibido: 'Dr. Beto' },
     ],
-  });
+  }, HOJE);
   assert.equal(fatos.objetivo, 'escolher_entre_dentistas');
   assert.deepEqual(fatos.dentistas_candidatos, ['Dra. Ana', 'Dr. Beto']);
 });
@@ -188,7 +193,7 @@ test('horarios_disponiveis/opcoes: horarios_disponiveis e data_referencia format
     dentista_id: 'd1',
     duracao_min: 40,
     resultado: { tipo: 'opcoes', opcoes: [opcao({ inicio_min: 480 }), opcao({ inicio_min: 540 })] },
-  });
+  }, HOJE);
   assert.equal(fatos.objetivo, 'apresentar_horarios');
   assert.deepEqual(fatos.horarios_disponiveis, ['08:00', '09:00']);
   assert.equal(fatos.data_referencia, '05/08');
@@ -200,7 +205,7 @@ test('aguardando_confirmacao: proposta_pendente com data/horario formatados', ()
     procedimento_id: 'p1',
     dentista_id: 'd1',
     opcao: opcao({ data: '2026-12-25', inicio_min: 540 }),
-  });
+  }, HOJE);
   assert.equal(fatos.objetivo, 'pedir_confirmacao');
   assert.deepEqual(fatos.proposta_pendente, { data: '25/12', horario: '09:00' });
 });
@@ -214,7 +219,7 @@ test('reserva_criada: agendamento_confirmado com data/horario, sem IDs', () => {
     duracao_min: 40,
     data: '2026-08-05',
     horario: '09:00',
-  });
+  }, HOJE);
   assert.equal(fatos.objetivo, 'informar_reserva_criada');
   assert.deepEqual(fatos.agendamento_confirmado, { data: '05/08', horario: '09:00' });
 });
@@ -231,7 +236,7 @@ test('falha tecnica: os cinco estados marcam falha_tecnica:true e objetivo infor
     { tipo: 'reserva_falhou', motivo: 'erro_tecnico' },
   ];
   for (const decisao of decisoes) {
-    const fatos = derivarFatosAutorizados(decisao);
+    const fatos = derivarFatosAutorizados(decisao, HOJE);
     assert.equal(fatos.objetivo, 'informar_falha_tecnica');
     assert.equal(fatos.falha_tecnica, true);
   }
@@ -243,7 +248,7 @@ test('aguardando_escolha_agendamento: agendamentos_candidatos carrega data+horar
   const fatos = derivarFatosAutorizados({
     tipo: 'aguardando_escolha_agendamento',
     agendamentos: [agendamentoAtivo({ data: '2026-08-10', horario: '14:00' }), agendamentoAtivo({ data: '2026-08-15', horario: '09:00' })],
-  });
+  }, HOJE);
   assert.equal(fatos.objetivo, 'escolher_entre_agendamentos');
   assert.deepEqual(fatos.agendamentos_candidatos, ['10/08 às 14:00', '15/08 às 09:00']);
   assertNuncaContemFraseProntaOuId(fatos);
@@ -256,7 +261,7 @@ test('aguardando_confirmacao_remarcacao: agendamento_atual (de onde) e proposta_
     procedimento_id: 'p1',
     dentista_id: 'd1',
     opcao: opcao({ data: '2026-08-20', inicio_min: 540 }),
-  });
+  }, HOJE);
   assert.equal(fatos.objetivo, 'pedir_confirmacao_remarcacao');
   assert.deepEqual(fatos.agendamento_atual, { data: '10/08', horario: '14:00' });
   assert.deepEqual(fatos.proposta_pendente, { data: '20/08', horario: '09:00' });
@@ -273,7 +278,7 @@ test('remarcacao_criada: agendamento_confirmado (mesmo campo de reserva_criada),
     duracao_min: 40,
     data: '2026-08-20',
     horario: '09:00',
-  });
+  }, HOJE);
   assert.equal(fatos.objetivo, 'informar_remarcacao_criada');
   assert.deepEqual(fatos.agendamento_confirmado, { data: '20/08', horario: '09:00' });
   assertNuncaContemFraseProntaOuId(fatos);
@@ -287,6 +292,113 @@ test('determinismo: mesma decisao produz sempre os mesmos fatos', () => {
     duracao_min: 40,
     resultado: { tipo: 'opcoes', opcoes: [opcao()] },
   };
-  const resultados = Array.from({ length: 5 }, () => JSON.stringify(derivarFatosAutorizados(decisao)));
+  const resultados = Array.from({ length: 5 }, () => JSON.stringify(derivarFatosAutorizados(decisao, HOJE)));
   assert.equal(new Set(resultados).size, 1);
+});
+
+// ── RELACAO DA DATA COM HOJE ─────────────────────────────────────────────────
+//
+// Defeito real, 2026-08-14 as 13:52 (producao). O Core decidiu `2026-08-14
+// 15:00` -- HOJE -- e gravou `proposta_pendente: { data: '2026-08-14',
+// horario: '15:00' }`. A redatora recebia so `"14/08"`, sem saber que dia era
+// hoje, e escreveu: "o proximo horario disponivel com o Dr. Pablo e amanha,
+// 14/08, as 15h" -- uma frase que se contradiz sozinha.
+//
+// A causa nao era a decisao: era a redatora DEDUZINDO uma relacao que ninguem
+// lhe deu. Agora quem calcula e o Core, deterministicamente.
+
+test('relacaoComHoje: hoje, amanha, posterior, anterior', () => {
+  assert.equal(relacaoComHoje('2026-08-14', '2026-08-14'), 'hoje');
+  assert.equal(relacaoComHoje('2026-08-15', '2026-08-14'), 'amanha');
+  assert.equal(relacaoComHoje('2026-08-16', '2026-08-14'), 'outra');
+  assert.equal(relacaoComHoje('2026-08-13', '2026-08-14'), 'outra');
+});
+
+test('relacaoComHoje: atravessa mes e ano sem depender do fuso do processo', () => {
+  assert.equal(relacaoComHoje('2026-09-01', '2026-08-31'), 'amanha');
+  assert.equal(relacaoComHoje('2027-01-01', '2026-12-31'), 'amanha');
+  assert.equal(relacaoComHoje('2026-03-01', '2026-02-28'), 'amanha'); // 2026 nao e bissexto
+});
+
+test('relacaoComHoje: data malformada cai em outra -- perder o "hoje" e aceitavel, errar nao', () => {
+  assert.equal(relacaoComHoje('', '2026-08-14'), 'outra');
+  assert.equal(relacaoComHoje('14/08/2026', '2026-08-14'), 'outra');
+  assert.equal(relacaoComHoje('2026-08-14', 'ontem'), 'outra');
+});
+
+test('proposta pendente HOJE: a redatora recebe a relacao pronta -- o caso 13:52', () => {
+  const fatos = derivarFatosAutorizados(
+    { tipo: 'aguardando_confirmacao', procedimento_id: 'p1', dentista_id: 'd1', opcao: opcao({ data: '2026-08-14' }) },
+    '2026-08-14'
+  );
+
+  assert.equal(fatos.proposta_pendente?.data, 'hoje, 14/08');
+});
+
+test('proposta pendente AMANHA', () => {
+  const fatos = derivarFatosAutorizados(
+    { tipo: 'aguardando_confirmacao', procedimento_id: 'p1', dentista_id: 'd1', opcao: opcao({ data: '2026-08-15' }) },
+    '2026-08-14'
+  );
+
+  assert.equal(fatos.proposta_pendente?.data, 'amanhã, 15/08');
+});
+
+test('proposta pendente em data POSTERIOR: so a data absoluta, sem rotulo relativo', () => {
+  const fatos = derivarFatosAutorizados(
+    { tipo: 'aguardando_confirmacao', procedimento_id: 'p1', dentista_id: 'd1', opcao: opcao({ data: '2026-08-20' }) },
+    '2026-08-14'
+  );
+
+  assert.equal(fatos.proposta_pendente?.data, '20/08');
+});
+
+test('a CONFIRMACAO leva a mesma relacao -- nao e regra so da proposta', () => {
+  const confirmar = (data: string, hoje: string) =>
+    derivarFatosAutorizados(
+      {
+        tipo: 'reserva_criada',
+        agendamento_id: 'a1',
+        dentista_id: 'd1',
+        procedimento_id: 'p1',
+        duracao_min: 40,
+        data,
+        horario: '15:00',
+      },
+      hoje
+    ).agendamento_confirmado?.data;
+
+  assert.equal(confirmar('2026-08-14', '2026-08-14'), 'hoje, 14/08');
+  assert.equal(confirmar('2026-08-15', '2026-08-14'), 'amanhã, 15/08');
+  assert.equal(confirmar('2026-08-20', '2026-08-14'), '20/08');
+});
+
+test('a data de referencia dos horarios oferecidos leva a mesma relacao', () => {
+  const fatos = derivarFatosAutorizados(
+    {
+      tipo: 'horarios_disponiveis',
+      procedimento_id: 'p1',
+      dentista_id: 'd1',
+      duracao_min: 40,
+      resultado: { tipo: 'opcoes', opcoes: [opcao({ data: '2026-08-14' }), opcao({ data: '2026-08-14', inicio_min: 600 })] },
+    },
+    '2026-08-14'
+  );
+
+  assert.equal(fatos.data_referencia, 'hoje, 14/08');
+});
+
+test('nenhuma data perde o valor absoluto: o rotulo relativo ACOMPANHA, nunca substitui', () => {
+  for (const [data, hoje] of [
+    ['2026-08-14', '2026-08-14'],
+    ['2026-08-15', '2026-08-14'],
+    ['2026-08-20', '2026-08-14'],
+  ]) {
+    const fatos = derivarFatosAutorizados(
+      { tipo: 'aguardando_confirmacao', procedimento_id: 'p1', dentista_id: 'd1', opcao: opcao({ data }) },
+      hoje
+    );
+    const [, mes, dia] = data.split('-');
+    assert.ok(fatos.proposta_pendente?.data.includes(`${dia}/${mes}`), `${data} deve manter a data absoluta`);
+  }
 });

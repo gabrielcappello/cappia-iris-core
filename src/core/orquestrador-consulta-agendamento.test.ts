@@ -13,6 +13,11 @@ import { ClienteFalso, criarTabelasFalsasVazias, type TabelasFalsas } from './te
 import { ClienteModeloFalso } from './teste-cliente-modelo-falso.ts';
 import { ClienteRpcFalso, type RespostaRpc } from './teste-cliente-rpc-falso.ts';
 
+// `HOJE` deliberadamente distante das datas dos casos: a relacao fica
+// 'outra' e a data sai absoluta, como sempre saiu. Os casos hoje/amanha tem
+// testes proprios em fatos-autorizados.test.ts.
+const HOJE = '2026-01-01';
+
 const PROVIDER = 'evolution';
 const INSTANCIA = 'clinica-teste';
 const TELEFONE = '5511999999999';
@@ -401,7 +406,7 @@ test('8. a busca acontece DEPOIS da decisao -- inclui o agendamento criado no pr
 });
 
 test('fato entregue a redatora e texto pronto, com dia da semana calculado pelo Core', () => {
-  const fatos = derivarFatosAutorizados({ tipo: 'saudacao' }, undefined, [
+  const fatos = derivarFatosAutorizados({ tipo: 'saudacao' }, HOJE, undefined, [
     {
       agendamento_id: crypto.randomUUID(),
       data: '2026-08-10', // 2026-08-10 = segunda-feira (verificado)
@@ -419,7 +424,7 @@ test('fato entregue a redatora e texto pronto, com dia da semana calculado pelo 
 });
 
 test('fato degrada com campos nulaveis, nunca exibe null', () => {
-  const fatos = derivarFatosAutorizados({ tipo: 'duvida_livre' }, undefined, [
+  const fatos = derivarFatosAutorizados({ tipo: 'duvida_livre' }, HOJE, undefined, [
     {
       agendamento_id: crypto.randomUUID(),
       data: '2026-08-15', // sabado
@@ -436,6 +441,6 @@ test('fato degrada com campos nulaveis, nunca exibe null', () => {
 });
 
 test('lista vazia nunca vira campo -- ausente, nunca []', () => {
-  const fatos = derivarFatosAutorizados({ tipo: 'saudacao' }, undefined, []);
+  const fatos = derivarFatosAutorizados({ tipo: 'saudacao' }, HOJE, undefined, []);
   assert.ok(!('agendamentos_do_paciente' in fatos));
 });

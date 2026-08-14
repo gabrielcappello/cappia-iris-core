@@ -16,7 +16,11 @@ const DECISAO_SAUDACAO: DecisaoOrquestrador = { tipo: 'saudacao' };
 // Entrada base para os testes que nao se importam com naturezaMensagem/
 // historicoConversa -- explicita em vez de omitida, seguindo a mesma regra
 // que a propria redatora segue ("ausencia de fato nao e fato").
-const BASE = { naturezaMensagem: 'saudacao' as const, historicoConversa: null };
+// `HOJE` deliberadamente distante das datas dos casos: a relacao fica
+// 'outra' e a data sai absoluta, como sempre saiu. Os casos hoje/amanha tem
+// testes proprios em fatos-autorizados.test.ts.
+const HOJE = '2026-01-01';
+const BASE = { naturezaMensagem: 'saudacao' as const, historicoConversa: null, dataHoje: HOJE };
 
 function clienteQueRetorna(texto: string): ClienteModeloRedator {
   return { redigir: async () => texto };
@@ -151,6 +155,7 @@ test('a redatora recebe natureza_mensagem repassada sem alteracao', async () => 
     mensagemPaciente: 'oi',
     naturezaMensagem: 'duvida',
     historicoConversa: null,
+    dataHoje: HOJE,
   });
   assert.equal(capturada[0].naturezaMensagem, 'duvida');
 });
@@ -178,7 +183,7 @@ function historicoComIdade(idadeMs: number): HistoricoConversa {
 
 test('historicoConversa null: nunca chega a EntradaRedator (campo ausente, nunca null)', async () => {
   const { cliente, capturada } = clienteQueCaptura();
-  await gerarRespostaConversacional(cliente, { decisao: DECISAO_SAUDACAO, mensagemPaciente: 'oi', naturezaMensagem: 'saudacao', historicoConversa: null });
+  await gerarRespostaConversacional(cliente, { decisao: DECISAO_SAUDACAO, mensagemPaciente: 'oi', naturezaMensagem: 'saudacao', historicoConversa: null, dataHoje: HOJE });
   assert.equal('historicoRecente' in capturada[0], false);
 });
 
@@ -190,6 +195,7 @@ test('historicoConversa dentro da janela de 24h: chega intacta a EntradaRedator'
     mensagemPaciente: 'esse mesmo',
     naturezaMensagem: 'resposta',
     historicoConversa: historico,
+    dataHoje: HOJE,
   });
   assert.deepEqual(capturada[0].historicoRecente, historico);
 });
@@ -202,6 +208,7 @@ test('historicoConversa totalmente expirado (> 24h): omitido do payload, nunca e
     mensagemPaciente: 'esse mesmo',
     naturezaMensagem: 'resposta',
     historicoConversa: historico,
+    dataHoje: HOJE,
   });
   assert.equal('historicoRecente' in capturada[0], false);
 });
@@ -214,6 +221,7 @@ test('historicoConversa exatamente no limite da janela ainda e enviado (fronteir
     mensagemPaciente: 'esse mesmo',
     naturezaMensagem: 'resposta',
     historicoConversa: historico,
+    dataHoje: HOJE,
   });
   assert.deepEqual(capturada[0].historicoRecente, historico);
 });
@@ -231,6 +239,7 @@ test('historicoConversa com 3 pares dentro da janela e 2 expirados: so os 3 cheg
     mensagemPaciente: 'oi',
     naturezaMensagem: 'resposta',
     historicoConversa: [...antigos, ...recentes],
+    dataHoje: HOJE,
   });
   assert.deepEqual(capturada[0].historicoRecente, recentes);
 });

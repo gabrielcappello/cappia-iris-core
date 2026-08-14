@@ -198,12 +198,67 @@ export interface FatosAutorizados {
  * (gerar-resposta-paciente.ts) preserva a nuance completa quando a redacao
  * falha ou e reprovada.
  */
+/**
+ * RELACAO FACTUAL da data com o dia de hoje.
+ *
+ * Existe porque a redatora nao tem como saber que dia e hoje: ela recebia
+ * apenas `"14/08"` e precisava DEDUZIR se aquilo era hoje, amanha ou outro
+ * dia. Em 2026-08-14 as 13:52 ela deduziu errado -- o Core tinha decidido
+ * `2026-08-14 15:00` (hoje) e a resposta saiu como "amanha, 14/08", uma frase
+ * internamente contraditoria.
+ *
+ * O calculo e do Core, deterministico, em dias de calendario, sobre a MESMA
+ * data de referencia que o Core usou para resolver "hoje" no turno
+ * (`instante_atual.data`) -- por construcao a relacao nunca diverge da decisao.
+ *
+ * Data malformada cai em `'outra'`: perder o "hoje" e aceitavel, afirmar um
+ * "hoje" errado nao e.
+ */
+export type RelacaoComHoje = 'hoje' | 'amanha' | 'outra';
+
+function emDiasUtc(dataIso: string): number | null {
+  const partes = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dataIso);
+  if (partes === null) return null;
+  const instante = Date.UTC(Number(partes[1]), Number(partes[2]) - 1, Number(partes[3]));
+  return Number.isNaN(instante) ? null : instante / 86400000;
+}
+
+export function relacaoComHoje(dataIso: string, hojeIso: string): RelacaoComHoje {
+  const data = emDiasUtc(dataIso);
+  const hoje = emDiasUtc(hojeIso);
+  if (data === null || hoje === null) return 'outra';
+  const diferenca = data - hoje;
+  if (diferenca === 0) return 'hoje';
+  if (diferenca === 1) return 'amanha';
+  return 'outra';
+}
+
+/**
+ * UNICA forma de uma data chegar a redatora. Aplicada a TODOS os fatos que
+ * carregam data -- proposta, confirmacao, cancelamento, remarcacao, candidatos
+ * e data de referencia dos horarios -- em vez de uma regra por tipo de
+ * mensagem. A data absoluta nunca some: ela acompanha o rotulo relativo.
+ */
+export function formatarDataParaRedatora(dataIso: string, hojeIso: string): string {
+  const absoluta = formatarData(dataIso);
+  switch (relacaoComHoje(dataIso, hojeIso)) {
+    case 'hoje':
+      return `hoje, ${absoluta}`;
+    case 'amanha':
+      return `amanhã, ${absoluta}`;
+    default:
+      return absoluta;
+  }
+}
+
 export function derivarFatosAutorizados(
   decisao: DecisaoOrquestrador,
+  /** `instante_atual.data` do turno -- a MESMA referencia que o Core usou. */
+  dataHoje: string,
   substituicaoPorAvaliacao?: { dentista_nome_exibido: string },
   agendamentosDoPaciente?: readonly AgendamentoAtivo[]
 ): FatosAutorizados {
-  let fatos = derivarPorDecisao(decisao);
+  let fatos = derivarPorDecisao(decisao, dataHoje);
 
   // A substituicao e um fato deste turno, ortogonal a decisao (ela pode
   // acompanhar horarios_disponiveis, aguardando_confirmacao, reserva_criada
@@ -228,7 +283,7 @@ export function derivarFatosAutorizados(
   if (agendamentosDoPaciente !== undefined && agendamentosDoPaciente.length > 0) {
     fatos = {
       ...fatos,
-      agendamentos_do_paciente: agendamentosDoPaciente.map(descreverAgendamentoDoPaciente),
+      agendamentos_do_paciente: agendamentosDoPaciente.map((a) => descreverAgendamentoDoPaciente(a, dataHoje)),
     };
   }
 
@@ -284,16 +339,16 @@ function diaDaSemanaCivil(data: string): string | null {
  * caminho termina na redatora -- ou seja, no texto enviado ao paciente.
  * Nenhum ID interno pode atravessar essa fronteira por aqui.
  */
-function descreverAgendamentoDoPaciente(agendamento: AgendamentoAtivo): string {
+function descreverAgendamentoDoPaciente(agendamento: AgendamentoAtivo, dataHoje: string): string {
   const procedimento = agendamento.procedimento ?? 'atendimento';
-  const dataFormatada = formatarData(agendamento.data);
+  const dataFormatada = formatarDataParaRedatora(agendamento.data, dataHoje);
   const diaSemana = diaDaSemanaCivil(agendamento.data);
   const dataComDia = diaSemana !== null ? `${diaSemana}, ${dataFormatada}` : dataFormatada;
   const comDentista = agendamento.dentista_nome !== null ? ` com ${agendamento.dentista_nome}` : '';
   return `${procedimento}${comDentista} — ${dataComDia} às ${agendamento.horario}`;
 }
 
-function derivarPorDecisao(decisao: DecisaoOrquestrador): FatosAutorizados {
+function derivarPorDecisao(decisao: DecisaoOrquestrador, dataHoje: string): FatosAutorizados {
   switch (decisao.tipo) {
     case 'clinica_sem_catalogo':
     case 'erro_catalogo_dentista':
@@ -347,12 +402,12 @@ function derivarPorDecisao(decisao: DecisaoOrquestrador): FatosAutorizados {
       return { objetivo: 'pedir_data_ou_horario', dados_faltantes: ['data'] };
 
     case 'horarios_disponiveis':
-      return fatosParaHorariosDisponiveis(decisao.resultado);
+      return fatosParaHorariosDisponiveis(decisao.resultado, dataHoje);
 
     case 'aguardando_confirmacao':
       return {
         objetivo: 'pedir_confirmacao',
-        proposta_pendente: { data: formatarData(decisao.opcao.data), horario: formatarMinutos(decisao.opcao.inicio_min) },
+        proposta_pendente: { data: formatarDataParaRedatora(decisao.opcao.data, dataHoje), horario: formatarMinutos(decisao.opcao.inicio_min) },
       };
 
     case 'cadastro_necessario':
@@ -377,7 +432,7 @@ function derivarPorDecisao(decisao: DecisaoOrquestrador): FatosAutorizados {
     case 'reserva_criada':
       return {
         objetivo: 'informar_reserva_criada',
-        agendamento_confirmado: { data: formatarData(decisao.data), horario: decisao.horario },
+        agendamento_confirmado: { data: formatarDataParaRedatora(decisao.data, dataHoje), horario: decisao.horario },
       };
 
     case 'reserva_conflito':
@@ -395,23 +450,23 @@ function derivarPorDecisao(decisao: DecisaoOrquestrador): FatosAutorizados {
     case 'aguardando_escolha_agendamento':
       return {
         objetivo: 'escolher_entre_agendamentos',
-        agendamentos_candidatos: decisao.agendamentos.map((a) => `${formatarData(a.data)} às ${a.horario}`),
+        agendamentos_candidatos: decisao.agendamentos.map((a) => `${formatarDataParaRedatora(a.data, dataHoje)} às ${a.horario}`),
       };
 
     case 'aguardando_confirmacao_remarcacao':
       return {
         objetivo: 'pedir_confirmacao_remarcacao',
         agendamento_atual: {
-          data: formatarData(decisao.agendamento_atual.data),
+          data: formatarDataParaRedatora(decisao.agendamento_atual.data, dataHoje),
           horario: decisao.agendamento_atual.horario,
         },
-        proposta_pendente: { data: formatarData(decisao.opcao.data), horario: formatarMinutos(decisao.opcao.inicio_min) },
+        proposta_pendente: { data: formatarDataParaRedatora(decisao.opcao.data, dataHoje), horario: formatarMinutos(decisao.opcao.inicio_min) },
       };
 
     case 'remarcacao_criada':
       return {
         objetivo: 'informar_remarcacao_criada',
-        agendamento_confirmado: { data: formatarData(decisao.data), horario: decisao.horario },
+        agendamento_confirmado: { data: formatarDataParaRedatora(decisao.data, dataHoje), horario: decisao.horario },
       };
 
     // --- Cancelamento (2026-08-11, specs/cancelamento-conversacional-v1.md) ---
@@ -421,7 +476,7 @@ function derivarPorDecisao(decisao: DecisaoOrquestrador): FatosAutorizados {
     case 'aguardando_escolha_agendamento_cancelamento':
       return {
         objetivo: 'escolher_entre_agendamentos_cancelamento',
-        agendamentos_candidatos: decisao.agendamentos.map((a) => `${formatarData(a.data)} às ${a.horario}`),
+        agendamentos_candidatos: decisao.agendamentos.map((a) => `${formatarDataParaRedatora(a.data, dataHoje)} às ${a.horario}`),
       };
 
     // `agendamento_atual` (nao `proposta_pendente`): no cancelamento nao ha
@@ -437,7 +492,7 @@ function derivarPorDecisao(decisao: DecisaoOrquestrador): FatosAutorizados {
       return {
         objetivo: 'pedir_confirmacao_cancelamento',
         agendamento_atual: {
-          data: formatarData(decisao.agendamento.data),
+          data: formatarDataParaRedatora(decisao.agendamento.data, dataHoje),
           horario: decisao.agendamento.horario,
         },
         ...(decisao.confirmacao_nao_compreendida === true ? { confirmacao_nao_compreendida: true as const } : {}),
@@ -449,19 +504,20 @@ function derivarPorDecisao(decisao: DecisaoOrquestrador): FatosAutorizados {
       // fazer com esse fato. Reuso do campo, nao do significado do objetivo.
       return {
         objetivo: 'informar_cancelamento_criado',
-        agendamento_confirmado: { data: formatarData(decisao.data), horario: decisao.horario },
+        agendamento_confirmado: { data: formatarDataParaRedatora(decisao.data, dataHoje), horario: decisao.horario },
       };
   }
 }
 
 function fatosParaHorariosDisponiveis(
-  resultado: Extract<DecisaoOrquestrador, { tipo: 'horarios_disponiveis' }>['resultado']
+  resultado: Extract<DecisaoOrquestrador, { tipo: 'horarios_disponiveis' }>['resultado'],
+  dataHoje: string
 ): FatosAutorizados {
   switch (resultado.tipo) {
     case 'opcoes':
       return {
         objetivo: 'apresentar_horarios',
-        data_referencia: formatarData(resultado.opcoes[0].data),
+        data_referencia: formatarDataParaRedatora(resultado.opcoes[0].data, dataHoje),
         horarios_disponiveis: resultado.opcoes.map((opcao) => formatarMinutos(opcao.inicio_min)),
       };
 
@@ -475,7 +531,7 @@ function fatosParaHorariosDisponiveis(
       // ja usa nessa posicao.
       return {
         objetivo: 'apresentar_horarios',
-        data_referencia: formatarData(resultado.opcao.data),
+        data_referencia: formatarDataParaRedatora(resultado.opcao.data, dataHoje),
         horarios_disponiveis: [formatarMinutos(resultado.opcao.inicio_min)],
       };
 

@@ -114,6 +114,7 @@ async function main(): Promise<void> {
       mensagemPaciente: mensagem,
       naturezaMensagem: resultado.natureza_mensagem,
       historicoConversa: resultado.historico_conversa,
+      dataHoje: INSTANTE_ATUAL.data,
     });
 
     console.log(`  >>> Iris: ${JSON.stringify(resposta)}`);

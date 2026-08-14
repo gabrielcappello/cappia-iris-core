@@ -205,6 +205,7 @@ async function main(): Promise<void> {
       mensagemPaciente: caso.mensagem,
       naturezaMensagem: resultado.natureza_mensagem,
       historicoConversa: resultado.historico_conversa,
+      dataHoje: INSTANTE_ATUAL.data,
       ...(resultado.agendamentos_do_paciente !== undefined
         ? { agendamentosDoPaciente: resultado.agendamentos_do_paciente }
         : {}),

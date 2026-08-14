@@ -29,6 +29,11 @@ import { ClienteModeloFalso } from './teste-cliente-modelo-falso.ts';
 import { ClienteRpcFalso } from './teste-cliente-rpc-falso.ts';
 import type { AgendamentoAtivo } from './buscar-agendamento-ativo.ts';
 
+// `HOJE` deliberadamente distante das datas dos casos: a relacao fica
+// 'outra' e a data sai absoluta, como sempre saiu. Os casos hoje/amanha tem
+// testes proprios em fatos-autorizados.test.ts.
+const HOJE = '2026-01-01';
+
 const PROVIDER = 'evolution';
 const INSTANCIA = 'clinica-teste-paridade-dia-semana';
 const TELEFONE = '5511977776666';
@@ -152,7 +157,7 @@ test('paridade dia-da-semana [fatos-autorizados.ts]: vetor completo', () => {
       procedimento_id: crypto.randomUUID(),
       procedimento: 'Limpeza',
     };
-    const fatos = derivarFatosAutorizados({ tipo: 'saudacao' }, undefined, [agendamento]);
+    const fatos = derivarFatosAutorizados({ tipo: 'saudacao' }, HOJE, undefined, [agendamento]);
     const descricao = fatos.agendamentos_do_paciente?.[0];
     assert.ok(descricao !== undefined, `fato ausente para ${data}`);
     assert.equal(extrairDiaDaSemana(descricao), esperado, `fatos-autorizados.ts errou ${data}`);
@@ -233,7 +238,7 @@ test('PARIDADE: as duas implementacoes concordam para toda data do vetor', async
       procedimento: 'Limpeza',
     };
     const viaFatos = extrairDiaDaSemana(
-      derivarFatosAutorizados({ tipo: 'saudacao' }, undefined, [agendamento]).agendamentos_do_paciente![0]!
+      derivarFatosAutorizados({ tipo: 'saudacao' }, HOJE, undefined, [agendamento]).agendamentos_do_paciente![0]!
     );
     const viaOrquestrador = await diaDaSemanaViaOrquestrador(data);
     assert.equal(viaFatos, viaOrquestrador, `divergencia entre as duas implementacoes em ${data}`);
