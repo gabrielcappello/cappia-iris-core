@@ -260,9 +260,53 @@ export async function processarMensagem(
 
   const finalizar = async (
     decisao: DecisaoOrquestrador,
-    substituicao?: { dentista_nome_exibido: string },
-    agendamentosDoPaciente?: readonly AgendamentoAtivo[]
+    substituicao?: { dentista_nome_exibido: string }
   ): Promise<ResultadoOrquestrador> => {
+    // PONTO UNICO DE BUSCA, EM TODO TURNO (2026-08-14). Ate aqui os
+    // agendamentos do paciente so eram buscados dentro do ramo conversacional,
+    // e so chegavam a redatora em 3 das 30 decisoes. Em todas as outras a Iris
+    // respondia SEM SABER que o paciente tem consulta marcada -- o fato estava
+    // no banco, a uma consulta de distancia, e nao era entregue.
+    //
+    // Efeito medido em producao (2026-08-13): logo apos agendar, o paciente
+    // perguntou "qual o nome do dentista?" e a Iris respondeu que nao tinha
+    // essa informacao; noutro turno perguntou de novo qual procedimento ele
+    // queria, para um agendamento que ela mesma acabara de criar.
+    //
+    // A busca fica DEPOIS da decisao de proposito: assim a lista e sempre
+    // coerente com o desfecho deste turno (inclui a reserva recem-criada). Era
+    // essa a objecao registrada na spec original, e ela deixa de valer aqui.
+    let agendamentosDoPaciente: readonly AgendamentoAtivo[] | undefined;
+    let erroBuscaAgendamentos: unknown = null;
+    try {
+      agendamentosDoPaciente = await buscarAgendamentosParaContexto(
+        clienteBanco,
+        identificacao.clinica_id,
+        identificacao.paciente.id,
+        entrada.instante_atual
+      );
+    } catch (erro) {
+      erroBuscaAgendamentos = erro;
+    }
+
+    // POLITICA DE FALHA, deliberadamente diferente por caminho:
+    //
+    // - nas tres decisoes conversacionais, onde esta busca JA era obrigatoria,
+    //   o erro continua propagando (decisao de 2026-08-12, preservada): "sem
+    //   agendamento" e um fato, um erro de banco nao e esse fato;
+    // - nos demais turnos, onde a busca e NOVA, o erro e absorvido e a
+    //   redatora apenas nao recebe o fato. Propagar ali criaria um modo de
+    //   falha que nao existia -- uma reserva bem-sucedida viraria erro para o
+    //   paciente por causa de uma consulta auxiliar.
+    if (erroBuscaAgendamentos !== null && DECISOES_COM_CONTEXTO_DE_AGENDAMENTO.includes(decisao.tipo)) {
+      throw erroBuscaAgendamentos;
+    }
+
+    // `desistencia` continua FORA (decisao do Gabriel, 2026-08-12): o paciente
+    // esta encerrando, e trazer um agendamento futuro ali reabriria assunto
+    // justamente quando ele quis fechar.
+    const agendamentosParaRedatora = decisao.tipo === 'desistencia' ? undefined : agendamentosDoPaciente;
+
     let atualizadoEmParaContexto = atualizadoEmDaDecisao;
 
     // LIMPEZA DE ESTADO OPERACIONAL AO CONCLUIR (specs/remarcacao-conversacional-v1.md,
@@ -305,8 +349,8 @@ export async function processarMensagem(
       historico_conversa: identificacao.conversa.historico_conversa,
       ...(substituicao !== undefined ? { substituicao_por_avaliacao: substituicao } : {}),
       // AUSENTE quando nao ha agendamento futuro -- nunca `[]` (spec secao 3).
-      ...(agendamentosDoPaciente !== undefined && agendamentosDoPaciente.length > 0
-        ? { agendamentos_do_paciente: agendamentosDoPaciente }
+      ...(agendamentosParaRedatora !== undefined && agendamentosParaRedatora.length > 0
+        ? { agendamentos_do_paciente: agendamentosParaRedatora }
         : {}),
       ...((() => {
         const contextoSombra = montarContextoSombraV2(
@@ -323,24 +367,9 @@ export async function processarMensagem(
   if (Object.keys(interpretacao.alteracoes_interpretadas).length === 0) {
     const decisaoConversacional = decidirPorNatureza(interpretacao.natureza_mensagem, dados);
     if (decisaoConversacional !== null) {
-      // CONTEXTO CONVERSACIONAL (specs/consulta-agendamento-conversacional-v1.md):
-      // os agendamentos futuros do paciente viram fato do turno, para a
-      // redatora usar quando o assunto for esse -- e ignorar quando nao for.
-      //
-      // Este e o UNICO ponto de busca, e e aqui de proposito: so aqui ja se
-      // sabe que a decisao e conversacional. Os fluxos operacionais nunca
-      // passam por este `return` e portanto nunca fazem esta consulta extra.
-      return await finalizar(
-        decisaoConversacional,
-        undefined,
-        await buscarAgendamentosParaContexto(
-          clienteBanco,
-          decisaoConversacional,
-          identificacao.clinica_id,
-          identificacao.paciente.id,
-          entrada.instante_atual
-        )
-      );
+      // A busca dos agendamentos deixou de morar aqui (2026-08-14): virou
+      // ponto unico dentro de `finalizar`, que TODO desfecho atravessa.
+      return await finalizar(decisaoConversacional);
     }
   }
 
@@ -455,12 +484,10 @@ const DECISOES_COM_CONTEXTO_DE_AGENDAMENTO: readonly DecisaoOrquestrador['tipo']
  */
 async function buscarAgendamentosParaContexto(
   clienteBanco: ClienteBancoDados,
-  decisao: DecisaoOrquestrador,
   clinicaId: string,
   pacienteId: string | null,
   instanteAtual: InstanteAtual
 ): Promise<readonly AgendamentoAtivo[] | undefined> {
-  if (!DECISOES_COM_CONTEXTO_DE_AGENDAMENTO.includes(decisao.tipo)) return undefined;
   // Paciente sem ficha nao tem agendamento por definicao -- sem consulta ao
   // banco (spec secao 3).
   if (pacienteId === null) return undefined;

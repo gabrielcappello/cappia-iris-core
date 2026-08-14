@@ -341,10 +341,14 @@ test('7. desistencia NUNCA recebe o fato, embora venha da mesma decidirPorNature
   assert.ok(!('agendamentos_do_paciente' in resultado));
 });
 
-test('7b. decisao OPERACIONAL nunca recebe o fato', async () => {
+test('7b. decisao OPERACIONAL TAMBEM recebe o fato (2026-08-14)', async () => {
+  // Ate 2026-08-13 este fato so chegava em 3 das 30 decisoes, e a Iris
+  // respondia sem saber que o paciente tem consulta marcada. Medido em
+  // producao: logo apos agendar, "qual o nome do dentista?" foi respondido
+  // com "nao tenho essa informacao" -- o dado estava no banco o tempo todo.
   const tabelas = criarTabelasFalsasVazias();
   const { clinicaId, procedimentoId, dentistaId, pacienteId } = montarCenario(tabelas);
-  const agendamentoId = semearAgendamentoAtivo(tabelas, {
+  semearAgendamentoAtivo(tabelas, {
     clinica_id: clinicaId,
     paciente_id: pacienteId,
     dentista_id: dentistaId,
@@ -352,67 +356,49 @@ test('7b. decisao OPERACIONAL nunca recebe o fato', async () => {
     data: '2026-08-10',
     horario: '14:00',
   });
-  semearConversa(
-    tabelas,
-    clinicaId,
-    { intencao: 'cancelamento', confirmacao: 'sim' },
-    { proposta_pendente: { data: '2026-08-10', horario: '14:00' }, criado_em: new Date().toISOString() },
-    pacienteId
-  );
-  const rpc = new ClienteRpcFalso({
-    cappia_cancelar_agendamento_v2: {
-      data: { sucesso: true, agendamento_id: agendamentoId, status: 'cancelado' },
-      error: null,
-    } satisfies RespostaRpc,
-  });
+  semearConversa(tabelas, clinicaId, {}, null, pacienteId);
 
+  // `pedido` sem alteracoes -> cai no caminho OPERACIONAL (`decidir`), nunca
+  // no early-return conversacional.
   const resultado = await processarMensagem(
-    new ClienteModeloFalso([{ natureza_mensagem: 'resposta', alteracoes: {} }]),
+    new ClienteModeloFalso([{ natureza_mensagem: 'pedido', alteracoes: {} }]),
     new ClienteFalso(tabelas),
-    rpc,
-    entrada('isso mesmo')
+    clienteRpcNuncaChamado(),
+    entrada('e o meu horario?')
   );
 
-  assert.equal(resultado.decisao.tipo, 'cancelamento_criado');
-  assert.ok(!('agendamentos_do_paciente' in resultado));
+  assert.equal(resultado.decisao.tipo, 'aguardando_procedimento');
+  assert.equal(resultado.agendamentos_do_paciente?.length, 1);
+  assert.equal(resultado.agendamentos_do_paciente?.[0]?.dentista_nome, 'Dra. Ana');
 });
 
-test('8. turno OPERACIONAL nao faz a consulta extra de contexto', async () => {
+test('8. a busca acontece DEPOIS da decisao -- inclui o agendamento criado no proprio turno', async () => {
+  // Motivo de a busca viver em `finalizar`, e nao antes: lida antes, ela
+  // contradiria o desfecho do turno. Era a objecao registrada na spec
+  // original, e e o que permite entregar o fato em todos os desfechos.
   const tabelas = criarTabelasFalsasVazias();
   const { clinicaId, procedimentoId, dentistaId, pacienteId } = montarCenario(tabelas);
+  semearAgendamentoAtivo(tabelas, {
+    clinica_id: clinicaId,
+    paciente_id: pacienteId,
+    dentista_id: dentistaId,
+    procedimento_id: procedimentoId,
+    data: '2026-08-10',
+    horario: '14:00',
+  });
   semearConversa(tabelas, clinicaId, {}, null, pacienteId);
   const clienteBanco = new ClienteFalso(tabelas);
 
-  // Mensagem com alteracao -> nunca passa pelo early-return conversacional.
   await processarMensagem(
-    new ClienteModeloFalso([
-      { natureza_mensagem: 'pedido', alteracoes: { procedimento_id: { acao: 'informar', valor: procedimentoId } } },
-    ]),
+    new ClienteModeloFalso([{ natureza_mensagem: 'saudacao', alteracoes: {} }]),
     clienteBanco,
     clienteRpcNuncaChamado(),
-    entrada('quero marcar uma limpeza')
+    entrada('oi')
   );
 
-  const consultasAgendamentos = clienteBanco.estatisticas.chamadasSelect.agendamentos ?? 0;
-  // O fluxo de novo agendamento consulta `agendamentos` para DISPONIBILIDADE
-  // (carregar-disponibilidade.ts). O que este teste prova e que a consulta de
-  // CONTEXTO nao foi somada: sem ela o numero seria o mesmo.
-  const tabelas2 = criarTabelasFalsasVazias();
-  const c2 = montarCenario(tabelas2);
-  semearConversa(tabelas2, c2.clinicaId, {}, null, c2.pacienteId);
-  const clienteBanco2 = new ClienteFalso(tabelas2);
-  await processarMensagem(
-    new ClienteModeloFalso([
-      { natureza_mensagem: 'pedido', alteracoes: { procedimento_id: { acao: 'informar', valor: c2.procedimentoId } } },
-    ]),
-    clienteBanco2,
-    clienteRpcNuncaChamado(),
-    entrada('quero marcar uma limpeza')
-  );
-  assert.equal(consultasAgendamentos, clienteBanco2.estatisticas.chamadasSelect.agendamentos ?? 0);
+  // UMA consulta de contexto por turno -- nunca uma por consumidor.
+  assert.equal(clienteBanco.estatisticas.chamadasSelect.agendamentos, 1);
 });
-
-// --- Fatos autorizados: forma do texto entregue a redatora ---
 
 test('fato entregue a redatora e texto pronto, com dia da semana calculado pelo Core', () => {
   const fatos = derivarFatosAutorizados({ tipo: 'saudacao' }, undefined, [
