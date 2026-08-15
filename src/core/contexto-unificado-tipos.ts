@@ -64,6 +64,24 @@ export interface AgendamentoResumido {
  *
  * `confirmacao_nome` é o tipo criado pela guarda da spec §5.1: mais um valor no
  * vocabulário fechado, nunca um quinto marcador persistido.
+ *
+ * `'cadastro'`, `operacao` e `agendamento_id` são a extensão PREPARATÓRIA da
+ * spec v2 §7 (contexto-conversacional-unificado-v2.md, aprovada por Gabriel
+ * em 2026-08-15 -- aprovação CONDICIONADA, spec §15).
+ *
+ * ESTADO REAL (2026-08-15): existem ARQUIVOS LOCAIS de migration e RPC que
+ * já contam com estes campos -- a coluna `estado_conversa.aguardando_resposta`
+ * (20260815120000_iris_nova_aguardando_resposta.sql) e o commit transacional
+ * do cancelamento (20260815121000_iris_nova_commit_turno_v2_cancelar.sql, que
+ * lê `tipo`, `operacao` e `agendamento_id` como autorização, spec v2 §14.3).
+ * NADA disso foi APLICADO em nenhum projeto Supabase, integrado a nenhuma
+ * rota, nem é consumido por produção: são arquivos versionados, não estado
+ * de banco. A rota V1 segue sendo a única operacional.
+ *
+ * Nenhum consumidor deste tipo (`guarda-contexto-unificado.ts`, shadow, Edge
+ * Function, arquivos espelhados) foi alterado para ler ou escrever os campos
+ * novos -- os três são opcionais, então todo valor já existente de
+ * `PerguntaPendente` continua válido sem alteração.
  */
 export interface PerguntaPendente {
   tipo:
@@ -73,8 +91,55 @@ export interface PerguntaPendente {
     | 'oferta_procedimento'
     | 'troca_telefone'
     | 'escolha_agendamento'
-    | 'confirmacao_nome';
+    | 'confirmacao_nome'
+    // Novo (spec v2 §7, item 1) -- "Core está pedindo dado cadastral
+    // pendente". Sem nenhum outro campo associado.
+    | 'cadastro';
   opcoes?: readonly string[];
+  /**
+   * UM ÚNICO CAMPO, conforme a spec v2 (§7 item 2 e §14.3) -- que nomeia
+   * `operacao` nos dois contextos e nunca cria um segundo campo. A RPC de
+   * commit lê exatamente esta chave (`v_pergunta ->> 'operacao'`,
+   * 20260815121000_iris_nova_commit_turno_v2_cancelar.sql).
+   *
+   * Admitido em exatamente dois `tipo`, com o conjunto de valores aceitos
+   * definido pelo CONTEXTO -- não por um campo separado:
+   *
+   * - `escolha_agendamento` (spec v2 §7 item 2) -- "qual agendamento você
+   *   quer, e para quê". Aceita `consultar | remarcar | cancelar`. Permite à
+   *   Iris, numa resposta curta ("o primeiro"), emitir a ação terminal certa
+   *   diretamente, sem uma ação intermediária só para registrar a escolha.
+   *   `criar` não cabe: não se escolhe entre agendamentos existentes para
+   *   criar um novo;
+   * - `confirmacao` (spec v2 §14.3) -- "você autoriza este efeito". Aceita
+   *   `criar | remarcar | cancelar`, e é OBRIGATÓRIA aqui: é o que torna a
+   *   autorização inequívoca. `consultar` não cabe: consulta não é efeito e
+   *   nunca é confirmada.
+   *
+   * Por que este campo, e não `contexto_horarios.proposta_pendente`: aquele
+   * carrega apenas `{data, horario}` e por isso não distingue confirmar a
+   * CRIAÇÃO de um horário de confirmar o CANCELAMENTO de um agendamento no
+   * mesmo horário -- um "sim" destinado a uma operação autorizaria outra. A
+   * rota V2 nunca usa `proposta_pendente` como autorização de efeito.
+   *
+   * Recusado em qualquer outro `tipo` (`validarPerguntaPendente`), assim como
+   * o valor que não pertence ao contexto em que aparece.
+   */
+  operacao?: 'consultar' | 'criar' | 'remarcar' | 'cancelar';
+  /**
+   * Âncora estruturada do ALVO -- nunca inferida, nunca construída a partir
+   * do conteúdo da ação. Admitido em exatamente dois `tipo` (spec v2 §7 item
+   * 3 e §14.3), e recusado em todos os demais:
+   *
+   * - `escolha_horario`: quando a oferta pertence a uma remarcação em curso.
+   *   É o que permite montar `agendamento_em_remarcacao` (spec v2 §8) antes
+   *   de `escolher_horario` chegar;
+   * - `confirmacao`: identifica o alvo exato. OBRIGATÓRIO quando `operacao` é
+   *   `'remarcar'` ou `'cancelar'`; PROIBIDO quando é `'criar'` -- uma criação
+   *   não referencia agendamento existente nenhum, mesma invariante já fechada
+   *   em `Acao.confirmar` (`resultado-iris-tipos.ts`, spec v2 §2).
+   */
+  agendamento_id?: string;
   detalhe?: Record<string, string>;
 }
 

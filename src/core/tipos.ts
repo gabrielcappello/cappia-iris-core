@@ -36,6 +36,19 @@ export interface ContextoHorarios {
    * do paciente (decisao `aguardando_confirmacao` -> acao `propor`). E o que
    * permite a IA reconhecer "pode confirmar"/"esse mesmo" como resposta a
    * ESSA proposta especifica, mesmo sem repetir data/horario no texto.
+   *
+   * Forma: `data` em `YYYY-MM-DD`, `horario` em `HH:MM` (24h).
+   *
+   * NUNCA E AUTORIZACAO DE EFEITO. Estes dois campos provam QUANDO, jamais O
+   * QUE foi confirmado: confirmar a criacao de um horario e confirmar o
+   * cancelamento de um agendamento no mesmo horario produzem o par
+   * identico. Autorizar efeito por aqui confundiria criar, remarcar e
+   * cancelar. Na rota V2 a autorizacao e `aguardando_resposta`
+   * (`tipo`/`operacao`/`agendamento_id`, PerguntaPendente em
+   * contexto-unificado-tipos.ts) -- ver
+   * specs/contexto-conversacional-unificado-v2.md secao 14.3. Este snapshot
+   * segue servindo ao que sempre serviu: ajudar a IA a interpretar uma
+   * resposta curta.
    */
   proposta_pendente?: { data: string; horario: string };
   /**

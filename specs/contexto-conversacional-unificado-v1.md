@@ -1,5 +1,39 @@
 # Contexto conversacional unificado — spec v1
 
+> **POSSUI UMA SUCESSORA APROVADA em
+> `specs/contexto-conversacional-unificado-v2.md`** -- contrato aprovado
+> arquiteturalmente pelo Codex em 2026-08-15 e **documento aprovado por Gabriel** na
+> mesma data, com aprovação condicionada (autoriza somente implementação local; não
+> autoriza commit, push, migration ou deploy). A **revisão documental final pelo Codex
+> foi concluída em 2026-08-15** -- a v2 está aprovada como documento. **Este documento
+> (v1) continua sendo o contrato OPERACIONAL vigente
+> até a integração/corte real da v2** -- nenhuma rota de produção foi ligada ao contrato
+> novo. A v2 troca a FORMA de saída da interpretação: `acao_solicitada: {tipo,
+> referencia}` genérico dá lugar a `ResultadoIris`/`Acao`, com parâmetros próprios por
+> ação -- a insuficiência do formato genérico para os ramos operacionais além de
+> `escolher_dentista` foi medida e mapeada em 2026-08-15.
+>
+> Este arquivo é preservado como **registro histórico, sem edição do conteúdo original**:
+> o contrato `SaidaContratoUnificado` aqui descrito continua sendo o único já validado em
+> shadow real de PRODUÇÃO (`sombra-contexto-unificado.ts`, `guarda-contexto-unificado.ts`,
+> logs `sombra_unificada`). A v2 tem código local isolado (tipos, validador, fatos de
+> turno, adaptador -- ver v2 §13), **nenhum importado por produção**, e nunca rodou em
+> shadow de produção. O princípio da seção 2 ("a Iris declara o que entendeu, o Core
+> valida e executa") e a guarda estrutural da seção 5.1 permanecem integralmente válidos
+> na v2, sem alteração de substância.
+>
+> **Esclarecimento sobre "shadow local" (linha "Status" abaixo, texto original, não
+> editado).** Essa frase descreve o estado NO MOMENTO em que este documento foi escrito
+> (2026-08-14) -- literalmente "sem commit, sem push, sem deploy", conforme a própria
+> definição logo abaixo. O estado mudou NO MESMO DIA, por fato registrado em documento
+> diferente: `docs/07-arquitetura-v2.md` §11.3 confirma que a guarda ficou "no ar desde a
+> v28 (2026-08-14)", ou seja, deployada em shadow de produção real ainda naquela data. As
+> duas afirmações não se contradizem: "shadow local" é o retrato do instante da escrita,
+> preservado aqui sem edição por ser registro histórico; o estado FACTUAL atual é o
+> reportado pelo documento que continua sendo atualizado (`docs/07-arquitetura-v2.md`), não
+> este. Ler a linha "Status" abaixo como descrição do presente seria presumir por
+> desatualização -- exatamente o que `AGENTS.md` pede para não fazer.
+
 **Status (2026-08-14):** **aprovada** e **implementada exclusivamente em shadow local.**
 
 Escrita em 2026-08-13 a partir de cinco defeitos reais medidos em produção no mesmo dia
