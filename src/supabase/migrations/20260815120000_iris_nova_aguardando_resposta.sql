@@ -1,0 +1,74 @@
+-- Iris Nova - pergunta pendente estruturada (rota V2).
+--
+-- Projeto-alvo: cappia-iris-core-dev (bcmuqautblvjdqzhjfbw) -- ambiente
+-- isolado de desenvolvimento e testes da Iris Nova. PROIBIDO aplicar em
+-- udizowyfjnhuhgxkeayk, que tem migration irma propria em
+-- src/supabase/migrations-legado/ (mesma coluna, mesmo efeito, arquivo
+-- separado pela convencao ja estabelecida de pastas por projeto-alvo).
+--
+-- Base normativa: specs/contexto-conversacional-unificado-v2.md secao 14.6,
+-- aprovada pelo Gabriel e revisada pelo Codex em 2026-08-15.
+--
+-- ESCOPO -- estritamente aditivo, 1 tabela, 1 coluna, nenhum dado alterado,
+-- nenhuma constraint, nenhuma mudanca de ACL ou RLS:
+--
+--   estado_conversa.aguardando_resposta (jsonb, nullable): a pergunta que foi
+--   DE FATO feita ao paciente, registrada quando a resposta e produzida --
+--   nunca derivada da decisao do Core. Forma: `PerguntaPendente`
+--   (src/core/contexto-unificado-tipos.ts) -- {tipo, opcoes?, operacao?,
+--   agendamento_id?, detalhe?}, com `tipo` no vocabulario FECHADO
+--   {escolha_dentista, escolha_horario, confirmacao, oferta_procedimento,
+--   troca_telefone, escolha_agendamento, confirmacao_nome, cadastro}.
+--
+-- POR QUE COLUNA PROPRIA, E NAO `contexto_horarios` (spec v2 secao 14.6):
+-- `derivarAcaoContextoHorarios` (src/core/contexto-horarios.ts) faz
+-- `switch (decisao.tipo)` -- isto e, DERIVA a pergunta da DecisaoOrquestrador.
+-- Esse acoplamento e exatamente o que a Arquitetura V2 existe para remover: a
+-- pergunta precisa ser DECLARADA por quem a produziu, nao traduzida de um
+-- enum de decisao. Alem disso os dois tem ciclos de vida distintos --
+-- `contexto_horarios` e snapshot auxiliar de linguagem (perder degrada a
+-- conversa), enquanto esta coluna e a ANCORA que autoriza montar
+-- `agendamento_em_remarcacao`/`agendamento_a_cancelar` (spec v2 secao 8).
+--
+-- SEM PII por construcao: rotulo da pergunta, IDs internos e as opcoes ja
+-- apresentadas ao paciente. Nunca nome, CPF, e-mail, telefone ou texto livre
+-- do paciente. `detalhe.nome_proposto` (guarda de contaminacao, v1 secao 5.1)
+-- e a UNICA excecao ja existente no tipo -- ela carrega um nome, e por isso a
+-- rota V2 deve tratar essa chave com o mesmo cuidado de PII do restante do
+-- sistema quando for gravada. Esta migration nao introduz nem amplia esse
+-- caso; so registra que ele existe no tipo.
+--
+-- Nullable e sem default de proposito: "nenhuma pergunta em aberto" se
+-- representa pela AUSENCIA (NULL), nunca por objeto vazio -- mesma disciplina
+-- de `contexto_horarios`, `ultima_troca` e `ultimo_desfecho`.
+--
+-- VALOR MALFORMADO NUNCA VIRA NULL (spec v2 secao 14.6). Regime DIFERENTE do
+-- de `contexto_horarios`, que degrada para null em valor invalido ("falha
+-- aberta"): aqui, jsonb presente e malformado RECUSA a rota V2 naquele turno
+-- (piloto: desvia para V1 com log; apos o corte: falha fechado). Converter
+-- dado corrompido em NULL transformaria "dado corrompido" na afirmacao
+-- factual "nao ha remarcacao em curso" -- exatamente o tipo de conserto
+-- silencioso que a spec proibe. Esta migration NAO impoe isso por CHECK
+-- constraint: a validacao e do Core, no ponto de leitura, onde ha vocabulario
+-- e contexto para distinguir os casos.
+--
+-- RLS: nenhuma alteracao. `estado_conversa` ja tem RLS ativa sem policy
+-- (20260729_iris_nova_identificacao_v1.sql) -- uma coluna nova herda
+-- exatamente esse regime: so service_role, que ignora RLS, acessa.
+--
+-- ESCRITA ATRAS DE FLAG (spec v2 secao 14): com a coluna criada e a flag
+-- desligada, nada le e nada escreve esta coluna -- ela fica inerte. Aplicar
+-- esta migration, por si so, NAO altera o comportamento de nenhum turno.
+--
+-- PREFLIGHT (obrigatorio, read-only, imediatamente antes de aplicar):
+--   -- a coluna nao pode existir ainda:
+--   select column_name from information_schema.columns
+--    where table_schema='public' and table_name='estado_conversa'
+--      and column_name='aguardando_resposta';            -- VAZIO
+-- Nenhum ADD COLUMN usa IF NOT EXISTS: colisao de nome falha explicitamente
+-- em vez de ser ignorada em silencio.
+--
+-- NAO APLICADA em nenhum projeto no momento desta escrita.
+
+alter table estado_conversa
+  add column aguardando_resposta jsonb;

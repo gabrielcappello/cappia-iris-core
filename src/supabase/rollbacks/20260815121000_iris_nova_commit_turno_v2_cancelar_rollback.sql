@@ -1,0 +1,42 @@
+-- Rollback de 20260815121000_iris_nova_commit_turno_v2_cancelar.sql
+--
+-- Projeto-alvo: cappia-iris-core-dev (bcmuqautblvjdqzhjfbw).
+--
+-- ORDEM OBRIGATORIA DO ROLLBACK -- E O INVERSO DO DEPLOY. Executar os tres
+-- passos NESTA sequencia:
+--
+--   1. DESLIGAR A FLAG da rota V2. Com ela desligada, nenhum turno chama esta
+--      funcao -- o cancelamento volta a ser conduzido pela rota V1, atraves de
+--      `cappia_cancelar_agendamento_v2`, que esta migration nunca tocou.
+--   2. CONFIRMAR que nenhuma instancia da Edge Function esta servindo a
+--      versao que chama esta funcao.
+--   3. SOMENTE ENTAO remover a funcao, executando este arquivo.
+--
+-- POR QUE A ORDEM IMPORTA: remover a funcao com a rota V2 ativa faz toda
+-- confirmacao de cancelamento falhar no meio do turno -- a chamada RPC
+-- retorna erro de funcao inexistente, que o adaptador traduz em falha
+-- tecnica. O paciente que respondeu "sim" nao teria seu cancelamento feito e
+-- receberia mensagem de erro. Com a flag desligada primeiro, a rota V1
+-- assume e nada disso ocorre.
+--
+-- EFEITOS JA EXECUTADOS NAO SAO REVERTIDOS -- e nao devem ser. Cancelamentos
+-- concluidos por esta funcao sao transicoes de status legitimas na tabela
+-- `agendamentos`, indistinguiveis das feitas pela rota V1. Este rollback
+-- remove a FUNCAO, nunca o que ela fez: desfazer cancelamentos reais exigiria
+-- decisao clinica/operacional propria, jamais um script de rollback tecnico.
+--
+-- A COLUNA `aguardando_resposta` NAO E REMOVIDA AQUI. Ela tem migration e
+-- rollback proprios (20260815120000_..._rollback.sql) e pode continuar
+-- existindo sem esta funcao -- o caminho sem efeito (spec v2 secao 14.2)
+-- tambem a usa. Remover a coluna e decisao separada, com ordem propria.
+--
+-- `cappia_cancelar_agendamento_v2` (rota V1) NAO e tocada por este rollback,
+-- assim como nao foi tocada pela migration: ela nunca dependeu desta funcao e
+-- continua com seus grants originais.
+--
+-- A assinatura completa e obrigatoria no DROP: o Postgres identifica funcoes
+-- por nome + tipos dos parametros, e um DROP sem a lista poderia atingir uma
+-- sobrecarga diferente caso alguma passe a existir.
+
+drop function if exists public.cappia_commit_turno_v2_cancelar(
+  uuid, uuid, uuid, text, timestamptz, uuid, jsonb);

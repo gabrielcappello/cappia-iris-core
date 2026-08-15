@@ -1,0 +1,56 @@
+-- Rollback de 20260815120000_iris_nova_aguardando_resposta_legado.sql
+--
+-- Projeto-alvo: udizowyfjnhuhgxkeayk -- projeto OPERACIONAL, com clinica,
+-- instancia WhatsApp e fluxo real conectados.
+--
+-- ORDEM OBRIGATORIA DO ROLLBACK -- E O INVERSO DO DEPLOY. Executar os quatro
+-- passos NESTA sequencia:
+--
+--   1. DESLIGAR A FLAG da rota V2. Com ela desligada, nenhuma escrita nova
+--      acontece nesta coluna e nenhum turno depende dela.
+--   2. REDEPLOY do codigo anterior, que nao seleciona `aguardando_resposta`
+--      (a versao imediatamente antes da etapa da spec v2 secao 14).
+--   3. CONFIRMAR que o codigo novo nao esta mais ativo -- nenhuma instancia
+--      da Edge Function servindo a versao que le a coluna.
+--   4. SOMENTE ENTAO remover a coluna, executando este arquivo.
+--
+-- ATENCAO -- POR QUE A ORDEM NAO E OPCIONAL: `aguardando_resposta` faz parte
+-- da lista de colunas do SELECT de `identificacao.ts` (COLUNAS_ESTADO_CONVERSA)
+-- na rota V2. Um SELECT de coluna inexistente e ERRO do PostgREST, nunca
+-- `undefined` -- e a recusa da rota V2 por valor malformado cobre jsonb
+-- invalido, jamais coluna ausente. Dropar a coluna com o codigo novo ainda
+-- ativo faz TODO turno falhar na identificacao e devolver erro ao paciente.
+-- Neste projeto isso atinge PACIENTE REAL no WhatsApp. Nao ha fallback
+-- dinamico, e nao deve haver: a ordem e a garantia.
+--
+-- PERDER O CONTEUDO DESTA COLUNA NAO E EQUIVALENTE A PERDER
+-- `ultimo_desfecho` -- LEIA ANTES DE EXECUTAR. Ao contrario daquele marcador
+-- auxiliar de medicao, `aguardando_resposta` e a ANCORA ESTRUTURADA que
+-- autoriza montar `agendamento_em_remarcacao` / `agendamento_a_cancelar`
+-- (spec v2 secao 8). Consequencia real de apagar a coluna com conversas em
+-- andamento: toda conversa que estava aguardando uma resposta do paciente
+-- perde a pergunta registrada.
+--
+-- O modo de falha ESPERADO e degradacao de conversa, nao efeito indevido.
+-- Sem a ancora, `resolverFatoDeTurno`
+-- (src/core/resultado-iris-fatos-de-turno.ts) RECUSA montar o fato: nunca
+-- escolhe agendamento por eliminacao, nunca adivinha qual fluxo estava em
+-- curso. O que se perde e CONTINUIDADE -- o paciente que respondeu "o
+-- primeiro" precisara ser perguntado de novo.
+--
+-- Isso e uma propriedade DAQUELE modulo, verificada em teste, e nao uma
+-- garantia global sobre o sistema: a rota V2 nao foi exercitada em producao,
+-- e afirmar aqui que nenhum efeito indevido e possivel seria extrapolar --
+-- ainda mais neste projeto, que atende WhatsApp real. A protecao real contra
+-- efeito indevido esta em outro lugar -- na validacao de versao e de proposta
+-- DENTRO da transacao das RPCs de commit (spec v2 secao 14.3) --, nao na
+-- ausencia desta coluna. Por isso a ordem dos quatro passos acima nao e
+-- opcional.
+--
+-- Respeitada a ordem dos quatro passos, nem essa degradacao ocorre: com a
+-- flag desligada no passo 1, a rota V1 volta a conduzir as conversas pelo
+-- mecanismo antigo (`contexto_horarios`, intocado por esta migration e por
+-- este rollback), que nunca dependeu desta coluna.
+
+alter table estado_conversa
+  drop column if exists aguardando_resposta;
