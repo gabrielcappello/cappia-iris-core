@@ -1,0 +1,53 @@
+-- Rollback de 20260815122000_iris_nova_commit_turno_v2_criar.sql
+--
+-- Projeto-alvo: cappia-iris-core-dev (bcmuqautblvjdqzhjfbw).
+--
+-- ORDEM OBRIGATORIA DO ROLLBACK -- E O INVERSO DO DEPLOY. Executar os tres
+-- passos NESTA sequencia:
+--
+--   1. DESLIGAR A FLAG da rota V2. Com ela desligada, nenhum turno chama esta
+--      funcao -- a criacao volta a ser conduzida pela rota V1, atraves de
+--      `cappia_reservar_agendamento`, que esta migration nunca tocou.
+--   2. CONFIRMAR que nenhuma instancia da Edge Function esta servindo a
+--      versao que chama esta funcao.
+--   3. SOMENTE ENTAO remover a funcao, executando este arquivo.
+--
+-- POR QUE A ORDEM IMPORTA: remover a funcao com a rota V2 ativa faz toda
+-- confirmacao de agendamento falhar no meio do turno -- a chamada RPC retorna
+-- erro de funcao inexistente, que o adaptador traduz em falha tecnica. O
+-- paciente que respondeu "sim" nao teria seu agendamento criado e receberia
+-- mensagem de erro. Com a flag desligada primeiro, a rota V1 assume.
+--
+-- AGENDAMENTOS JA CRIADOS NAO SAO REVERTIDOS -- e nao devem ser. Linhas
+-- inseridas por esta funcao sao agendamentos legitimos em `agendamentos`,
+-- indistinguiveis dos criados pela rota V1, e podem ja ter sido comunicados
+-- ao paciente. Este rollback remove a FUNCAO, nunca o que ela fez: desfazer
+-- agendamentos reais exigiria decisao clinica/operacional propria, jamais um
+-- script de rollback tecnico.
+--
+-- A COLUNA `aguardando_resposta` NAO E REMOVIDA AQUI. Ela tem migration e
+-- rollback proprios (20260815120000_..._rollback.sql), e continua sendo usada
+-- pela RPC de CANCELAMENTO (cappia_commit_turno_v2_cancelar) e pelo caminho
+-- sem efeito (spec v2 secao 14.2). Remover a coluna a partir deste rollback
+-- quebraria o cancelamento.
+--
+-- `cappia_commit_turno_v2_cancelar` NAO e tocada por este rollback: as duas
+-- funcoes sao independentes e nenhuma depende da outra.
+--
+-- AS TRES FUNCOES RESOLVEDORAS NAO SAO REMOVIDAS
+-- (`cappia__resolver_dentista`, `cappia__resolver_procedimento`,
+-- `cappia__resolver_duracao`): sao reaproveitadas de
+-- 20260804150000_iris_nova_reaproveitamento_agendamento_v1.sql, pertencem
+-- aquela migration e continuam servindo `cappia_reservar_agendamento` na rota
+-- V1. Remove-las aqui quebraria a rota vigente.
+--
+-- `cappia_reservar_agendamento` (rota V1) NAO e tocada, assim como nao foi
+-- tocada pela migration: ela nunca dependeu desta funcao e continua com seus
+-- grants originais.
+--
+-- A assinatura completa e obrigatoria no DROP: o Postgres identifica funcoes
+-- por nome + tipos dos parametros, e um DROP sem a lista poderia atingir uma
+-- sobrecarga diferente caso alguma passe a existir.
+
+drop function if exists public.cappia_commit_turno_v2_criar(
+  uuid, uuid, uuid, text, timestamptz, date, text, uuid, text, text, text, jsonb);
