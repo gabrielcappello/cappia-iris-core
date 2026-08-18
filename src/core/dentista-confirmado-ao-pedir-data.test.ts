@@ -25,7 +25,7 @@ const HOJE = '2026-08-18';
 function pedirData(nome?: string): DecisaoOrquestrador {
   return {
     tipo: 'aguardando_data_horario',
-    resultado: { tipo: 'ausente' },
+    resultado: { tipo: 'incompleto', motivo: 'intencao_ausente' },
     ...(nome !== undefined ? { dentista_nome_exibido: nome } : {}),
   } as DecisaoOrquestrador;
 }
