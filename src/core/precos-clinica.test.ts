@@ -117,3 +117,41 @@ test('cadastro real INTEIRO (46 itens) nao libera nenhum valor', () => {
   assert.equal(p!.liberados, undefined);
   assert.equal(p!.sob_avaliacao!.length, 46);
 });
+
+test('CENARIO DO PAINEL: liberar SO tres itens de Clinico Geral', () => {
+  // Reproduz exatamente o que a tela de configuracao grava quando o dono
+  // liga "INFORMA VALOR?" em Limpeza, Restauracao (1 face) e Extracao --
+  // os demais da MESMA especialidade continuam sob avaliacao.
+  const p = derivarPrecosClinica([
+    { esp: '🦷 Clínico Geral', nome: 'Consulta / Avaliação', ativo: true, valor: 120, mostrar_valor: false },
+    { esp: '🦷 Clínico Geral', nome: 'Limpeza dental (profilaxia)', ativo: true, valor: 45, mostrar_valor: true },
+    { esp: '🦷 Clínico Geral', nome: 'Restauração / Cárie (1 face)', ativo: true, valor: 250, mostrar_valor: true },
+    { esp: '🦷 Clínico Geral', nome: 'Restauração / Cárie (2+ faces)', ativo: true, valor: 350, mostrar_valor: false },
+    { esp: '🦷 Clínico Geral', nome: 'Extração simples', ativo: true, valor: 250, mostrar_valor: true },
+    { esp: '🦷 Clínico Geral', nome: 'Fluoretação', ativo: true, valor: 100, mostrar_valor: false },
+  ]);
+
+  assert.deepEqual(p!.liberados, [
+    { procedimento: 'Limpeza dental (profilaxia)', valor: 'R$ 45,00' },
+    { procedimento: 'Restauração / Cárie (1 face)', valor: 'R$ 250,00' },
+    { procedimento: 'Extração simples', valor: 'R$ 250,00' },
+  ]);
+  assert.deepEqual(p!.sob_avaliacao, [
+    'Consulta / Avaliação', 'Restauração / Cárie (2+ faces)', 'Fluoretação',
+  ]);
+
+  // Os valores NAO liberados da mesma especialidade nao podem vazar.
+  const serializado = JSON.stringify(p);
+  for (const proibido of ['120', '350', '100']) {
+    assert.ok(!serializado.includes(proibido), `valor nao liberado vazou: ${proibido}`);
+  }
+});
+
+test('desligar o procedimento zera o preco liberado (regra do painel)', () => {
+  // O painel escreve `mostrar_valor: false` ao desativar; mesmo que algum
+  // cadastro antigo tenha ficado inconsistente, item inativo nunca vira preco.
+  const p = derivarPrecosClinica([
+    { esp: 'X', nome: 'Desligado mas liberado', ativo: false, valor: 500, mostrar_valor: true },
+  ]);
+  assert.equal(p, undefined);
+});

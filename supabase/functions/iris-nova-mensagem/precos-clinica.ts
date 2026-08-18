@@ -8,12 +8,22 @@
 //       "valor": 45, "ativo": true, "mostrar_valor": false }
 //
 // `mostrar_valor` e escrito pelo PAINEL, na coluna rotulada "INFORMA VALOR?"
-// (dashboard/procedimentos). Auditado em 2026-08-17: o painel decide por
-// ESPECIALIDADE e grava o mesmo valor em todos os procedimentos dela
-// (`mostrar_valor: visivel[e.nome]`). Este modulo le item a item mesmo
-// assim -- e o que o dado diz, e continua correto se o painel um dia passar
-// a permitir a escolha por procedimento. O painel e a fonte da verdade;
-// aqui so lemos o que ele gravou, sem reinterpretar.
+// da tela de configuracao (dashboard/page.tsx): cada PROCEDIMENTO tem seu
+// proprio interruptor --
+//
+//     <Toggle on={p.mostrar_valor}
+//             onChange={v => update(p.nome, 'mostrar_valor', v)} />
+//
+// O toggle que aparece no cabecalho da especialidade e apenas um atalho em
+// massa (`toggleEspMostrarValor`), que escreve o mesmo valor nos
+// procedimentos ATIVOS daquele grupo -- conveniencia, nao a unidade de
+// decisao. Desligar o procedimento (`ativo: false`) tambem zera o
+// `mostrar_valor` dele, entao um item desligado nunca fica com preco
+// liberado por esquecimento.
+//
+// (Existe uma tela mais antiga em dashboard/procedimentos que decide por
+// especialidade. A leitura item a item aqui atende as duas, porque le o que
+// FOI GRAVADO em cada item -- nunca reinterpreta a intencao da tela.)
 //
 // So o que estiver com `true` vira fato para a redatora; todo o resto NUNCA
 // sai do Core -- nem o valor, nem a existencia dele.
