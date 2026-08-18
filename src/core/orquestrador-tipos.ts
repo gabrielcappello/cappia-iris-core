@@ -17,6 +17,7 @@ import type { AgendamentoAtivo } from './buscar-agendamento-ativo.ts';
 import type { HistoricoConversa } from './tipos.ts';
 import type { ContextoUnificadoSemMensagem } from './sombra-contexto-unificado.ts';
 import type { ClinicaConhecida } from './clinica-conhecida.ts';
+import type { DentistaDaClinica } from './dentistas-da-clinica.ts';
 import type { PrecosClinica } from './precos-clinica.ts';
 
 /**
@@ -49,6 +50,8 @@ export interface CatalogoClinica {
    */
   clinicaConhecida?: ClinicaConhecida;
   precos?: PrecosClinica;
+  /** Quem atende na clinica, com especialidades (2026-08-18). */
+  dentistasDaClinica?: readonly DentistaDaClinica[];
 }
 
 export interface EntradaOrquestrador {
@@ -436,6 +439,8 @@ export interface ResultadoOrquestrador {
    */
   clinica_conhecida?: ClinicaConhecida;
   precos?: PrecosClinica;
+  /** Quem atende na clinica -- exposto para a redatora (2026-08-18). */
+  dentistas_da_clinica?: readonly DentistaDaClinica[];
   /**
    * `atualizado_em` da linha APOS a gravacao do snapshot de horarios desta
    * mensagem -- o valor que `gravarContextoHorarios` devolveu (ver seu

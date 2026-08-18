@@ -26,6 +26,7 @@ import type { ConfiguracaoDuracao } from './duracao-tipos.ts';
 import type { LinhaClinica } from './clinica-conhecida.ts';
 import { derivarClinicaConhecida } from './clinica-conhecida.ts';
 import { derivarPrecosClinica } from './precos-clinica.ts';
+import { derivarDentistasDaClinica } from './dentistas-da-clinica.ts';
 
 export interface EntradaCarregarCatalogo {
   clinica_id: string;
@@ -44,7 +45,12 @@ export async function carregarCatalogo(
   const clinica = await buscarClinicaComDentistas(cliente, entrada.clinica_id);
   if (!clinica) return { tipo: 'clinica_nao_encontrada' };
 
-  const procedimentosCatalogo = await buscarProcedimentosCatalogo(cliente);
+  // As duas leituras do catalogo global vao em PARALELO -- especialidades sao
+  // 10 linhas e nao dependem de procedimentos (2026-08-18).
+  const [procedimentosCatalogo, especialidades] = await Promise.all([
+    buscarProcedimentosCatalogo(cliente),
+    buscarEspecialidadesCatalogo(cliente),
+  ]);
 
   const procedimentos = montarProcedimentos(entrada.clinica_id, procedimentosCatalogo);
   const { dentistas, vinculos, configuracoesDuracao } = montarDentistas(
@@ -70,6 +76,21 @@ export async function carregarCatalogo(
       ...(derivarPrecosClinica(clinica.precios) !== undefined
         ? { precos: derivarPrecosClinica(clinica.precios) }
         : {}),
+      // Quem ATENDE, com as especialidades de cada um (2026-08-18). Sai do
+      // que ja foi montado neste turno -- nenhuma consulta a mais.
+      ...(() => {
+        const lista = derivarDentistasDaClinica(
+          dentistas,
+          vinculos,
+          procedimentos.map((p) => {
+            const esp = especialidades.get(
+              procedimentosCatalogo.find((pc) => pc.id === p.procedimento_id)?.especialidade_id ?? ''
+            );
+            return esp !== undefined ? { ...p, especialidade: esp } : p;
+          })
+        );
+        return lista !== undefined ? { dentistasDaClinica: lista } : {};
+      })(),
     },
   };
 }
@@ -143,6 +164,7 @@ function derivarExigirEmail(automatizacoes: unknown): boolean {
 
 interface ProcedimentoCatalogoRow {
   id: string;
+  especialidade_id: string | null;
   nome_pt: string;
   nome_es: string | null;
   nome_en: string | null;
@@ -158,7 +180,12 @@ interface ProcedimentoCatalogoRow {
 async function buscarProcedimentosCatalogo(cliente: ClienteBancoDados): Promise<ProcedimentoCatalogoRow[]> {
   const { data, error } = await cliente
     .from('procedimentos_catalogo')
-    .select('id, nome_pt, nome_es, nome_en, nome_fr, nome_de, nome_it, nome_ru, nome_ar, tempo_padrao, ativo');
+    .select(
+      'id, nome_pt, nome_es, nome_en, nome_fr, nome_de, nome_it, nome_ru, nome_ar, tempo_padrao, ativo, ' +
+        // 2026-08-18: de onde sai a especialidade de cada dentista. Somado ao
+        // MESMO select -- nenhuma consulta nova por turno.
+        'especialidade_id'
+    );
   if (error) throw new Error(`falha ao buscar procedimentos_catalogo: ${error.message}`);
 
   const resultado: ProcedimentoCatalogoRow[] = [];
@@ -167,6 +194,7 @@ async function buscarProcedimentosCatalogo(cliente: ClienteBancoDados): Promise<
     if (typeof l.id !== 'string' || typeof l.nome_pt !== 'string') continue; // linha sem identidade minima: ignorada, nunca inventada.
     resultado.push({
       id: l.id,
+      especialidade_id: typeof l.especialidade_id === 'string' ? l.especialidade_id : null,
       nome_pt: l.nome_pt,
       nome_es: typeof l.nome_es === 'string' ? l.nome_es : null,
       nome_en: typeof l.nome_en === 'string' ? l.nome_en : null,
@@ -180,6 +208,41 @@ async function buscarProcedimentosCatalogo(cliente: ClienteBancoDados): Promise<
     });
   }
   return resultado;
+}
+
+/**
+ * Nomes das especialidades (`especialidades_catalogo`, tabela GLOBAL, sem
+ * clinica_id -- mesma natureza de `procedimentos_catalogo`).
+ *
+ * Existe porque `procedimentos_catalogo.especialidade_id` guarda um id em
+ * ingles (`general`, `endodontics`); o paciente precisa ouvir "Clinico
+ * Geral", "Endodontia". Sao 10 linhas, lidas em paralelo com os
+ * procedimentos.
+ *
+ * Falha de leitura NAO derruba o turno: sem os nomes, os dentistas aparecem
+ * sem especialidade -- que e exatamente o comportamento de quando nao ha
+ * vinculo. Um atendimento inteiro nunca deve cair por causa de um rotulo.
+ */
+async function buscarEspecialidadesCatalogo(
+  cliente: ClienteBancoDados
+): Promise<ReadonlyMap<string, string>> {
+  const mapa = new Map<string, string>();
+  try {
+    const { data, error } = await cliente
+      .from('especialidades_catalogo')
+      .select('id, nome_pt, ativo');
+    if (error) return mapa;
+    for (const linha of data ?? []) {
+      const l = linha as Record<string, unknown>;
+      if (l.ativo !== true) continue;
+      if (typeof l.id !== 'string' || typeof l.nome_pt !== 'string') continue;
+      if (l.nome_pt.trim() === '') continue;
+      mapa.set(l.id, l.nome_pt);
+    }
+  } catch {
+    // Ver comentario acima: rotulo ausente nunca derruba o atendimento.
+  }
+  return mapa;
 }
 
 // REMOVIDO em 2026-08-08 (specs/procedimento-semantico-v1.md):

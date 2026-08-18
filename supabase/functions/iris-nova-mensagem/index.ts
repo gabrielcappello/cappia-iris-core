@@ -186,6 +186,12 @@ Deno.serve(async (req: Request) => {
         ? { clinicaConhecida: resultado.clinica_conhecida }
         : {}),
       ...(resultado.precos !== undefined ? { precos: resultado.precos } : {}),
+      // Quem atende na clinica (2026-08-18): perguntada "quais sao os
+      // dentistas?", a Iris pedia o procedimento primeiro -- os nomes so
+      // chegavam ate ela no turno de escolha de profissional.
+      ...(resultado.dentistas_da_clinica !== undefined
+        ? { dentistasDaClinica: resultado.dentistas_da_clinica }
+        : {}),
     });
     if (motivo_fallback !== null) {
       console.log(`resposta_conversacional_fallback decisao=${resultado.decisao.tipo} motivo=${motivo_fallback}`);

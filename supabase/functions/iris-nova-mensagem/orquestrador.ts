@@ -461,6 +461,10 @@ export async function processarMensagem(
       ...(catalogoCarregado.tipo === 'carregado' && catalogoCarregado.catalogo.precos !== undefined
         ? { precos: catalogoCarregado.catalogo.precos }
         : {}),
+      ...(catalogoCarregado.tipo === 'carregado' &&
+      catalogoCarregado.catalogo.dentistasDaClinica !== undefined
+        ? { dentistas_da_clinica: catalogoCarregado.catalogo.dentistasDaClinica }
+        : {}),
       atualizado_em: atualizadoEmFinal,
       natureza_mensagem: interpretacao.natureza_mensagem,
       historico_conversa: identificacao.conversa.historico_conversa,

@@ -22,6 +22,7 @@ import type { CadastroPaciente } from './tipos.ts';
  * sabe. Os quatro campos cadastrais entram no lugar dele.
  */
 import type { ClinicaConhecida } from './clinica-conhecida.ts';
+import type { DentistaDaClinica } from './dentistas-da-clinica.ts';
 import type { PrecosClinica } from './precos-clinica.ts';
 
 export type CampoFaltante =
@@ -252,6 +253,15 @@ export interface FatosAutorizados {
    */
   clinica_conhecida?: ClinicaConhecida;
   /**
+   * Quem ATENDE na clinica, com as especialidades de cada um (2026-08-18).
+   *
+   * Disponivel em QUALQUER turno, nao so quando o Core precisa que o
+   * paciente escolha profissional (`dentistas_candidatos`). Antes disso a
+   * Iris, perguntada "quais sao os dentistas?", pedia o procedimento
+   * primeiro -- unico caminho que a levava ate os nomes.
+   */
+  dentistas_da_clinica?: DentistaDaClinica[];
+  /**
    * Precos, separados entre o que a clinica LIBEROU (`mostrar_valor: true`
    * item a item) e o que depende de avaliacao. Ver precos-clinica.ts -- o
    * valor de um procedimento nao liberado nunca chega aqui.
@@ -357,7 +367,9 @@ export function derivarFatosAutorizados(
    * O valor de um procedimento nao liberado nunca chega ate aqui -- o
    * padrao e NAO informar preco, e so a clinica muda isso, pelo painel.
    */
-  precos?: PrecosClinica
+  precos?: PrecosClinica,
+  /** Quem atende na clinica -- ortogonal a decisao, como os dados da clinica. */
+  dentistasDaClinica?: readonly DentistaDaClinica[]
 ): FatosAutorizados {
   let fatos = derivarPorDecisao(decisao, dataHoje);
 
@@ -407,6 +419,10 @@ export function derivarFatosAutorizados(
   // autorizou.
   if (clinicaConhecida !== undefined) {
     fatos = { ...fatos, clinica_conhecida: clinicaConhecida };
+  }
+
+  if (dentistasDaClinica !== undefined && dentistasDaClinica.length > 0) {
+    fatos = { ...fatos, dentistas_da_clinica: [...dentistasDaClinica] };
   }
 
   if (precos !== undefined) {
