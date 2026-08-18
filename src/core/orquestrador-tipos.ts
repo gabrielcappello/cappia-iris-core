@@ -161,7 +161,20 @@ export type DecisaoOrquestrador =
   // seria inconsistencia interna impossivel, nunca uma situacao real do
   // paciente. O contrato de tipo reflete isso: nenhum gerador de resposta
   // pode inventar um fallback pra um caso que nao deveria poder existir.
-  | { tipo: 'aguardando_data_horario'; resultado: Exclude<ResultadoResolucaoTemporal, { tipo: 'resolvido' }> }
+  | {
+      tipo: 'aguardando_data_horario';
+      resultado: Exclude<ResultadoResolucaoTemporal, { tipo: 'resolvido' }>;
+      /**
+       * Nome do profissional JA definido para este agendamento (2026-08-18).
+       *
+       * Ausente quando o dentista ainda nao esta resolvido -- ha caminhos que
+       * chegam aqui antes disso (ex.: erro de fuso). Presente, diz a redatora
+       * que a escolha do profissional ja aconteceu: sem esse fato ela pegava o
+       * nome da mensagem crua do paciente e escrevia "Obrigada, Diego Ramoz",
+       * como se o proprio paciente se chamasse assim.
+       */
+      dentista_nome_exibido?: string;
+    }
   | {
       tipo: 'horarios_disponiveis';
       procedimento_id: string;

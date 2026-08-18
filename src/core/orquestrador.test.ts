@@ -255,6 +255,10 @@ test('duvida sem alteracoes, com procedimento ja conhecido: nao retorna duvida_l
   assert.deepEqual(resultado.decisao, {
     tipo: 'aguardando_data_horario',
     resultado: { tipo: 'incompleto', motivo: 'intencao_ausente' },
+    // 2026-08-18: o profissional ja resolvido acompanha a decisao, para a
+    // redatora saber que a escolha aconteceu (ver
+    // dentista-confirmado-ao-pedir-data.test.ts).
+    dentista_nome_exibido: 'Dra. Ana',
   });
 });
 
@@ -309,6 +313,10 @@ test('procedimento + dentista unico apto + duracao configurada, sem data: aguard
   assert.deepEqual(resultado.decisao, {
     tipo: 'aguardando_data_horario',
     resultado: { tipo: 'incompleto', motivo: 'intencao_ausente' },
+    // 2026-08-18: o profissional ja resolvido acompanha a decisao, para a
+    // redatora saber que a escolha aconteceu (ver
+    // dentista-confirmado-ao-pedir-data.test.ts).
+    dentista_nome_exibido: 'Dra. Ana',
   });
 });
 
@@ -537,6 +545,10 @@ test('escolha + confirmacao + paciente cadastrado: reserva_criada, chamando capp
     duracao_min: 30,
     data: '2026-08-03',
     horario: '10:00',
+    // Nomes exibiveis do catalogo (2026-08-16): sao o que permite a Iris
+    // fechar com um resumo conferivel, em vez de so data e horario.
+    dentista_nome_exibido: 'Dra. Ana',
+    procedimento_nome: 'Limpeza',
   });
   assert.equal(clienteRpc.chamadas.length, 1);
   assert.deepEqual(clienteRpc.chamadas[0].parametros, {

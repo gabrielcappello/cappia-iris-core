@@ -1360,7 +1360,16 @@ async function decidir(
   });
 
   if (resultadoTemporal.tipo !== 'resolvido') {
-    return comSubstituicao({ tipo: 'aguardando_data_horario', resultado: resultadoTemporal });
+    // O profissional JA esta definido neste ponto -- informa-lo evita que a
+    // redatora deduza o nome da mensagem crua (2026-08-18).
+    const nomeDentista = catalogo.dentistas.find(
+      (d) => d.dentista_id === resolucaoDentista.dentistaId && d.clinica_id === clinicaId
+    )?.nome_exibido;
+    return comSubstituicao({
+      tipo: 'aguardando_data_horario',
+      resultado: resultadoTemporal,
+      ...(nomeDentista !== undefined ? { dentista_nome_exibido: nomeDentista } : {}),
+    });
   }
 
   const carregado = await carregarEntradaDisponibilidade(clienteBanco, {

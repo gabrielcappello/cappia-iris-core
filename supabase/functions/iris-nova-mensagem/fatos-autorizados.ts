@@ -541,7 +541,16 @@ function derivarPorDecisao(decisao: DecisaoOrquestrador, dataHoje: string): Fato
       return { objetivo: 'informar_combinacao_indisponivel', dentista_preferido: decisao.dentista_nome_exibido };
 
     case 'aguardando_data_horario':
-      return { objetivo: 'pedir_data_ou_horario', dados_faltantes: ['data'] };
+      return {
+        objetivo: 'pedir_data_ou_horario',
+        dados_faltantes: ['data'],
+        // Quem ja foi escolhido para este agendamento. Sem isso a redatora
+        // nao sabia que a escolha do profissional ja tinha acontecido -- e
+        // agradecia ao paciente pelo nome do dentista (2026-08-18).
+        ...(decisao.dentista_nome_exibido !== undefined
+          ? { dentista_confirmado: decisao.dentista_nome_exibido }
+          : {}),
+      };
 
     case 'horarios_disponiveis':
       return fatosParaHorariosDisponiveis(decisao.resultado, dataHoje, decisao.dentista_nome_exibido);
