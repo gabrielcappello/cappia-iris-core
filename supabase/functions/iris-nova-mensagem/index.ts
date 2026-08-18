@@ -23,6 +23,7 @@ import {
   medirComContextoUnificado,
   registrarMedicaoUnificada,
 } from "./sombra-contexto-unificado.ts";
+import { medirResultadoIris, registrarMedicaoIris } from "./sombra-resultado-iris.ts";
 import { ClinicaNaoEncontradaError, EntradaInvalidaError } from "./erros.ts";
 import type { ClienteBancoDados } from "./tipos.ts";
 import type { ClienteRpc } from "./mensagens-recebidas-tipos.ts";
@@ -174,6 +175,17 @@ Deno.serve(async (req: Request) => {
       ...(resultado.agendamentos_do_paciente !== undefined
         ? { agendamentosDoPaciente: resultado.agendamentos_do_paciente }
         : {}),
+      // Cadastro ja conhecido (2026-08-17): permite a Iris conferir um dado
+      // com o paciente e reconhecer quem ja tem ficha, em vez de pedir de
+      // novo o que a clinica ja sabe.
+      cadastroConhecido: resultado.cadastro_conhecido,
+      // Dados da propria clinica e precos liberados (2026-08-17). Sem isto a
+      // Iris nao sabia para quem trabalhava: perguntada "qual e a clinica?
+      // fica onde", respondia "somos a clinica odontologica".
+      ...(resultado.clinica_conhecida !== undefined
+        ? { clinicaConhecida: resultado.clinica_conhecida }
+        : {}),
+      ...(resultado.precos !== undefined ? { precos: resultado.precos } : {}),
     });
     if (motivo_fallback !== null) {
       console.log(`resposta_conversacional_fallback decisao=${resultado.decisao.tipo} motivo=${motivo_fallback}`);
@@ -237,6 +249,34 @@ Deno.serve(async (req: Request) => {
             .then(registrarMedicaoUnificada)
             .catch(() => {});
 
+    // TERCEIRA SOMBRA: mede o contrato `ResultadoIris`
+    // (specs/contexto-conversacional-unificado-v2.md), o contrato de ACOES
+    // que substitui o `acao_solicitada` generico da v1.
+    //
+    // Mesmas garantias das duas anteriores: roda DEPOIS da resposta ja
+    // decidida e gravada, nunca e `await`ada antes do `return`, e
+    // `medirResultadoIris` NUNCA lanca (coberto em
+    // sombra-resultado-iris.test.ts). Nao le nem escreve estado nenhum.
+    //
+    // REUSA o mesmo contexto ja montado para a sombra v1 -- zero trabalho
+    // extra no caminho do paciente, e as duas medicoes descrevem exatamente
+    // o mesmo turno, o que torna a comparacao entre elas legitima.
+    //
+    // MODELO DIFERENTE do de producao (gpt-5.6-luna, nao gpt-4.1-mini): e
+    // deliberado. O contrato v2 existe porque este modelo trabalha melhor com
+    // acoes parametrizadas, e medir com o modelo antigo nao responderia a
+    // pergunta que importa. Custo: uma chamada a mais por turno, so aqui.
+    const promessaSombraIris =
+      contextoUnificado === undefined
+        ? Promise.resolve()
+        : medirResultadoIris({
+            chaveApi: openaiKey,
+            contexto: completarContextoUnificado(contextoUnificado, payload.mensagem),
+            decisaoAtual: resultado.decisao.tipo,
+          })
+            .then(registrarMedicaoIris)
+            .catch(() => {});
+
     // `EdgeRuntime.waitUntil` mantem o isolado vivo ate a promessa acima
     // terminar, mesmo depois da resposta ja ter sido enviada -- sem isso, o
     // runtime pode encerrar o isolado antes do log-sombra rodar. Quando o
@@ -246,6 +286,7 @@ Deno.serve(async (req: Request) => {
     if (typeof EdgeRuntime !== "undefined") {
       EdgeRuntime.waitUntil(promessaSombra);
       EdgeRuntime.waitUntil(promessaSombraUnificada);
+      EdgeRuntime.waitUntil(promessaSombraIris);
     }
 
     return jsonResponse({ resposta }, 200);

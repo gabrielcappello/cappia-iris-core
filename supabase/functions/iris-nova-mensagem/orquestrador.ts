@@ -14,6 +14,7 @@ import { persistirPaciente } from './persistir-paciente.ts';
 import { trocarTelefonePaciente } from './trocar-telefone-paciente.ts';
 import { calcularCadastroFaltante, comporVisaoEfetivaCadastro } from './cadastro-paciente.ts';
 import { derivarAcaoContextoHorarios, gravarContextoHorarios } from './contexto-horarios.ts';
+import { declararPerguntaPendente } from './declarar-pergunta-pendente.ts';
 import { historicoValidoParaEnvio } from './historico-conversa.ts';
 import { montarContextoUnificado } from './sombra-contexto-unificado.ts';
 import { aplicarDados } from './aplicar-dados.ts';
@@ -91,6 +92,47 @@ export async function processarMensagem(
           .filter((d) => d.ativo)
           .map((d) => ({ dentista_id: d.dentista_id, nome_exibido: d.nome_exibido }))
       : [];
+
+  // AGENDAMENTOS DO PACIENTE PARA A INTERPRETADORA (2026-08-17).
+  //
+  // Ate aqui SO a redatora os recebia. A interpretadora -- quem le a mensagem
+  // e extrai os dados -- trabalhava no escuro, sem saber que o paciente tem
+  // consulta marcada. Isso quebrou tres conversas reais no mesmo dia:
+  //
+  //   "pode trocar para 10hrs?"            -> nao virou remarcacao
+  //   "mesma data"                          -> nao resolveu a data
+  //   "o mesmo dentista da avaliacao"       -> nao resolveu o dentista, e o
+  //                                            Core repetiu a pergunta SETE
+  //                                            vezes seguidas
+  //
+  // Nos tres, a informacao existia no banco e nao era entregue a quem
+  // precisava dela.
+  //
+  // POR QUE UMA BUSCA PROPRIA, e nao a que ja existe em `finalizar`: aquela
+  // roda DEPOIS da decisao de proposito, para a lista refletir o desfecho do
+  // turno (incluindo uma reserva recem-criada) -- e a redatora precisa disso.
+  // A interpretadora precisa do oposto: o estado ANTES do turno, que e o
+  // contexto do que o paciente esta dizendo agora. Sao momentos diferentes,
+  // com necessidades diferentes.
+  //
+  // Falha de busca NUNCA derruba o turno: sem a lista, a interpretacao segue
+  // como sempre seguiu.
+  let agendamentosParaInterpretacao: readonly AgendamentoAtivo[] | undefined;
+  // O erro e PRESERVADO, nao engolido: `finalizar` reaproveita esta busca e a
+  // politica de falha de la (propagar nas decisoes conversacionais, absorver
+  // nas demais) continua valendo sobre o mesmo erro.
+  let erroBuscaParaInterpretacao: unknown = null;
+  try {
+    agendamentosParaInterpretacao = await buscarAgendamentosParaContexto(
+      clienteBanco,
+      identificacao.clinica_id,
+      identificacao.paciente.id,
+      entrada.instante_atual
+    );
+  } catch (erro) {
+    erroBuscaParaInterpretacao = erro;
+    agendamentosParaInterpretacao = undefined;
+  }
 
   // REMARCACAO -- construir a lista de agendamentos ativos para a IA
   // correlacionar, SOMENTE quando ha uma escolha pendente do turno anterior
@@ -177,6 +219,23 @@ export async function processarMensagem(
     // (montado acima). AUSENTE quando nao ha escolha pendente ou a lista
     // ficou vazia apos o cruzamento com a busca fresca.
     ...(agendamentosAtivosParaIA !== undefined ? { agendamentos_ativos: agendamentosAtivosParaIA } : {}),
+    // CONTEXTO (nunca pergunta em aberto): os agendamentos que o paciente ja
+    // tem, para a interpretadora entender "o mesmo dentista", "mesma data",
+    // "trocar meu horario". Campo SEPARADO de `agendamentos_ativos` de
+    // proposito -- aquele significa "ha uma escolha pendente entre estes", e
+    // fundir os dois quebraria esse contrato, fechado por medicao.
+    ...(agendamentosParaInterpretacao !== undefined && agendamentosParaInterpretacao.length > 0
+      ? {
+          agendamentos_do_paciente: agendamentosParaInterpretacao.map((a) => ({
+            agendamento_id: a.agendamento_id,
+            descricao: descreverAgendamentoAtivo(a),
+            ...(a.dentista_id !== null ? { dentista_id: a.dentista_id } : {}),
+            ...(a.procedimento_id !== null ? { procedimento_id: a.procedimento_id } : {}),
+            data: a.data,
+            horario: a.horario,
+          })),
+        }
+      : {}),
     // Cadastro ja persistido do paciente, quando ele existe e tem algum dado.
     // Serve para a Iris nao pedir de novo o que ja esta na ficha: entra
     // somente na derivacao de `campos_cadastrais_preenchidos` (presenca,
@@ -260,9 +319,27 @@ export async function processarMensagem(
   }
 
   const finalizar = async (
-    decisao: DecisaoOrquestrador,
+    decisaoRecebida: DecisaoOrquestrador,
     substituicao?: { dentista_nome_exibido: string }
   ): Promise<ResultadoOrquestrador> => {
+    // CAMPO CADASTRAL REJEITADO NESTE TURNO -- anexado aqui, no ponto unico
+    // que TODA decisao atravessa, em vez de propagado por toda a cadeia de
+    // parametros ate `decidirConfirmacaoOuReserva`.
+    //
+    // Defeito que isto corrige (WhatsApp, 2026-08-16): o paciente enviou um
+    // CPF de 10 digitos; o Core descartou EM SILENCIO e a Iris pediu "nome,
+    // CPF e data" de novo, inteiro, como se ele nao tivesse respondido. Ele
+    // reenviou os mesmos dados -- e o ciclo se repetiria, porque nada dizia
+    // QUAL campo estava errado.
+    //
+    // So enriquece `cadastro_necessario`: e a unica decisao em que o pedido
+    // sera repetido ao paciente, entao e a unica em que a distincao entre
+    // "nao informou" e "informou errado" muda o que ele ouve.
+    const invalidos = interpretacao.campos_cadastrais_invalidos;
+    const decisao: DecisaoOrquestrador =
+      decisaoRecebida.tipo === 'cadastro_necessario' && invalidos !== undefined && invalidos.length > 0
+        ? { ...decisaoRecebida, campos_invalidos: invalidos }
+        : decisaoRecebida;
     // PONTO UNICO DE BUSCA, EM TODO TURNO (2026-08-14). Ate aqui os
     // agendamentos do paciente so eram buscados dentro do ramo conversacional,
     // e so chegavam a redatora em 3 das 30 decisoes. Em todas as outras a Iris
@@ -277,17 +354,36 @@ export async function processarMensagem(
     // A busca fica DEPOIS da decisao de proposito: assim a lista e sempre
     // coerente com o desfecho deste turno (inclui a reserva recem-criada). Era
     // essa a objecao registrada na spec original, e ela deixa de valer aqui.
-    let agendamentosDoPaciente: readonly AgendamentoAtivo[] | undefined;
+    // UMA CONSULTA POR TURNO, nunca uma por consumidor.
+    //
+    // A busca do inicio (para a interpretadora) e reaproveitada aqui, EXCETO
+    // quando este turno alterou a agenda: nesses tres desfechos a lista de
+    // antes ficou obsoleta -- ela nao teria a reserva recem-criada, nao
+    // refletiria a remarcacao e ainda mostraria o agendamento cancelado. E
+    // esse justamente o motivo de a busca da redatora viver aqui, no fim.
+    //
+    // Nos demais turnos (a grande maioria) nada mudou na agenda, entao
+    // reconsultar devolveria exatamente a mesma coisa.
+    const turnoAlterouAgenda =
+      decisao.tipo === 'reserva_criada' ||
+      decisao.tipo === 'remarcacao_criada' ||
+      decisao.tipo === 'cancelamento_criado';
+
+    let agendamentosDoPaciente: readonly AgendamentoAtivo[] | undefined = agendamentosParaInterpretacao;
     let erroBuscaAgendamentos: unknown = null;
-    try {
-      agendamentosDoPaciente = await buscarAgendamentosParaContexto(
-        clienteBanco,
-        identificacao.clinica_id,
-        identificacao.paciente.id,
-        entrada.instante_atual
-      );
-    } catch (erro) {
-      erroBuscaAgendamentos = erro;
+    if (turnoAlterouAgenda) {
+      try {
+        agendamentosDoPaciente = await buscarAgendamentosParaContexto(
+          clienteBanco,
+          identificacao.clinica_id,
+          identificacao.paciente.id,
+          entrada.instante_atual
+        );
+      } catch (erro) {
+        erroBuscaAgendamentos = erro;
+      }
+    } else {
+      erroBuscaAgendamentos = erroBuscaParaInterpretacao;
     }
 
     // POLITICA DE FALHA, deliberadamente diferente por caminho:
@@ -338,6 +434,13 @@ export async function processarMensagem(
       telefone_normalizado: entrada.telefone_normalizado,
       atualizado_em_da_decisao: atualizadoEmParaContexto,
       acao: derivarAcaoContextoHorarios(decisao),
+      // A anotacao "eu perguntei X" deste turno, no MESMO UPDATE e sob o
+      // MESMO CAS do snapshot de horarios -- os dois descrevem o mesmo turno
+      // (specs/contexto-conversacional-unificado-v2.md secao 14.6).
+      //
+      // Derivada da decisao ja tomada, nunca do texto que a redatora
+      // escreveu: quem sabe o que foi perguntado e quem decidiu perguntar.
+      aguardando_resposta: declararPerguntaPendente(decisao),
     });
 
     return {
@@ -345,6 +448,19 @@ export async function processarMensagem(
       conversa_id: identificacao.conversa.id,
       conflitos: interpretacao.conflitos,
       decisao,
+      // Visao EFETIVA do cadastro: a ficha do banco combinada com o que o
+      // paciente informou neste turno -- a mesma composicao que o fluxo de
+      // reserva ja usava, agora tambem entregue a redatora (2026-08-17).
+      cadastro_conhecido: comporVisaoEfetivaCadastro(identificacao.paciente.cadastro, dados),
+      // Dados da clinica e precos liberados: vem do catalogo ja carregado
+      // neste turno -- nenhuma consulta a mais. Ausentes quando a clinica
+      // nao preencheu nada (2026-08-17).
+      ...(catalogoCarregado.tipo === 'carregado' && catalogoCarregado.catalogo.clinicaConhecida !== undefined
+        ? { clinica_conhecida: catalogoCarregado.catalogo.clinicaConhecida }
+        : {}),
+      ...(catalogoCarregado.tipo === 'carregado' && catalogoCarregado.catalogo.precos !== undefined
+        ? { precos: catalogoCarregado.catalogo.precos }
+        : {}),
       atualizado_em: atualizadoEmFinal,
       natureza_mensagem: interpretacao.natureza_mensagem,
       historico_conversa: identificacao.conversa.historico_conversa,
@@ -372,6 +488,17 @@ export async function processarMensagem(
         agendamentos: agendamentosDoPaciente,
         catalogo: catalogoCarregado.tipo === 'carregado' ? catalogoCarregado.catalogo : null,
         historico: identificacao.conversa.historico_conversa,
+        // A pergunta que a Iris fez no TURNO ANTERIOR -- e o que permite
+        // resolver "o primeiro"/"esse mesmo" sem deduzir do texto
+        // (specs/contexto-conversacional-unificado-v2.md secao 14.6).
+        //
+        // `invalido` NAO entra: dado corrompido nunca vira `null`, que
+        // afirmaria "nao havia pergunta em aberto". Quando a leitura recusa,
+        // o campo fica ausente e este turno segue sem a ancora -- degradado,
+        // porem nunca decidindo sobre premissa inventada.
+        ...(identificacao.conversa.aguardando_resposta.situacao === 'presente'
+          ? { aguardando_resposta: identificacao.conversa.aguardando_resposta.pergunta }
+          : {}),
       }),
     };
   };
@@ -555,8 +682,21 @@ function camposParaLimparAoConcluir(
   dados: Record<string, string | undefined>
 ): readonly CampoDadosConversa[] | null {
   if (decisao.tipo === 'reserva_criada') return CAMPOS_NOVO_AGENDAMENTO;
+  // Remarcacao e cancelamento concluidos limpam o MESMO conjunto da criacao,
+  // mais `agendamento_id` (2026-08-17).
+  //
+  // Ate aqui limpavam so `intencao` e `agendamento_id`, deixando
+  // `data_texto`, `horario_texto` e `confirmacao` pendurados. Defeito real
+  // medido em conversa: depois de remarcar para as 10:00, o turno seguinte
+  // reencontrou "amanha"+"10:00" ainda em `dados` e tentou montar um
+  // agendamento NOVO com eles -- sem procedimento (o paciente nunca pediu um
+  // nesta conversa, so remarcou), caindo em `aguardando_procedimento`. A Iris
+  // entao pediu o procedimento logo depois de ter remarcado.
+  //
+  // Um fluxo concluido nao deixa resto: os campos que descrevem "o que se
+  // quer marcar" pertenciam AQUELA operacao, que acabou.
   if (decisao.tipo === 'remarcacao_criada' || decisao.tipo === 'cancelamento_criado') {
-    return ['intencao', 'agendamento_id'];
+    return [...CAMPOS_NOVO_AGENDAMENTO, 'agendamento_id'];
   }
   if (
     decisao.tipo === 'desistencia' &&
@@ -736,12 +876,38 @@ async function decidirRemarcacao(
   }
 
   const fuso = await buscarFusoHorario(clienteBanco, clinicaId);
+
+  // NUMA REMARCACAO, A DATA DO AGENDAMENTO ATUAL E O PADRAO (2026-08-17).
+  //
+  // Quem remarca costuma dizer so o horario novo ("mesma data, 10hrs", "pode
+  // ser as 10?"): a data ja esta implicita, e e a do agendamento que ele tem.
+  // Sem esse padrao, `data_texto` ficava vazio, a resolucao temporal falhava
+  // e a Iris perguntava "para qual data?" -- tres turnos seguidos numa
+  // conversa real, com o paciente repetindo "ja falei, mesmo dia".
+  //
+  // So se aplica quando o paciente NAO informou data alguma. Qualquer data
+  // que ele diga prevalece -- inclusive "amanha" ou uma data explicita.
+  // Nunca inventa: o valor vem da linha do agendamento que esta sendo
+  // remarcado.
+  // `agendamentos.data` e `YYYY-MM-DD`; `montarFatosTemporais` so entende
+  // `DD/MM[/AAAA]`. A conversao e aritmetica de string, sem `Date` -- mesma
+  // disciplina do resto do Core.
+  const dataDoAgendamentoAtual = (() => {
+    const p = agendamentoEscolhido.data.split('-');
+    return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : agendamentoEscolhido.data;
+  })();
+
+  const dataTextoEfetiva =
+    dados.data_texto !== undefined && dados.data_texto.trim() !== ''
+      ? dados.data_texto
+      : dataDoAgendamentoAtual;
+
   const resultadoTemporal = resolverTemporal({
     clinica_id: clinicaId,
     fuso: fuso ?? '',
     instante_atual: instanteAtual,
     fatos_temporais: montarFatosTemporais({
-      data_texto: dados.data_texto,
+      data_texto: dataTextoEfetiva,
       periodo: dados.periodo,
       horario_texto: dados.horario_texto,
     }),
@@ -781,6 +947,9 @@ async function decidirRemarcacao(
           tipo: 'horarios_disponiveis',
           procedimento_id: procedimentoId,
           dentista_id: dentistaId,
+          // Mesmo motivo do fluxo de criacao: a redatora precisa saber de
+          // quem sao os horarios para nao reperguntar o dentista.
+          dentista_nome_exibido: nomeDentistaExibido(dentistaId, catalogo),
           duracao_min: resultadoDuracao.duracao_min,
           resultado: carregado.resultado,
         },
@@ -853,6 +1022,17 @@ async function decidirConfirmacaoOuExecutarRemarcacao(
       duracao_min: resultado.duracao_min,
       data: resultado.data,
       horario: resultado.horario,
+      // Nomes exibiveis, para o fechamento poder ser conferido -- mesmo
+      // motivo da criacao (2026-08-17). Vem do agendamento ATUAL, que a
+      // remarcacao preserva: profissional e procedimento nao mudam aqui, so
+      // data e horario. Vazios quando a linha nao os tinha; nesse caso o
+      // campo simplesmente nao e enviado a redatora.
+      ...(agendamentoAtual.dentista_nome !== null
+        ? { dentista_nome_exibido: agendamentoAtual.dentista_nome }
+        : {}),
+      ...(agendamentoAtual.procedimento !== null
+        ? { procedimento_nome: agendamentoAtual.procedimento }
+        : {}),
     };
   }
 
@@ -1205,6 +1385,7 @@ async function decidir(
             procedimentoIdEfetivo,
             nomeProcedimentoEfetivo(procedimentoIdEfetivo, catalogo),
             resolucaoDentista.dentistaId,
+            nomeDentistaExibido(resolucaoDentista.dentistaId, catalogo),
             resultadoDuracao.duracao_min,
             carregado.resultado.opcao,
             dados.confirmacao,
@@ -1219,6 +1400,9 @@ async function decidir(
         tipo: 'horarios_disponiveis',
         procedimento_id: procedimentoIdEfetivo,
         dentista_id: resolucaoDentista.dentistaId,
+        // De quem sao estes horarios -- sem isso a redatora nao sabe que a
+        // escolha do dentista ja foi feita e repete a pergunta (2026-08-17).
+        dentista_nome_exibido: nomeDentistaExibido(resolucaoDentista.dentistaId, catalogo),
         duracao_min: resultadoDuracao.duracao_min,
         resultado: carregado.resultado,
       });
@@ -1266,6 +1450,8 @@ async function decidirConfirmacaoOuReserva(
   procedimentoId: string,
   procedimentoNome: string,
   dentistaId: string,
+  /** Nome exibivel do profissional, para o resumo do fechamento. */
+  dentistaNomeExibido: string,
   duracaoMin: number,
   opcao: OpcaoHorario,
   confirmacao: string | undefined,
@@ -1341,6 +1527,7 @@ async function decidirConfirmacaoOuReserva(
       procedimentoId,
       procedimentoNome,
       dentistaId,
+      dentistaNomeExibido,
       pacienteId: troca.paciente_id,
       opcao,
       telefoneNormalizado,
@@ -1401,6 +1588,7 @@ async function decidirConfirmacaoOuReserva(
     procedimentoId,
     procedimentoNome,
     dentistaId,
+    dentistaNomeExibido,
     pacienteId: pacienteIdParaReserva,
     opcao,
     visaoEfetiva,
@@ -1435,6 +1623,19 @@ function nomeProcedimentoEfetivo(procedimentoId: string, catalogo: CatalogoClini
   return catalogo.procedimentos.find((p) => p.procedimento_id === procedimentoId)?.nome_pt ?? '';
 }
 
+/**
+ * Nome exibivel do profissional, do mesmo catalogo ja carregado -- nenhuma
+ * consulta nova. Usado no resumo do fechamento (2026-08-16), para o paciente
+ * conferir com quem ficou marcado.
+ *
+ * String vazia quando o id nao esta no catalogo: mesma disciplina de
+ * `nomeProcedimentoEfetivo`. A redatora simplesmente nao cita o que nao
+ * recebeu -- nunca inventa.
+ */
+function nomeDentistaExibido(dentistaId: string, catalogo: CatalogoClinica): string {
+  return catalogo.dentistas.find((d) => d.dentista_id === dentistaId)?.nome_exibido ?? '';
+}
+
 async function reservar(
   clienteRpc: ClienteRpc,
   entrada: {
@@ -1442,6 +1643,8 @@ async function reservar(
     procedimentoId: string;
     procedimentoNome: string;
     dentistaId: string;
+    /** Nome exibivel do profissional, para o resumo do fechamento. */
+    dentistaNomeExibido: string;
     pacienteId: string;
     opcao: OpcaoHorario;
     telefoneNormalizado: string;
@@ -1477,6 +1680,10 @@ async function reservar(
         duracao_min: resultadoReserva.duracao_min,
         data: resultadoReserva.data,
         horario: resultadoReserva.horario,
+        // Nomes exibiveis, para o fechamento poder ser conferido pelo
+        // paciente. Sao os MESMOS valores gravados na linha do agendamento.
+        dentista_nome_exibido: entrada.dentistaNomeExibido,
+        procedimento_nome: entrada.procedimentoNome,
       };
     case 'conflito':
       // A trava real da RPC (testada em producao) recusou por sobreposicao,

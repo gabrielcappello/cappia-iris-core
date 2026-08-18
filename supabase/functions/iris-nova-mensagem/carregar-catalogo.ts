@@ -23,6 +23,9 @@ import type { CatalogoClinica } from './orquestrador-tipos.ts';
 import type { ProcedimentoOficial } from './procedimento-tipos.ts';
 import type { DentistaOficial, VinculoDentistaProcedimento } from './dentista-tipos.ts';
 import type { ConfiguracaoDuracao } from './duracao-tipos.ts';
+import type { LinhaClinica } from './clinica-conhecida.ts';
+import { derivarClinicaConhecida } from './clinica-conhecida.ts';
+import { derivarPrecosClinica } from './precos-clinica.ts';
 
 export interface EntradaCarregarCatalogo {
   clinica_id: string;
@@ -58,6 +61,15 @@ export async function carregarCatalogo(
       vinculos,
       configuracoesDuracao,
       exigirEmail: derivarExigirEmail(clinica.automatizacoes),
+      // `undefined` quando a clinica nao preencheu nada -- fato ausente e
+      // melhor que fato vazio: a Iris se cala em vez de anunciar um endereco
+      // em branco ou um preco que ninguem liberou.
+      ...(derivarClinicaConhecida(clinica.identidade) !== undefined
+        ? { clinicaConhecida: derivarClinicaConhecida(clinica.identidade) }
+        : {}),
+      ...(derivarPrecosClinica(clinica.precios) !== undefined
+        ? { precos: derivarPrecosClinica(clinica.precios) }
+        : {}),
     },
   };
 }
@@ -67,6 +79,15 @@ export async function carregarCatalogo(
 interface ClinicaCarregada {
   dentistas: unknown;
   automatizacoes: unknown;
+  /**
+   * Dados de identidade/localizacao da clinica e tabela de precos
+   * (2026-08-17). Somados ao MESMO select que ja existia -- nenhuma consulta
+   * nova, nenhuma coluna criada: todas ja eram preenchidas pelo painel, que
+   * e a fonte da verdade. Ate aqui a Iris nunca as lia, e por isso nao sabia
+   * dizer o nome nem o endereco da clinica onde trabalha.
+   */
+  identidade: LinhaClinica;
+  precios: unknown;
 }
 
 async function buscarClinicaComDentistas(
@@ -78,13 +99,27 @@ async function buscarClinicaComDentistas(
   // -- nenhuma consulta nova, nenhuma coluna nova.
   const { data, error } = await cliente
     .from('clinicas')
-    .select('dentistas, automatizacoes')
+    .select(
+      'dentistas, automatizacoes, ' +
+        // Identidade/localizacao -- o que a Iris usa para dizer quem e e onde
+        // fica, e para mandar o mapa a quem nao sabe chegar.
+        'nome, endereco, bairro, cidade, estado, cep, sala, referencia, maps_link, ' +
+        'telefone, email_clinica, horario_funcionamento, ' +
+        // Precos: o filtro de consentimento (`mostrar_valor`) e aplicado no
+        // Core, nunca aqui -- este ponto so LE a coluna.
+        'precios'
+    )
     .eq('id', clinicaId)
     .maybeSingle();
   if (error) throw new Error(`falha ao buscar clinica: ${error.message}`);
   if (!data) return null;
   const linha = data as Record<string, unknown>;
-  return { dentistas: linha.dentistas, automatizacoes: linha.automatizacoes };
+  return {
+    dentistas: linha.dentistas,
+    automatizacoes: linha.automatizacoes,
+    identidade: linha as LinhaClinica,
+    precios: linha.precios,
+  };
 }
 
 /**

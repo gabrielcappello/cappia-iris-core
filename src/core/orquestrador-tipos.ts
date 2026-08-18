@@ -4,6 +4,7 @@
 // de entrega").
 
 import type { ProcedimentoOficial } from './procedimento-tipos.ts';
+import type { CadastroPaciente } from './tipos.ts';
 import type { DentistaApto, DentistaOficial, ResultadoResolucaoDentista, VinculoDentistaProcedimento } from './dentista-tipos.ts';
 import type { ConfiguracaoDuracao, ResultadoResolucaoDuracao } from './duracao-tipos.ts';
 import type { CampoCadastralInterpretacao, Conflito, NaturezaMensagem } from './interpretacao-tipos.ts';
@@ -15,6 +16,8 @@ import type { MotivoErroCancelamento } from './cancelar-agendamento.ts';
 import type { AgendamentoAtivo } from './buscar-agendamento-ativo.ts';
 import type { HistoricoConversa } from './tipos.ts';
 import type { ContextoUnificadoSemMensagem } from './sombra-contexto-unificado.ts';
+import type { ClinicaConhecida } from './clinica-conhecida.ts';
+import type { PrecosClinica } from './precos-clinica.ts';
 
 /**
  * Catalogo de UMA clinica. Montado internamente pelo orquestrador, via
@@ -35,6 +38,17 @@ export interface CatalogoClinica {
    * afirmativa.
    */
   exigirEmail: boolean;
+  /**
+   * Dados da propria clinica (nome, endereco, maps_link, telefone, horario) e
+   * precos ja filtrados pelo consentimento -- 2026-08-17.
+   *
+   * Percorrem o MESMO caminho de `exigirEmail`: nascem em carregar-catalogo,
+   * atravessam o catalogo e chegam a redatora como fato autorizado. Opcionais
+   * porque uma clinica pode nao ter nada preenchido -- e nesse caso a Iris
+   * simplesmente nao menciona o que nao sabe.
+   */
+  clinicaConhecida?: ClinicaConhecida;
+  precos?: PrecosClinica;
 }
 
 export interface EntradaOrquestrador {
@@ -149,6 +163,24 @@ export type DecisaoOrquestrador =
       tipo: 'horarios_disponiveis';
       procedimento_id: string;
       dentista_id: string;
+      /**
+       * Nome exibivel do profissional de quem sao estes horarios
+       * (2026-08-17).
+       *
+       * Defeito real que isto corrige: com dois dentistas aptos, a Iris
+       * perguntou qual o paciente queria, ele respondeu "Diego ramoz", o Core
+       * resolveu corretamente e decidiu `horarios_disponiveis` -- mas os
+       * fatos enviados a redatora traziam SO os horarios. Sem saber que a
+       * escolha ja estava feita, ela repetiu a pergunta do dentista junto com
+       * a lista ("prefere o Dr. Diego ou o Dr. Pablo? Alem disso, estes sao
+       * os horarios...").
+       *
+       * A correcao e dar o FATO, nunca proibir a pergunta: a redatora precisa
+       * seguir livre para perguntar quando o paciente e ambiguo -- e o valor
+       * dela. O que faltava era ela saber que aquela pergunta ja tinha
+       * resposta.
+       */
+      dentista_nome_exibido: string;
       duracao_min: number;
       resultado: ResultadoDisponibilidade;
     }
@@ -168,7 +200,29 @@ export type DecisaoOrquestrador =
   // entao nunca inclui algo que ja se sabe. O Core autoriza QUAIS campos
   // faltam; a redatora e quem formula a pergunta -- nao existe sequencia
   // rigida de textos.
-  | { tipo: 'cadastro_necessario'; campos_faltantes: readonly CampoCadastralInterpretacao[] }
+  | {
+      tipo: 'cadastro_necessario';
+      campos_faltantes: readonly CampoCadastralInterpretacao[];
+      /**
+       * Campos que o paciente INFORMOU NESTE TURNO e que o Core REJEITOU por
+       * serem invalidos (specs/cadastro-conversacional-v1.md secao 4).
+       *
+       * Existe porque "nunca informou" e "informou errado" sao situacoes
+       * diferentes para quem esta conversando, e ate 2026-08-16 eram
+       * indistinguiveis: o valor invalido era descartado EM SILENCIO e a Iris
+       * repetia o mesmo pedido, sem dizer o motivo.
+       *
+       * Defeito medido em conversa real (WhatsApp, 2026-08-16): o paciente
+       * enviou um CPF de 10 digitos, o Core descartou, e a Iris pediu "nome,
+       * CPF e data de nascimento" de novo -- inteiro, como se ele nao tivesse
+       * respondido nada. Ele repetiu os mesmos dados e o ciclo se fecharia
+       * indefinidamente, porque nada indicava QUAL campo estava errado.
+       *
+       * Carrega SO o nome do campo -- nunca o valor rejeitado, que e PII.
+       * Ausente quando nada foi rejeitado neste turno.
+       */
+      campos_invalidos?: readonly CampoCadastralInterpretacao[];
+    }
   // Desfecho TERMINAL de encaminhamento a recepcao. Ate 2026-08-10 cobria
   // tambem o primeiro contato com o conflito de CPF; desde
   // specs/cpf-outro-telefone-v1.md secao 3, aquele caso virou
@@ -208,6 +262,22 @@ export type DecisaoOrquestrador =
       duracao_min: number;
       data: string;
       horario: string;
+      /**
+       * Nomes EXIBIVEIS do que foi agendado (2026-08-16), para a Iris fechar
+       * com um resumo conferivel em vez de so data e horario.
+       *
+       * Ate aqui o fechamento dizia apenas "agendado para 17/08 as 13:00" --
+       * o paciente nao via o profissional nem o procedimento e nao tinha como
+       * conferir se ficou certo. Pedido do Gabriel apos leitura de conversa
+       * real (2026-08-16).
+       *
+       * Sao os mesmos valores ja gravados na linha do agendamento -- nao ha
+       * consulta nova nem dado inventado. `nome_paciente` NAO entra: a
+       * redatora ja o recebe pelo cadastro, e repeti-lo aqui duplicaria PII
+       * sem necessidade.
+       */
+      dentista_nome_exibido: string;
+      procedimento_nome: string;
     }
   // O horario estava livre na leitura, mas cappia_reservar_agendamento (trava
   // real, ja testada em producao) recusou por sobreposição -- nunca insiste
@@ -272,6 +342,16 @@ export type DecisaoOrquestrador =
       duracao_min: number;
       data: string;
       horario: string;
+      /**
+       * Nomes exibiveis do que ficou remarcado (2026-08-17) -- mesmo papel
+       * que em `reserva_criada`: sem eles o fechamento diz so a data e o
+       * horario novos, e o paciente nao confere com quem nem para que.
+       *
+       * Opcionais porque vem da linha do agendamento ATUAL, onde podem estar
+       * nulos. Ausentes = a redatora nao os cita.
+       */
+      dentista_nome_exibido?: string;
+      procedimento_nome?: string;
     }
   // --- Cancelamento (2026-08-11, specs/cancelamento-conversacional-v1.md) ---
   //
@@ -334,6 +414,28 @@ export interface ResultadoOrquestrador {
   conversa_id: string;
   conflitos: readonly Conflito[];
   decisao: DecisaoOrquestrador;
+  /**
+   * Visao EFETIVA do cadastro no fim do turno -- a ficha do banco combinada
+   * com o que o paciente acabou de informar (2026-08-17).
+   *
+   * Exposto para a redatora poder conferir um dado com ele e reconhecer quem
+   * ja tem ficha, em vez de pedir de novo o que a clinica ja sabe. Antes
+   * dessa data nenhum dado pessoal chegava a ela.
+   *
+   * `{}` quando nao ha nada conhecido.
+   */
+  cadastro_conhecido: CadastroPaciente;
+  /**
+   * Dados da PROPRIA clinica e precos liberados, vindos do catalogo
+   * (2026-08-17). Expostos pelo mesmo motivo de `cadastro_conhecido`: a
+   * redatora precisa deles para responder "qual e a clinica? fica onde" --
+   * pergunta que ate esta data recebia "somos a clinica odontologica",
+   * porque o dado nunca saia do banco.
+   *
+   * Ausentes quando a clinica nao preencheu nada.
+   */
+  clinica_conhecida?: ClinicaConhecida;
+  precos?: PrecosClinica;
   /**
    * `atualizado_em` da linha APOS a gravacao do snapshot de horarios desta
    * mensagem -- o valor que `gravarContextoHorarios` devolveu (ver seu

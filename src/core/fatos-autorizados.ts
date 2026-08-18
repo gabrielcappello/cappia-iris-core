@@ -13,6 +13,7 @@ import { formatarData, formatarMinutos } from './gerar-resposta-paciente.ts';
 import type { DecisaoOrquestrador } from './orquestrador-tipos.ts';
 import type { MotivoSemExpediente } from './disponibilidade-tipos.ts';
 import type { AgendamentoAtivo } from './buscar-agendamento-ativo.ts';
+import type { CadastroPaciente } from './tipos.ts';
 
 /**
  * ITEMIZADO desde 2026-08-10 (specs/cadastro-conversacional-v1.md secao 8): o
@@ -20,6 +21,9 @@ import type { AgendamentoAtivo } from './buscar-agendamento-ativo.ts';
  * dizer o que falta -- e a redatora nao tinha como pedir so o que ainda nao se
  * sabe. Os quatro campos cadastrais entram no lugar dele.
  */
+import type { ClinicaConhecida } from './clinica-conhecida.ts';
+import type { PrecosClinica } from './precos-clinica.ts';
+
 export type CampoFaltante =
   | 'procedimento'
   | 'data'
@@ -132,9 +136,59 @@ export interface FatosAutorizados {
    */
   motivo_sem_expediente?: MotivoSemExpediente;
   horarios_disponiveis?: string[];
+  /**
+   * De qual profissional sao os horarios apresentados (2026-08-17).
+   *
+   * Existe para a redatora NAO repetir uma pergunta ja respondida. Caso real:
+   * com dois dentistas aptos, a Iris perguntou qual, o paciente respondeu
+   * "Diego ramoz", o Core resolveu e mandou apresentar horarios -- mas os
+   * fatos so traziam a lista. Sem saber de quem eram, ela perguntou o
+   * dentista de novo junto com os horarios.
+   *
+   * A solucao e dar o fato, nunca proibir a pergunta: perguntar diante de
+   * ambiguidade real e o valor da redatora.
+   */
+  dentista_dos_horarios?: string;
   agendamento_confirmado?: { data: string; horario: string };
+  /**
+   * Profissional e procedimento do agendamento que ACABOU de ser criado
+   * (2026-08-16). Acompanham `agendamento_confirmado` para o fechamento poder
+   * ser conferido pelo paciente -- antes ele via so data e horario.
+   *
+   * Nomes exibiveis, do catalogo da clinica; nunca ids.
+   */
+  dentista_confirmado?: string;
+  procedimento_confirmado?: string;
   proposta_pendente?: { data: string; horario: string };
   dados_faltantes?: CampoFaltante[];
+  /**
+   * Cadastro JA CONHECIDO do paciente -- nome, CPF, data de nascimento,
+   * e-mail (2026-08-17, decisao do Gabriel).
+   *
+   * Muda uma fronteira que existia desde o inicio: ate aqui NENHUM dado
+   * pessoal chegava a redatora, so a lista de quais campos faltavam. O custo
+   * disso era pratico: ela nao conseguia conferir um dado com o paciente
+   * ("seu CPF e ...?"), nao reconhecia quem ja tinha ficha, e pedia de novo o
+   * que a clinica ja sabia.
+   *
+   * Contem SO os campos efetivamente preenchidos. Ausente quando nao ha
+   * cadastro nenhum.
+   */
+  cadastro_conhecido?: CadastroPaciente;
+  /**
+   * Campos que o paciente informou NESTE turno e o Core REJEITOU por invalidos
+   * -- CPF com digito errado, data impossivel, e-mail malformado.
+   *
+   * Existe para a Iris poder dizer QUAL campo estava errado, em vez de
+   * repetir o pedido inteiro. Ate 2026-08-16 a rejeicao era silenciosa: numa
+   * conversa real o paciente enviou um CPF de 10 digitos, a Iris pediu
+   * "nome, CPF e data" de novo como se ele nao tivesse respondido, e ele
+   * reenviou o mesmo dado errado.
+   *
+   * SO O NOME DO CAMPO -- nunca o valor rejeitado, que e PII. A redatora
+   * formula o texto; nao ha frase fixa por campo.
+   */
+  dados_invalidos?: CampoFaltante[];
   falha_tecnica?: true;
   /**
    * Data e horario do agendamento ATUAL do paciente, na remarcacao
@@ -191,6 +245,18 @@ export interface FatosAutorizados {
    * por suposicao.
    */
   agendamentos_do_paciente?: string[];
+  /**
+   * Dados da PROPRIA CLINICA (2026-08-17). Sem isso a Iris nao sabia para
+   * quem trabalhava: perguntada "qual e a clinica? fica onde", respondia
+   * "somos a clinica odontologica". Ver clinica-conhecida.ts.
+   */
+  clinica_conhecida?: ClinicaConhecida;
+  /**
+   * Precos, separados entre o que a clinica LIBEROU (`mostrar_valor: true`
+   * item a item) e o que depende de avaliacao. Ver precos-clinica.ts -- o
+   * valor de um procedimento nao liberado nunca chega aqui.
+   */
+  precos?: PrecosClinica;
 }
 
 /**
@@ -265,9 +331,47 @@ export function derivarFatosAutorizados(
   /** `instante_atual.data` do turno -- a MESMA referencia que o Core usou. */
   dataHoje: string,
   substituicaoPorAvaliacao?: { dentista_nome_exibido: string },
-  agendamentosDoPaciente?: readonly AgendamentoAtivo[]
+  agendamentosDoPaciente?: readonly AgendamentoAtivo[],
+  /**
+   * Cadastro JA CONHECIDO do paciente (2026-08-17, decisao do Gabriel).
+   *
+   * Ate aqui a redatora recebia so QUAIS campos faltavam (`dados_faltantes`),
+   * nunca os valores -- entao nao conseguia conferir nada com o paciente nem
+   * reconhecer quem ja tem ficha, e pedia dado que a clinica ja tinha.
+   *
+   * MUDANCA DELIBERADA DE FRONTEIRA: dado cadastral passa a atravessar ate a
+   * IA que redige. Avaliado com o Gabriel: em odontologia o ganho de
+   * atendimento (conferir e nao repetir pedido) supera o risco, e a mensagem
+   * crua do paciente -- onde o CPF costuma estar escrito -- ja atravessava
+   * essa mesma fronteira na interpretacao.
+   */
+  cadastroConhecido?: CadastroPaciente,
+  /**
+   * Dados da PROPRIA clinica (2026-08-17). Ortogonal a decisao, como o
+   * cadastro do paciente: a Iris pode dizer onde fica e como chegar em
+   * QUALQUER turno, nao so num objetivo especifico.
+   */
+  clinicaConhecida?: ClinicaConhecida,
+  /**
+   * Precos ja filtrados pelo consentimento da clinica (precos-clinica.ts).
+   * O valor de um procedimento nao liberado nunca chega ate aqui -- o
+   * padrao e NAO informar preco, e so a clinica muda isso, pelo painel.
+   */
+  precos?: PrecosClinica
 ): FatosAutorizados {
   let fatos = derivarPorDecisao(decisao, dataHoje);
+
+  // Cadastro conhecido -- ortogonal a decisao, como a substituicao: serve
+  // tanto para conferir na coleta quanto para nao repetir pedido a quem ja
+  // tem ficha. So os campos REALMENTE preenchidos entram.
+  if (cadastroConhecido !== undefined) {
+    const preenchidos = Object.fromEntries(
+      Object.entries(cadastroConhecido).filter(([, v]) => typeof v === 'string' && v.trim() !== '')
+    );
+    if (Object.keys(preenchidos).length > 0) {
+      fatos = { ...fatos, cadastro_conhecido: preenchidos as CadastroPaciente };
+    }
+  }
 
   // A substituicao e um fato deste turno, ortogonal a decisao (ela pode
   // acompanhar horarios_disponiveis, aguardando_confirmacao, reserva_criada
@@ -294,6 +398,19 @@ export function derivarFatosAutorizados(
       ...fatos,
       agendamentos_do_paciente: agendamentosDoPaciente.map((a) => descreverAgendamentoDoPaciente(a, dataHoje)),
     };
+  }
+
+  // Dados da clinica e precos seguem o MESMO padrao dos anteriores: fato do
+  // turno, anexado fora do switch, sem tocar no `objetivo`. Ambos ja chegam
+  // filtrados (campo vazio nao vira fato; preco nao liberado nao vira valor),
+  // entao aqui nao ha decisao nenhuma a tomar -- se veio, e porque o painel
+  // autorizou.
+  if (clinicaConhecida !== undefined) {
+    fatos = { ...fatos, clinica_conhecida: clinicaConhecida };
+  }
+
+  if (precos !== undefined) {
+    fatos = { ...fatos, precos };
   }
 
   return fatos;
@@ -411,7 +528,7 @@ function derivarPorDecisao(decisao: DecisaoOrquestrador, dataHoje: string): Fato
       return { objetivo: 'pedir_data_ou_horario', dados_faltantes: ['data'] };
 
     case 'horarios_disponiveis':
-      return fatosParaHorariosDisponiveis(decisao.resultado, dataHoje);
+      return fatosParaHorariosDisponiveis(decisao.resultado, dataHoje, decisao.dentista_nome_exibido);
 
     case 'aguardando_confirmacao':
       return {
@@ -423,7 +540,21 @@ function derivarPorDecisao(decisao: DecisaoOrquestrador, dataHoje: string): Fato
       // O Core autoriza QUAIS campos faltam; a redatora e quem formula a
       // pergunta, no tom reciproco de sempre. Nao existe sequencia rigida de
       // textos nem uma pergunta fixa por campo.
-      return { objetivo: 'pedir_cadastro', dados_faltantes: [...decisao.campos_faltantes] };
+      //
+      // `dados_invalidos` (2026-08-16) distingue "nunca informou" de
+      // "informou e o Core rejeitou". Sem ele a Iris repetia o pedido
+      // inteiro apos um CPF malformado, e o paciente reenviava o mesmo dado
+      // errado sem saber qual campo tinha problema -- medido em conversa
+      // real.
+      //
+      // So o NOME do campo, nunca o valor rejeitado (PII).
+      return {
+        objetivo: 'pedir_cadastro',
+        dados_faltantes: [...decisao.campos_faltantes],
+        ...(decisao.campos_invalidos !== undefined && decisao.campos_invalidos.length > 0
+          ? { dados_invalidos: [...decisao.campos_invalidos] }
+          : {}),
+      };
 
     case 'cpf_ja_cadastrado':
       return { objetivo: 'informar_cpf_ja_cadastrado' };
@@ -439,9 +570,20 @@ function derivarPorDecisao(decisao: DecisaoOrquestrador, dataHoje: string): Fato
       return { objetivo: 'acatar_recusa_troca_telefone' };
 
     case 'reserva_criada':
+      // FECHAMENTO CONFERIVEL (2026-08-16, pedido do Gabriel apos leitura de
+      // conversa real): ate aqui a Iris fechava so com data e horario, e o
+      // paciente nao via com quem nem para que ficou marcado -- nao tinha como
+      // conferir se saiu certo.
+      //
+      // Os dois nomes vem da propria decisao, que os recebeu do catalogo ja
+      // carregado. Sao os MESMOS valores gravados na linha do agendamento --
+      // nenhuma consulta nova, nenhum dado inventado. Campo vazio nao e
+      // enviado: a redatora nunca cita o que nao recebeu.
       return {
         objetivo: 'informar_reserva_criada',
         agendamento_confirmado: { data: formatarDataParaRedatora(decisao.data, dataHoje), horario: decisao.horario },
+        ...(decisao.dentista_nome_exibido !== '' ? { dentista_confirmado: decisao.dentista_nome_exibido } : {}),
+        ...(decisao.procedimento_nome !== '' ? { procedimento_confirmado: decisao.procedimento_nome } : {}),
       };
 
     case 'reserva_conflito':
@@ -473,9 +615,18 @@ function derivarPorDecisao(decisao: DecisaoOrquestrador, dataHoje: string): Fato
       };
 
     case 'remarcacao_criada':
+      // Fechamento conferivel, igual ao da criacao (2026-08-17): profissional
+      // e procedimento vem do agendamento que foi remarcado -- a remarcacao
+      // preserva os dois, so muda data e horario.
       return {
         objetivo: 'informar_remarcacao_criada',
         agendamento_confirmado: { data: formatarDataParaRedatora(decisao.data, dataHoje), horario: decisao.horario },
+        ...(decisao.dentista_nome_exibido !== undefined
+          ? { dentista_confirmado: decisao.dentista_nome_exibido }
+          : {}),
+        ...(decisao.procedimento_nome !== undefined
+          ? { procedimento_confirmado: decisao.procedimento_nome }
+          : {}),
       };
 
     // --- Cancelamento (2026-08-11, specs/cancelamento-conversacional-v1.md) ---
@@ -520,14 +671,21 @@ function derivarPorDecisao(decisao: DecisaoOrquestrador, dataHoje: string): Fato
 
 function fatosParaHorariosDisponiveis(
   resultado: Extract<DecisaoOrquestrador, { tipo: 'horarios_disponiveis' }>['resultado'],
-  dataHoje: string
+  dataHoje: string,
+  dentistaNomeExibido: string
 ): FatosAutorizados {
+  // De quem sao os horarios. Vazio quando o id nao esta no catalogo -- nesse
+  // caso o campo simplesmente nao e enviado, e a redatora nao cita o que nao
+  // recebeu.
+  const deQuem = dentistaNomeExibido !== '' ? { dentista_dos_horarios: dentistaNomeExibido } : {};
+
   switch (resultado.tipo) {
     case 'opcoes':
       return {
         objetivo: 'apresentar_horarios',
         data_referencia: formatarDataParaRedatora(resultado.opcoes[0].data, dataHoje),
         horarios_disponiveis: resultado.opcoes.map((opcao) => formatarMinutos(opcao.inicio_min)),
+        ...deQuem,
       };
 
     case 'sem_disponibilidade':
@@ -553,6 +711,7 @@ function fatosParaHorariosDisponiveis(
         objetivo: 'apresentar_horarios',
         data_referencia: formatarDataParaRedatora(resultado.opcao.data, dataHoje),
         horarios_disponiveis: [formatarMinutos(resultado.opcao.inicio_min)],
+        ...deQuem,
       };
 
     case 'horario_exato_indisponivel': {
@@ -561,7 +720,7 @@ function fatosParaHorariosDisponiveis(
         .map((opcao) => formatarMinutos(opcao.inicio_min));
       return {
         objetivo: 'informar_horario_indisponivel',
-        ...(horarios.length > 0 ? { horarios_disponiveis: horarios } : {}),
+        ...(horarios.length > 0 ? { horarios_disponiveis: horarios, ...deQuem } : {}),
       };
     }
 
