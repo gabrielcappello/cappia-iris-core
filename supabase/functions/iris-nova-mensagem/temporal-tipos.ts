@@ -70,7 +70,20 @@ export type IntencaoTemporal = 'data_especifica' | 'proxima_disponibilidade';
 export interface AtomoDataAbsoluta {
   tipo: 'data_absoluta';
   dia: number;
-  mes: number;
+  /**
+   * `null` quando o paciente disse SO o dia ("dia 20", "no 20") -- 2026-08-17.
+   *
+   * Resolvido como a proxima ocorrencia daquele dia: o mes corrente se ainda
+   * nao passou, o seguinte se ja passou. Mesma disciplina que `ano` omitido
+   * ja usava, e o mesmo criterio do dia da semana sem qualificador: a proxima
+   * ocorrencia, porque e assim que as pessoas falam.
+   *
+   * Defeito real que motivou: a Iris propos "quinta-feira, dia 20/08", o
+   * paciente confirmou com "sim dia 20", a interpretadora gravou
+   * `data_texto: "20"` -- e o Core, que so entendia `DD/MM`, perdeu a data e
+   * perguntou "para qual data?" logo depois de te-la anunciado.
+   */
+  mes: number | null;
   ano: number | null;
 }
 

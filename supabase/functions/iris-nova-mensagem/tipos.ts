@@ -1,5 +1,11 @@
 // Tipos do modulo de identificacao. Sem dependencia de nenhuma biblioteca externa.
 
+// Unico import deste arquivo: o resultado da leitura de
+// `estado_conversa.aguardando_resposta`. Fica em modulo proprio porque a
+// classificacao (ausente/presente/invalido) e comportamento, nao so forma --
+// ver aguardando-resposta.ts.
+import type { LeituraAguardandoResposta } from './aguardando-resposta.ts';
+
 export interface IdentificarConversaInput {
   provider: string;
   instancia_whatsapp: string;
@@ -36,6 +42,19 @@ export interface ContextoHorarios {
    * do paciente (decisao `aguardando_confirmacao` -> acao `propor`). E o que
    * permite a IA reconhecer "pode confirmar"/"esse mesmo" como resposta a
    * ESSA proposta especifica, mesmo sem repetir data/horario no texto.
+   *
+   * Forma: `data` em `YYYY-MM-DD`, `horario` em `HH:MM` (24h).
+   *
+   * NUNCA E AUTORIZACAO DE EFEITO. Estes dois campos provam QUANDO, jamais O
+   * QUE foi confirmado: confirmar a criacao de um horario e confirmar o
+   * cancelamento de um agendamento no mesmo horario produzem o par
+   * identico. Autorizar efeito por aqui confundiria criar, remarcar e
+   * cancelar. Na rota V2 a autorizacao e `aguardando_resposta`
+   * (`tipo`/`operacao`/`agendamento_id`, PerguntaPendente em
+   * contexto-unificado-tipos.ts) -- ver
+   * specs/contexto-conversacional-unificado-v2.md secao 14.3. Este snapshot
+   * segue servindo ao que sempre serviu: ajudar a IA a interpretar uma
+   * resposta curta.
    */
   proposta_pendente?: { data: string; horario: string };
   /**
@@ -164,6 +183,16 @@ export interface ResultadoIdentificacao {
     atualizado_em: string;
     contexto_horarios: ContextoHorarios | null;
     historico_conversa: HistoricoConversa | null;
+    /**
+     * A pergunta que a Iris de fato fez no turno anterior
+     * (specs/contexto-conversacional-unificado-v2.md secao 14.6).
+     *
+     * Nao e `PerguntaPendente | null` de proposito: sao TRES situacoes, e
+     * colapsar `invalido` em `null` afirmaria "nao ha pergunta em aberto"
+     * a partir de dado corrompido. O tipo obriga o chamador a distinguir --
+     * ver aguardando-resposta.ts.
+     */
+    aguardando_resposta: LeituraAguardandoResposta;
   };
 }
 

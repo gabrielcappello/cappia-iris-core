@@ -1,5 +1,11 @@
 // Tipos do modulo de identificacao. Sem dependencia de nenhuma biblioteca externa.
 
+// Unico import deste arquivo: o resultado da leitura de
+// `estado_conversa.aguardando_resposta`. Fica em modulo proprio porque a
+// classificacao (ausente/presente/invalido) e comportamento, nao so forma --
+// ver aguardando-resposta.ts.
+import type { LeituraAguardandoResposta } from './aguardando-resposta.ts';
+
 export interface IdentificarConversaInput {
   provider: string;
   instancia_whatsapp: string;
@@ -177,6 +183,16 @@ export interface ResultadoIdentificacao {
     atualizado_em: string;
     contexto_horarios: ContextoHorarios | null;
     historico_conversa: HistoricoConversa | null;
+    /**
+     * A pergunta que a Iris de fato fez no turno anterior
+     * (specs/contexto-conversacional-unificado-v2.md secao 14.6).
+     *
+     * Nao e `PerguntaPendente | null` de proposito: sao TRES situacoes, e
+     * colapsar `invalido` em `null` afirmaria "nao ha pergunta em aberto"
+     * a partir de dado corrompido. O tipo obriga o chamador a distinguir --
+     * ver aguardando-resposta.ts.
+     */
+    aguardando_resposta: LeituraAguardandoResposta;
   };
 }
 

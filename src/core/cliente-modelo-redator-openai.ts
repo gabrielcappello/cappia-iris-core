@@ -34,6 +34,24 @@ export interface EntradaRedator {
   nomeClinica?: string;
   /** Ultimos turnos da conversa, quando dentro da janela de validade -- AUSENTE (nunca `null`) quando nao ha nenhum. Ver historico-conversa.ts. */
   historicoRecente?: ParConversa[];
+  /**
+   * Data de hoje neste turno (`YYYY-MM-DD`), a MESMA referencia que o Core
+   * usou (2026-08-17).
+   *
+   * Ate aqui a instrucao dizia "voce nao sabe que dia e hoje" -- proibicao
+   * herdada de um caso real de 2026-08-14, em que a redatora deduziu a
+   * relacao errada ("amanha, 14/08" para uma proposta de HOJE). A protecao
+   * necessaria era outra: nao CONTRADIZER a relacao que o Core informa.
+   * Ignorar o calendario a impedia de entender "quarta-feira" ou "semana que
+   * vem" -- e numa conversa real ela calculou a data certa, disse ao
+   * paciente, e nao pode usar.
+   */
+  dataHoje?: string;
+  // NAO existe `cadastroConhecido` aqui de proposito: o cadastro do paciente
+  // chega ao modelo DENTRO de `fatos` (`fatos_autorizados.cadastro_conhecido`,
+  // montado por `derivarFatosAutorizados`). Um campo proprio neste nivel
+  // seria caminho morto -- e chegou a existir por engano em 2026-08-17, ate a
+  // guarda de fronteira apontar que ele nunca chegava ao corpo HTTP.
 }
 
 export interface ClienteModeloRedator {
@@ -87,6 +105,7 @@ export function criarClienteModeloRedatorOpenAI(configuracao: ConfiguracaoClient
                 fatos_autorizados: entrada.fatos,
                 ...(entrada.historicoRecente !== undefined ? { historico_recente: entrada.historicoRecente } : {}),
                 ...(entrada.nomeClinica !== undefined ? { nome_clinica: entrada.nomeClinica } : {}),
+                ...(entrada.dataHoje !== undefined ? { data_hoje: entrada.dataHoje } : {}),
               }),
             },
           ],

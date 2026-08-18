@@ -490,7 +490,11 @@ test('atomo estruturalmente reconhecido com forma invalida e atomo_invalido', ()
     { tipo: 'restricao', forma_limite: 'horario_24h', hora_limite: 11, minuto_limite: 0, parte_dia_limite: null },
     { tipo: 'horario_exato', hora: 8, minuto: 0, parte_dia: null },
     { tipo: 'data_absoluta', mes: 9, ano: 2026 },
-    { tipo: 'data_absoluta', dia: 10, ano: 2026 },
+    // `mes` deixou de ser obrigatorio em 2026-08-17: ausente significa "dia
+    // 20" e resolve para a proxima ocorrencia. O campo que continua
+    // obrigatorio neste atomo e `dia` -- e a ausencia DELE que precisa cair em
+    // `atomo_invalido`.
+    { tipo: 'data_absoluta', mes: 10, ano: 2026 },
     { tipo: 'data_relativa' },
     { tipo: 'dia_semana', qualificador: 'esta' },
     { tipo: 'periodo' },
@@ -803,8 +807,21 @@ test('semana civil na virada de ano permanece de segunda a domingo', () => {
   });
 });
 
-test('TMP-21: dia da semana sem qualificador e sempre ambiguo', () => {
-  esperar([ESPECIFICA, diaSemana('segunda', null)], 'ambiguo', 'dia_semana_sem_qualificador');
+test('TMP-21: dia da semana SEM qualificador resolve para a PROXIMA ocorrencia', () => {
+  // MUDANCA DELIBERADA (2026-08-17, decisao do Gabriel). Antes era
+  // `ambiguo/dia_semana_sem_qualificador`: o Core se recusava a escolher
+  // entre "esta segunda" e "a proxima segunda".
+  //
+  // Isso travou conversa real -- o paciente pediu "quarta-feira 15hrs" e a
+  // Iris ficou pedindo a data em quatro turnos. O padrao novo segue como as
+  // pessoas falam: "quarta" e a quarta que vem a seguir; quem quer outra
+  // semana diz explicitamente. E nao ha risco de errar o dia -- o Core sempre
+  // PROPOE a data e espera confirmacao antes de agendar.
+  //
+  // HOJE nos testes e 2026-08-06, uma QUINTA-feira: a proxima segunda e
+  // 10/08.
+  const r = resolvido([ESPECIFICA, diaSemana('segunda', null)]);
+  assert.equal(r.data, '2026-08-10');
 });
 
 // =====================================================================
@@ -1329,7 +1346,11 @@ test('TMP-75: passado (nivel 5) vence ambiguidade (nivel 6)', () => {
 
 test('TMP-76: ambiguidade (nivel 6) vence incompletude (nivel 7)', () => {
   esperar([ESPECIFICA, h12(8, null)], 'ambiguo', 'horario_sem_parte_dia');
-  esperar([diaSemana('segunda', null)], 'ambiguo', 'dia_semana_sem_qualificador');
+  // O segundo caso usava `dia_semana` sem qualificador como veiculo da
+  // ambiguidade. Desde 2026-08-17 isso RESOLVE (proxima ocorrencia), entao a
+  // precedencia e provada com um horario ambiguo sem data -- que exercita
+  // exatamente o mesmo confronto: ambiguidade presente E data faltando.
+  esperar([h12(8, null)], 'ambiguo', 'horario_sem_parte_dia');
 });
 
 test('precedencia completa: a escada de oito niveis e respeitada em cadeia', () => {
@@ -1354,7 +1375,12 @@ const LEVAS_REPRESENTATIVAS: readonly (readonly AtomoTemporal[])[] = [
   [ESPECIFICA, dataRelativa('amanha'), restricao24('termino_ate', 11)],
   [ESPECIFICA, dataAbsoluta(1, 1, 2020)],
   [ESPECIFICA, PROXIMA],
+  // `dia_semana` sem qualificador passou a RESOLVER em 2026-08-17 (proxima
+  // ocorrencia), entao deixou de cobrir a variante `ambiguo`. Mantida aqui
+  // como leva valida, com um horario ambiguo ao lado para a cobertura de
+  // `ambiguo` continuar existindo neste conjunto.
   [ESPECIFICA, diaSemana('segunda', null)],
+  [ESPECIFICA, dataRelativa('amanha'), h12(8, null)],
   [ESPECIFICA, dataAbsoluta(10, 9, 26)],
   [PROXIMA],
   [PROXIMA, h24(9)],

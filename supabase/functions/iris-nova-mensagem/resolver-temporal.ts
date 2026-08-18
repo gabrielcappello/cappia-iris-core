@@ -608,11 +608,18 @@ function resolverDataAbsoluta(atomo: AtomoDataAbsoluta, hoje: string): Resolucao
   const { dia, mes, ano } = atomo;
 
   // Campo reconhecido com numero nao finito: nao existe motivo mais
-  // especifico (secao 19), entao `atomo_invalido`. Ausencia do campo cai no
-  // mesmo catch-all -- forma invalida de um atomo estruturalmente reconhecido.
-  if (!ehInteiroFinito(dia) || !ehInteiroFinito(mes)) {
-    return { estado: 'invalida', motivo: 'atomo_invalido' };
+  // especifico (secao 19), entao `atomo_invalido`.
+  if (!ehInteiroFinito(dia)) return { estado: 'invalida', motivo: 'atomo_invalido' };
+
+  // MES OMITIDO ("dia 20") -> a PROXIMA ocorrencia daquele dia (2026-08-17).
+  // Mesmo criterio do ano omitido, logo abaixo, e do dia da semana sem
+  // qualificador: avanca ate encontrar uma data que nao esteja no passado.
+  if (mes === null || mes === undefined) {
+    if (dia < 1 || dia > 31) return { estado: 'invalida', motivo: 'data_impossivel' };
+    return resolverMesOmitido(dia, hoje);
   }
+
+  if (!ehInteiroFinito(mes)) return { estado: 'invalida', motivo: 'atomo_invalido' };
 
   // Mes ou dia grosseiramente fora de faixa e impossivel em QUALQUER ano --
   // checagem de valor unico, nunca uma busca. Sem ela, `31/13` sem ano seria
@@ -654,6 +661,37 @@ function resolverDataAbsoluta(atomo: AtomoDataAbsoluta, hoje: string): Resolucao
  * escolhido, e nenhum ano acima de `9999` e examinado -- sem overflow, wrap
  * ou inferencia alem do teto.
  */
+/**
+ * "dia 20" -- so o dia, sem mes (2026-08-17).
+ *
+ * Avanca mes a mes ate encontrar uma data real que nao esteja no passado:
+ * o mes corrente quando o dia ainda nao passou, o seguinte quando ja passou.
+ * Pula meses em que o dia nao existe (31 em fevereiro, por exemplo) -- nunca
+ * desliza para o dia 1 do mes seguinte, como o construtor de `Date` faria.
+ *
+ * O teto de 13 meses cobre qualquer dia do calendario com folga: o pior caso
+ * real e o dia 29 em ano nao bissexto, que reaparece em ate 12 meses.
+ */
+function resolverMesOmitido(dia: number, hoje: string): ResolucaoData {
+  let ano = Number(hoje.slice(0, 4));
+  let mes = Number(hoje.slice(5, 7));
+
+  for (let avanco = 0; avanco <= 13; avanco++) {
+    if (ano > ANO_MAXIMO_CIVIL) break;
+    if (dia <= diasNoMes(ano, mes)) {
+      const data = formatarData(ano, mes, dia);
+      if (data >= hoje) return { estado: 'resolvida', data };
+    }
+    mes += 1;
+    if (mes > 12) {
+      mes = 1;
+      ano += 1;
+    }
+  }
+
+  return { estado: 'invalida', motivo: 'data_impossivel' };
+}
+
 function resolverAnoOmitido(dia: number, mes: number, hoje: string): ResolucaoData {
   const anoAtual = Number(hoje.slice(0, 4));
 
@@ -692,10 +730,23 @@ function resolverDiaSemana(atomo: AtomoDiaSemana, hoje: string): ResolucaoData {
   const indice = INDICE_DIA_SEMANA[atomo.dia];
   if (indice === undefined) return { estado: 'invalida', motivo: 'atomo_invalido' };
 
-  const qualificador: QualificadorDiaSemana | null = atomo.qualificador;
-  if (qualificador === null || qualificador === undefined) {
-    return { estado: 'ambigua', motivo: 'dia_semana_sem_qualificador' };
-  }
+  // SEM QUALIFICADOR = A PROXIMA OCORRENCIA (2026-08-17, decisao do Gabriel).
+  //
+  // Ate aqui isto era `ambiguo/dia_semana_sem_qualificador`: o Core se
+  // recusava a escolher entre "esta quarta" e "a proxima quarta". Na pratica
+  // isso travou conversa real -- o paciente pediu "quarta-feira 15hrs" e a
+  // Iris ficou pedindo a data em quatro turnos seguidos.
+  //
+  // Por que a proxima ocorrencia e o padrao certo: e como as pessoas falam.
+  // Quem diz "quarta" quer a quarta que vem a seguir; quem quer outra semana
+  // diz explicitamente ("nao esta, a proxima"). E o risco de errar o dia e
+  // ZERO -- o Core sempre PROPOE a data e espera confirmacao antes de
+  // agendar, entao o paciente ve "quarta, 19/08?" e corrige se preciso.
+  //
+  // `dia_semana_sem_qualificador` permanece no vocabulario de motivos
+  // (temporal-tipos.ts) e continua alcancavel por outros caminhos -- nada foi
+  // removido do contrato.
+  const qualificador: QualificadorDiaSemana = atomo.qualificador ?? 'proxima';
 
   if (qualificador === 'proxima') {
     // Estritamente posterior a hoje: hoje nunca conta, mesmo quando hoje ja e

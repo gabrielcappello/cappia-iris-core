@@ -238,10 +238,16 @@ test('unico agendamento ativo: segue direto para data/horario, sem perguntar qua
     }
   );
 
-  // Sem data_texto/horario_texto ainda: cai em aguardando_data_horario, mas
-  // JAMAIS em aguardando_escolha_agendamento -- prova que o unico agendamento
-  // foi usado direto, sem pergunta de qual.
-  assert.equal(resultado.decisao.tipo, 'aguardando_data_horario');
+  // O QUE ESTE TESTE PROVA: com um unico agendamento ativo, o fluxo o usa
+  // DIRETO -- jamais pergunta qual (`aguardando_escolha_agendamento`).
+  assert.notEqual(resultado.decisao.tipo, 'aguardando_escolha_agendamento');
+
+  // Sem `data_texto`, a data do AGENDAMENTO ATUAL vira o padrao (2026-08-17):
+  // quem remarca ja tem uma data, e perguntar "para qual data?" fazia a Iris
+  // ignorar o que ela mesma sabia -- em conversa real isso custou tres turnos,
+  // com o paciente repetindo "ja falei, mesmo dia". Por isso o fluxo agora
+  // alcanca os horarios em vez de parar em `aguardando_data_horario`.
+  assert.equal(resultado.decisao.tipo, 'horarios_disponiveis');
 });
 
 test('varios agendamentos ativos: aguardando_escolha_agendamento com a lista', async () => {
@@ -339,9 +345,14 @@ test('agendamento_id valido (dentro da lista oferecida): avanca para o agendamen
     instante_atual: INSTANTE_ATUAL,
   });
 
-  // Sem data_texto/horario_texto: aguardando_data_horario -- mas NAO
-  // aguardando_escolha_agendamento de novo, prova que ag2 foi localizado.
-  assert.equal(resultado.decisao.tipo, 'aguardando_data_horario');
+  // O QUE ESTE TESTE PROVA: `ag2` foi localizado -- NAO volta a perguntar
+  // qual agendamento.
+  assert.notEqual(resultado.decisao.tipo, 'aguardando_escolha_agendamento');
+
+  // Sem `data_texto`, a data do agendamento escolhido vira o padrao
+  // (2026-08-17), entao o fluxo alcanca os horarios em vez de parar pedindo
+  // a data que o Core ja conhece.
+  assert.equal(resultado.decisao.tipo, 'horarios_disponiveis');
 
   // O dia da semana e calculado DETERMINISTICAMENTE pelo Core e entra na
   // descricao enviada a IA (contrato fechado por medicao, 2026-08-11:

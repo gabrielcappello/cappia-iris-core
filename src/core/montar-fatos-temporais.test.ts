@@ -38,8 +38,100 @@ test('data explicita DD/MM/AAAA: ano preenchido', () => {
   ]);
 });
 
-test('texto de data fora do vocabulario simples (dia da semana): nenhum atomo de data', () => {
-  assert.deepEqual(montarFatosTemporais({ data_texto: 'sexta que vem' }), []);
+// DIA DA SEMANA entrou no vocabulario em 2026-08-17. Antes deste teste
+// afirmar o contrario, "sexta que vem" nao produzia atomo nenhum -- e isso
+// travou conversa real: o paciente pediu "quarta-feira 15hrs" e a Iris ficou
+// pedindo a data em quatro turnos seguidos. `resolverTemporal` sempre soube
+// resolver `dia_semana`; faltava reconhecer o texto aqui.
+
+test('dia da semana: com e sem "feira", com hifen ou espaco', () => {
+  // REGRESSAO: a primeira versao so aceitava "sexta-feira" (hifen) e "sexta".
+  // Em conversa real o paciente escreveu "sexta feira", com ESPACO -- nao
+  // casava, e a Iris pediu a data em dois turnos seguidos.
+  for (const [texto, dia] of [
+    ['quarta', 'quarta'],
+    ['quarta-feira', 'quarta'],
+    ['quarta feira', 'quarta'],
+    ['segunda-feira', 'segunda'],
+    ['segunda feira', 'segunda'],
+    ['sexta feira', 'sexta'],
+    ['terca', 'terca'],
+    ['sabado', 'sabado'],
+    ['domingo', 'domingo'],
+  ] as const) {
+    assert.deepEqual(
+      montarFatosTemporais({ data_texto: texto }),
+      [
+        { tipo: 'dia_semana', dia, qualificador: null },
+        { tipo: 'intencao', valor: 'data_especifica' },
+      ],
+      `texto ${texto}`
+    );
+  }
+});
+
+test('qualificador explicito e preservado -- "que vem" e "proxima" viram `proxima`', () => {
+  for (const texto of ['sexta que vem', 'proxima sexta', 'sexta feira que vem', 'proxima sexta-feira']) {
+    assert.deepEqual(
+      montarFatosTemporais({ data_texto: texto }),
+      [
+        { tipo: 'dia_semana', dia: 'sexta', qualificador: 'proxima' },
+        { tipo: 'intencao', valor: 'data_especifica' },
+      ],
+      `texto ${texto}`
+    );
+  }
+});
+
+test('"esta"/"nesta" viram qualificador `esta`', () => {
+  for (const texto of ['esta quarta', 'nesta quarta']) {
+    assert.deepEqual(
+      montarFatosTemporais({ data_texto: texto }),
+      [
+        { tipo: 'dia_semana', dia: 'quarta', qualificador: 'esta' },
+        { tipo: 'intencao', valor: 'data_especifica' },
+      ],
+      `texto ${texto}`
+    );
+  }
+});
+
+// SO O DIA ("dia 20") entrou em 2026-08-17. Defeito real: a Iris propos
+// "quinta-feira, dia 20/08", o paciente confirmou com "sim dia 20", a
+// interpretadora gravou `data_texto: "20"` -- e o Core, que so entendia
+// `DD/MM`, perdeu a data e perguntou "para qual data?" logo depois de te-la
+// anunciado.
+
+test('so o dia: produz data_absoluta com mes e ano nulos', () => {
+  for (const texto of ['20', 'dia 20', 'no dia 20', 'para o dia 20']) {
+    assert.deepEqual(
+      montarFatosTemporais({ data_texto: texto }),
+      [
+        { tipo: 'data_absoluta', dia: 20, mes: null, ano: null },
+        { tipo: 'intencao', valor: 'data_especifica' },
+      ],
+      `texto ${texto}`
+    );
+  }
+});
+
+test('dia fora de 1..31 NAO produz atomo -- nunca um palpite', () => {
+  for (const texto of ['0', '32', '40', '99']) {
+    assert.deepEqual(montarFatosTemporais({ data_texto: texto }), [], `texto ${texto}`);
+  }
+});
+
+test('DD/MM continua tendo precedencia sobre a leitura de dia sozinho', () => {
+  assert.deepEqual(montarFatosTemporais({ data_texto: '20/08' }), [
+    { tipo: 'data_absoluta', dia: 20, mes: 8, ano: null },
+    { tipo: 'intencao', valor: 'data_especifica' },
+  ]);
+});
+
+test('texto fora do vocabulario continua SEM atomo -- nunca um palpite', () => {
+  for (const texto of ['semana que vem', 'depois das 15h', 'assim que puder', 'quartinha', 'feira', 'banana']) {
+    assert.deepEqual(montarFatosTemporais({ data_texto: texto }), [], `texto ${texto}`);
+  }
 });
 
 test('periodo manha/tarde: atomo proprio, passthrough do valor ja canonico', () => {

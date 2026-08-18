@@ -114,6 +114,7 @@ test('mapeamento: os 18 tipos produzem um objetivo, nenhum lanca', () => {
     { tipo: 'aguardando_data_horario', resultado: { tipo: 'incompleto', motivo: 'intencao_ausente' } },
     {
       tipo: 'horarios_disponiveis',
+      dentista_nome_exibido: 'Dra. Ana',
       procedimento_id: 'p1',
       dentista_id: 'd1',
       duracao_min: 40,
@@ -129,6 +130,9 @@ test('mapeamento: os 18 tipos produzem um objetivo, nenhum lanca', () => {
       duracao_min: 40,
       data: '2026-08-05',
       horario: '09:00',
+      // Nomes exibiveis do fechamento conferivel (2026-08-16).
+      dentista_nome_exibido: 'Dr. Diego Ramoz',
+      procedimento_nome: 'Consulta / Avaliação',
     },
     { tipo: 'reserva_conflito' },
     { tipo: 'reserva_falhou', motivo: 'erro_tecnico' },
@@ -189,6 +193,7 @@ test('aguardando_escolha_dentista: dentistas_candidatos carrega os nomes exibido
 test('horarios_disponiveis/opcoes: horarios_disponiveis e data_referencia formatados como o paciente ve', () => {
   const fatos = derivarFatosAutorizados({
     tipo: 'horarios_disponiveis',
+      dentista_nome_exibido: 'Dra. Ana',
     procedimento_id: 'p1',
     dentista_id: 'd1',
     duracao_min: 40,
@@ -219,6 +224,9 @@ test('reserva_criada: agendamento_confirmado com data/horario, sem IDs', () => {
     duracao_min: 40,
     data: '2026-08-05',
     horario: '09:00',
+    // Nomes exibiveis do fechamento conferivel (2026-08-16).
+    dentista_nome_exibido: 'Dr. Diego Ramoz',
+    procedimento_nome: 'Consulta / Avaliação',
   }, HOJE);
   assert.equal(fatos.objetivo, 'informar_reserva_criada');
   assert.deepEqual(fatos.agendamento_confirmado, { data: '05/08', horario: '09:00' });
@@ -287,6 +295,7 @@ test('remarcacao_criada: agendamento_confirmado (mesmo campo de reserva_criada),
 test('determinismo: mesma decisao produz sempre os mesmos fatos', () => {
   const decisao: DecisaoOrquestrador = {
     tipo: 'horarios_disponiveis',
+      dentista_nome_exibido: 'Dra. Ana',
     procedimento_id: 'p1',
     dentista_id: 'd1',
     duracao_min: 40,
@@ -364,6 +373,9 @@ test('a CONFIRMACAO leva a mesma relacao -- nao e regra so da proposta', () => {
         duracao_min: 40,
         data,
         horario: '15:00',
+        // Nomes exibiveis do fechamento conferivel (2026-08-16).
+        dentista_nome_exibido: 'Dr. Diego Ramoz',
+        procedimento_nome: 'Consulta / Avaliação',
       },
       hoje
     ).agendamento_confirmado?.data;
@@ -377,6 +389,7 @@ test('a data de referencia dos horarios oferecidos leva a mesma relacao', () => 
   const fatos = derivarFatosAutorizados(
     {
       tipo: 'horarios_disponiveis',
+      dentista_nome_exibido: 'Dra. Ana',
       procedimento_id: 'p1',
       dentista_id: 'd1',
       duracao_min: 40,
@@ -410,6 +423,7 @@ test('dia sem expediente: objetivo proprio e pedido de outra data -- nunca falha
     const fatos = derivarFatosAutorizados(
       {
         tipo: 'horarios_disponiveis',
+      dentista_nome_exibido: 'Dra. Ana',
         procedimento_id: 'p1',
         dentista_id: 'd1',
         duracao_min: 40,
@@ -431,6 +445,7 @@ test('configuracao realmente invalida CONTINUA sendo falha tecnica', () => {
   const fatos = derivarFatosAutorizados(
     {
       tipo: 'horarios_disponiveis',
+      dentista_nome_exibido: 'Dra. Ana',
       procedimento_id: 'p1',
       dentista_id: 'd1',
       duracao_min: 40,

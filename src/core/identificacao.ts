@@ -2,6 +2,7 @@ import { ClinicaNaoEncontradaError, EntradaInvalidaError } from './erros.ts';
 import { telefoneNormalizadoValido } from './telefone.ts';
 import { validarContextoHorarios } from './contexto-horarios.ts';
 import { validarHistoricoConversa } from './historico-conversa.ts';
+import { lerAguardandoResposta } from './aguardando-resposta.ts';
 import type {
   CadastroPaciente,
   ClienteBancoDados,
@@ -21,7 +22,13 @@ import type {
 // `ultima_troca` (coluna legada, specs/memoria-conversacional-minima-v1.md)
 // deixa de ser lida por este modulo -- permanece no banco ate a migration de
 // remocao (spec secao 0.2), mas nenhum codigo novo a consulta.
-const COLUNAS_ESTADO_CONVERSA = 'id, estado, dados, paciente_id, atualizado_em, contexto_horarios, historico_conversa';
+// `aguardando_resposta` (specs/contexto-conversacional-unificado-v2.md secao
+// 14.6) e a pergunta que a Iris de fato fez no turno anterior. Vem NESTA
+// MESMA consulta, sem SELECT novo -- e o que a spec exige. Ao contrario das
+// duas anteriores, ela NAO degrada para `null` quando malformada: ver
+// aguardando-resposta.ts.
+const COLUNAS_ESTADO_CONVERSA =
+  'id, estado, dados, paciente_id, atualizado_em, contexto_horarios, historico_conversa, aguardando_resposta';
 
 interface LinhaEstadoConversa {
   id: string;
@@ -31,6 +38,9 @@ interface LinhaEstadoConversa {
   atualizado_em: string;
   contexto_horarios: ContextoHorarios | null;
   historico_conversa: HistoricoConversa | null;
+  // Bruto de proposito: a classificacao (ausente/presente/invalido) e feita
+  // por `lerAguardandoResposta`, nao aqui -- malformado NUNCA vira `null`.
+  aguardando_resposta: unknown;
 }
 
 // Mesmo vocabulario canonico de EstadoConversa (tipos.ts) -- os seis estados
@@ -77,6 +87,12 @@ function validarLinhaEstadoConversa(valor: Record<string, unknown>): LinhaEstado
     contexto_horarios: validarContextoHorarios(valor.contexto_horarios),
     // Mesma falha ABERTA, mesmo motivo -- ver historico-conversa.ts.
     historico_conversa: validarHistoricoConversa(valor.historico_conversa),
+    // Falha FECHADA, ao contrario das duas acima: passa BRUTO e a
+    // classificacao fica com `lerAguardandoResposta`. Se fosse validado aqui
+    // como os outros, malformado viraria `null` -- isto e, "nao ha pergunta
+    // em aberto" --, que e uma afirmacao factual que o dado corrompido nao
+    // autoriza (spec v2 secao 14.6).
+    aguardando_resposta: valor.aguardando_resposta,
   };
 }
 
@@ -120,6 +136,10 @@ export async function identificarConversa(
       atualizado_em: conversa.atualizado_em,
       contexto_horarios: conversa.contexto_horarios,
       historico_conversa: conversa.historico_conversa,
+      // Classificada aqui, uma vez, para o chamador nao precisar repetir a
+      // distincao. `invalido` e desfecho de primeira classe: quem consome
+      // desvia o turno em vez de tratar como "sem pergunta".
+      aguardando_resposta: lerAguardandoResposta(conversa.aguardando_resposta),
     },
   };
 }

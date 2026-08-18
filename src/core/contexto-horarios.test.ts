@@ -29,6 +29,7 @@ function opcao(inicioMin: number): OpcaoHorarioDisponibilidade {
 function decisaoHorarios(resultado: Extract<DecisaoOrquestrador, { tipo: 'horarios_disponiveis' }>['resultado']): DecisaoOrquestrador {
   return {
     tipo: 'horarios_disponiveis',
+      dentista_nome_exibido: 'Dra. Ana',
     procedimento_id: 'cleaning',
     dentista_id: 'dentista-1',
     duracao_min: 40,
@@ -110,6 +111,9 @@ test('limpar: reserva_criada e desistencia fecham o ciclo', () => {
     duracao_min: 40,
     data: '2026-08-05',
     horario: '09:00',
+    // Nomes exibiveis do fechamento conferivel (2026-08-16).
+    dentista_nome_exibido: 'Dr. Diego Ramoz',
+    procedimento_nome: 'Consulta / Avaliação',
   };
   assert.deepEqual(derivarAcaoContextoHorarios(criada), { tipo: 'limpar' });
   assert.deepEqual(derivarAcaoContextoHorarios({ tipo: 'desistencia' }), { tipo: 'limpar' });

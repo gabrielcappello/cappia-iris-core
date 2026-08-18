@@ -22,6 +22,7 @@ function opcao(overrides: Partial<OpcaoHorario> = {}): OpcaoHorario {
 test('horarios_disponiveis/opcoes: uma unica opcao vira frase com data e horario', () => {
   const decisao: DecisaoCaminhoFeliz = {
     tipo: 'horarios_disponiveis',
+      dentista_nome_exibido: 'Dra. Ana',
     procedimento_id: 'teste_limpeza',
     dentista_id: 'dentista-1',
     duracao_min: 40,
@@ -33,6 +34,7 @@ test('horarios_disponiveis/opcoes: uma unica opcao vira frase com data e horario
 test('horarios_disponiveis/opcoes: varias opcoes da MESMA data mencionam a data uma unica vez', () => {
   const decisao: DecisaoCaminhoFeliz = {
     tipo: 'horarios_disponiveis',
+      dentista_nome_exibido: 'Dra. Ana',
     procedimento_id: 'teste_limpeza',
     dentista_id: 'dentista-1',
     duracao_min: 40,
@@ -50,6 +52,7 @@ test('horarios_disponiveis/opcoes: varias opcoes da MESMA data mencionam a data 
 test('horarios_disponiveis/opcoes: nao menciona procedimento_id nem dentista_id (dados nao disponiveis pro texto)', () => {
   const decisao: DecisaoCaminhoFeliz = {
     tipo: 'horarios_disponiveis',
+      dentista_nome_exibido: 'Dra. Ana',
     procedimento_id: 'teste_limpeza',
     dentista_id: 'dentista-1',
     duracao_min: 40,
@@ -65,6 +68,7 @@ test('horarios_disponiveis/opcoes: nao menciona procedimento_id nem dentista_id 
 test('horarios_disponiveis/sem_disponibilidade: convida a tentar outra data', () => {
   const decisao: DecisaoCaminhoFeliz = {
     tipo: 'horarios_disponiveis',
+      dentista_nome_exibido: 'Dra. Ana',
     procedimento_id: 'teste_limpeza',
     dentista_id: 'dentista-1',
     duracao_min: 40,
@@ -81,6 +85,7 @@ test('horarios_disponiveis/sem_disponibilidade: convida a tentar outra data', ()
 test('horarios_disponiveis/horario_exato_disponivel: formata a unica opcao presente', () => {
   const decisao: DecisaoCaminhoFeliz = {
     tipo: 'horarios_disponiveis',
+      dentista_nome_exibido: 'Dra. Ana',
     procedimento_id: 'teste_limpeza',
     dentista_id: 'dentista-1',
     duracao_min: 40,
@@ -94,6 +99,7 @@ test('horarios_disponiveis/horario_exato_disponivel: formata a unica opcao prese
 test('horario_exato_indisponivel: com anterior e posterior, oferece os dois', () => {
   const decisao: DecisaoCaminhoFeliz = {
     tipo: 'horarios_disponiveis',
+      dentista_nome_exibido: 'Dra. Ana',
     procedimento_id: 'teste_limpeza',
     dentista_id: 'dentista-1',
     duracao_min: 40,
@@ -112,6 +118,7 @@ test('horario_exato_indisponivel: com anterior e posterior, oferece os dois', ()
 test('horario_exato_indisponivel: so anterior', () => {
   const decisao: DecisaoCaminhoFeliz = {
     tipo: 'horarios_disponiveis',
+      dentista_nome_exibido: 'Dra. Ana',
     procedimento_id: 'teste_limpeza',
     dentista_id: 'dentista-1',
     duracao_min: 40,
@@ -123,6 +130,7 @@ test('horario_exato_indisponivel: so anterior', () => {
 test('horario_exato_indisponivel: so posterior', () => {
   const decisao: DecisaoCaminhoFeliz = {
     tipo: 'horarios_disponiveis',
+      dentista_nome_exibido: 'Dra. Ana',
     procedimento_id: 'teste_limpeza',
     dentista_id: 'dentista-1',
     duracao_min: 40,
@@ -134,6 +142,7 @@ test('horario_exato_indisponivel: so posterior', () => {
 test('horario_exato_indisponivel: nenhum vizinho', () => {
   const decisao: DecisaoCaminhoFeliz = {
     tipo: 'horarios_disponiveis',
+      dentista_nome_exibido: 'Dra. Ana',
     procedimento_id: 'teste_limpeza',
     dentista_id: 'dentista-1',
     duracao_min: 40,
@@ -150,6 +159,7 @@ test('horario_exato_indisponivel: nenhum vizinho', () => {
 test('configuracao_invalida: texto generico tecnico, nunca expoe o motivo bruto', () => {
   const decisao: DecisaoCaminhoFeliz = {
     tipo: 'horarios_disponiveis',
+      dentista_nome_exibido: 'Dra. Ana',
     procedimento_id: 'teste_limpeza',
     dentista_id: 'dentista-1',
     duracao_min: 40,
@@ -163,6 +173,7 @@ test('configuracao_invalida: texto generico tecnico, nunca expoe o motivo bruto'
 test('erro_intervalos: mesmo texto tecnico generico, nunca expoe o codigo bruto', () => {
   const decisao: DecisaoCaminhoFeliz = {
     tipo: 'horarios_disponiveis',
+      dentista_nome_exibido: 'Dra. Ana',
     procedimento_id: 'teste_limpeza',
     dentista_id: 'dentista-1',
     duracao_min: 40,
@@ -196,6 +207,9 @@ test('reserva_criada: confirma data e horario ja resolvidos pela RPC', () => {
     duracao_min: 40,
     data: '2026-08-05',
     horario: '09:00',
+    // Nomes exibiveis do fechamento conferivel (2026-08-16).
+    dentista_nome_exibido: 'Dr. Diego Ramoz',
+    procedimento_nome: 'Consulta / Avaliação',
   };
   assert.equal(gerarRespostaPaciente(decisao), 'Prontinho! Agendamento confirmado para 05/08 às 09:00.');
 });
@@ -209,6 +223,9 @@ test('reserva_criada: nao menciona agendamento_id, procedimento_id nem dentista_
     duracao_min: 40,
     data: '2026-08-05',
     horario: '09:00',
+    // Nomes exibiveis do fechamento conferivel (2026-08-16).
+    dentista_nome_exibido: 'Dr. Diego Ramoz',
+    procedimento_nome: 'Consulta / Avaliação',
   };
   const texto = gerarRespostaPaciente(decisao);
   assert.ok(!texto.includes('agendamento-1'));
@@ -471,6 +488,7 @@ test('exaustividade: todos os 18 tipos de DecisaoOrquestrador produzem texto nao
     { tipo: 'aguardando_data_horario', resultado: { tipo: 'incompleto', motivo: 'intencao_ausente' } },
     {
       tipo: 'horarios_disponiveis',
+      dentista_nome_exibido: 'Dra. Ana',
       procedimento_id: 'p1',
       dentista_id: 'd1',
       duracao_min: 40,
@@ -478,7 +496,7 @@ test('exaustividade: todos os 18 tipos de DecisaoOrquestrador produzem texto nao
     },
     { tipo: 'aguardando_confirmacao', procedimento_id: 'p1', dentista_id: 'd1', opcao: opcao() },
     { tipo: 'cadastro_necessario', campos_faltantes: ['nome'] },
-    { tipo: 'reserva_criada', agendamento_id: 'a1', dentista_id: 'd1', procedimento_id: 'p1', duracao_min: 40, data: '2026-08-05', horario: '09:00' },
+    { tipo: 'reserva_criada', agendamento_id: 'a1', dentista_id: 'd1', procedimento_id: 'p1', duracao_min: 40, data: '2026-08-05', horario: '09:00', dentista_nome_exibido: 'Dr. Diego Ramoz', procedimento_nome: 'Consulta / Avaliação' },
     { tipo: 'reserva_conflito' },
     { tipo: 'reserva_falhou', motivo: 'erro_tecnico' },
     // --- remarcacao (2026-08-11, specs/remarcacao-conversacional-v1.md) ---
@@ -606,6 +624,9 @@ test('determinismo: mesma decisao produz sempre o mesmo texto', () => {
     duracao_min: 40,
     data: '2026-08-05',
     horario: '09:00',
+    // Nomes exibiveis do fechamento conferivel (2026-08-16).
+    dentista_nome_exibido: 'Dr. Diego Ramoz',
+    procedimento_nome: 'Consulta / Avaliação',
   };
   const resultados = new Set(Array.from({ length: 5 }, () => gerarRespostaPaciente(decisao)));
   assert.equal(resultados.size, 1);

@@ -440,6 +440,13 @@ async function processarTentativa(
           ...(contexto.entrada.payload.agendamentos_ativos !== undefined
             ? { agendamentos_ativos: contexto.entrada.payload.agendamentos_ativos }
             : {}),
+          // CONTEXTO do que o paciente ja tem marcado (2026-08-17) -- e o que
+          // permite resolver "o mesmo dentista", "mesma data", "trocar meu
+          // horario". A guarda de fronteira pegou esta chave faltando aqui
+          // antes do deploy, exatamente como foi desenhada para fazer.
+          ...(contexto.entrada.payload.agendamentos_do_paciente !== undefined
+            ? { agendamentos_do_paciente: contexto.entrada.payload.agendamentos_do_paciente }
+            : {}),
           // CORRECAO 2026-08-08: `historico_recente` existia em
           // EntradaInterpretacao desde specs/historico-conversacional-v1.md,
           // mas NUNCA era copiado para o corpo HTTP -- este objeto e montado

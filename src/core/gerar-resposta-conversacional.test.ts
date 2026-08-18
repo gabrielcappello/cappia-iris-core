@@ -84,6 +84,7 @@ test('falha da redatora: cai no fallback deterministico do MESMO estado', async 
 test('guarda reprova (horario nao autorizado): cai no fallback do estado, nunca "problema tecnico" quando o estado nao e falha real', async () => {
   const decisao: DecisaoOrquestrador = {
     tipo: 'horarios_disponiveis',
+      dentista_nome_exibido: 'Dra. Ana',
     procedimento_id: 'p1',
     dentista_id: 'd1',
     duracao_min: 40,

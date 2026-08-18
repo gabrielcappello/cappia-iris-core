@@ -9,6 +9,7 @@ import {
 import { CAMPOS_CADASTRAIS_INTERPRETACAO } from './interpretacao-tipos.ts';
 import { preAplicar } from './pre-aplicacao.ts';
 import { normalizarCampoCadastral } from './validar-cadastro.ts';
+import { descartarNomeDeEscolhaDeDentista } from './guarda-nome-escolha-dentista.ts';
 import type {
   AlteracoesDados,
   CadastroPaciente,
@@ -88,6 +89,27 @@ export interface InterpretarEAplicarInput extends ContextoConversa {
    * aceito.
    */
   agendamentos_ativos?: { agendamento_id: string; descricao: string }[];
+  /**
+   * Agendamentos que o paciente JA TEM -- puro CONTEXTO (2026-08-17).
+   *
+   * Diferente de `agendamentos_ativos`: aquele significa "ha uma escolha
+   * pendente entre estes, responda qual" (contrato fechado por medicao
+   * 2026-08-11); este apenas informa o que existe, sem pergunta em aberto.
+   *
+   * Existe porque a interpretadora trabalhava sem saber que o paciente tinha
+   * consulta marcada -- e por isso nao resolvia "o mesmo dentista da
+   * avaliacao", "mesma data", nem reconhecia "pode trocar para 10hrs" como
+   * remarcacao. Tres conversas reais quebraram por isso no mesmo dia; numa
+   * delas o Core repetiu a mesma pergunta sete vezes.
+   */
+  agendamentos_do_paciente?: {
+    agendamento_id: string;
+    descricao: string;
+    dentista_id?: string;
+    procedimento_id?: string;
+    data: string;
+    horario: string;
+  }[];
   /**
    * Cadastro JA PERSISTIDO do paciente (identificacao.ts). SEGUNDA ORIGEM de
    * dado cadastral, ao lado do snapshot da conversa.
@@ -368,8 +390,17 @@ function limparConfirmacaoAoEntrarEmFluxoDeAgendamentoExistente(
  *
  * `remover` passa intacto: apagar um campo nao tem valor a validar.
  */
-function descartarCadastroInvalido(alteracoes: AlteracoesDados, dataReferencia: string | undefined): AlteracoesDados {
+function descartarCadastroInvalido(
+  alteracoes: AlteracoesDados,
+  dataReferencia: string | undefined
+): { alteracoes: AlteracoesDados; invalidos: CampoCadastralInterpretacao[] } {
   const resultado: AlteracoesDados = {};
+  // Quais campos o paciente informou NESTE turno e o Core rejeitou. Ate
+  // 2026-08-16 esta informacao se perdia: o valor era descartado em silencio
+  // e a Iris repetia o mesmo pedido sem dizer o motivo -- o paciente
+  // reenviava o mesmo dado errado e o ciclo nao terminava. So o NOME do
+  // campo e propagado; o valor rejeitado e PII e nunca sai daqui.
+  const invalidos: CampoCadastralInterpretacao[] = [];
 
   for (const [campo, alteracao] of Object.entries(alteracoes)) {
     if (!CAMPOS_CADASTRAIS_INTERPRETACAO.includes(campo as CampoCadastralInterpretacao)) {
@@ -386,11 +417,14 @@ function descartarCadastroInvalido(alteracoes: AlteracoesDados, dataReferencia: 
       alteracao.valor as string,
       dataReferencia
     );
-    if (normalizado === undefined) continue; // invalido: descartado em silencio.
+    if (normalizado === undefined) {
+      invalidos.push(campo as CampoCadastralInterpretacao);
+      continue;
+    }
     resultado[campo] = { ...alteracao, valor: normalizado };
   }
 
-  return resultado;
+  return { alteracoes: resultado, invalidos };
 }
 
 const CHAVES_ENTRADA_INTEGRADA = ['conversa_id', 'clinica_id', 'telefone_normalizado', 'mensagens_atuais'] as const;
@@ -403,6 +437,7 @@ const CHAVES_OPCIONAIS_INTEGRADA = [
   'oferta_procedimento_pendente',
   'troca_telefone_pendente',
   'agendamentos_ativos',
+  'agendamentos_do_paciente',
   'cadastro_paciente',
   'data_referencia',
 ] as const;
@@ -467,7 +502,8 @@ export async function interpretarEAplicar(
       // qualquer origem, chega ao modelo.
       entrada.cadastro_paciente,
       entrada.troca_telefone_pendente,
-      entrada.agendamentos_ativos
+      entrada.agendamentos_ativos,
+      entrada.agendamentos_do_paciente
     )
   );
 
@@ -500,10 +536,25 @@ export async function interpretarEAplicar(
     snapshotOficial
   );
 
+  // 5c-alfa. ESCOLHER PROFISSIONAL NAO IDENTIFICA O PACIENTE.
+  //
+  // Defeito real (WhatsApp, 2026-08-16): "pode ser o dr. pablo arruda"
+  // produziu, no mesmo turno, o dentista escolhido E `nome = "Arruda"` -- o
+  // sobrenome do PROFISSIONAL virou o nome do PACIENTE na ficha.
+  //
+  // A regra ja existia em `guarda-contexto-unificado.ts`, mas so rodava no
+  // shadow, que apenas mede. Aqui ela entra na rota que atende de fato.
+  // Deteccao ESTRUTURAL (co-ocorrencia dos dois campos), nunca comparacao de
+  // texto -- ver guarda-nome-escolha-dentista.ts.
+  const guardaNome = descartarNomeDeEscolhaDeDentista(alteracoesFinais, saida.dentistas_candidatos);
+
   // 5c-bis. ESCOLHA DE AGENDAMENTO -- gate de integridade contra a lista
   // oficialmente oferecida neste turno (specs/remarcacao-conversacional-v1.md
   // secao 3). Id fora da lista (ou sem lista nenhuma) nunca e persistido.
-  const alteracoesComEscolhaAgendamento = validarEscolhaAgendamento(alteracoesFinais, entrada.agendamentos_ativos);
+  const alteracoesComEscolhaAgendamento = validarEscolhaAgendamento(
+    guardaNome.alteracoes,
+    entrada.agendamentos_ativos
+  );
 
   // 5c-ter. LIMPEZA DE CONFIRMACAO AO ENTRAR EM REMARCACAO/CANCELAMENTO -- um
   // "sim" de outro fluxo, na mesma conversa, nunca autoriza uma operacao sobre
@@ -517,7 +568,8 @@ export async function interpretarEAplicar(
   // (specs/cadastro-conversacional-v1.md secao 4). Valor invalido e
   // descartado aqui, antes de virar dado da conversa; valor valido segue
   // NORMALIZADO.
-  const alteracoesValidadas = descartarCadastroInvalido(alteracoesComRemarcacao, entrada.data_referencia);
+  const validacaoCadastral = descartarCadastroInvalido(alteracoesComRemarcacao, entrada.data_referencia);
+  const alteracoesValidadas = validacaoCadastral.alteracoes;
 
   // 6. pre-aplicacao deterministica usando o mesmo snapshot.
   const preAplicacao = preAplicar(snapshotOficial, alteracoesValidadas);
@@ -569,6 +621,12 @@ export async function interpretarEAplicar(
     alteracoes_interpretadas: saida.alteracoes,
     alteracoes_aplicaveis: alteracoesAplicaveis,
     conflitos,
+    // Campos cadastrais que o paciente informou NESTE turno e o Core
+    // rejeitou por invalidos. Transitorio: existe so para a redatora poder
+    // dizer QUAL campo estava errado, em vez de repetir o pedido inteiro.
+    ...(validacaoCadastral.invalidos.length > 0
+      ? { campos_cadastrais_invalidos: validacaoCadastral.invalidos }
+      : {}),
     aplicacao,
     dentistas_candidatos: saida.dentistas_candidatos,
     // Transitoria por construcao: sai daqui para o orquestrador e nunca e

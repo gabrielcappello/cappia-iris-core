@@ -341,7 +341,16 @@ test('CPF invalido nao entra em dados -- o campo continua faltante', async () =>
   );
 
   // Nome e nascimento entraram; o CPF nao -- entao so ele continua faltando.
-  assert.deepEqual(resultado.decisao, { tipo: 'cadastro_necessario', campos_faltantes: ['cpf'] });
+  //
+  // `campos_invalidos` (2026-08-16) diz que o CPF nao apenas falta: ele foi
+  // INFORMADO e REJEITADO neste turno. Sem essa distincao a Iris repetia o
+  // pedido inteiro e o paciente reenviava o mesmo dado errado, sem saber qual
+  // campo tinha problema -- medido em conversa real.
+  assert.deepEqual(resultado.decisao, {
+    tipo: 'cadastro_necessario',
+    campos_faltantes: ['cpf'],
+    campos_invalidos: ['cpf'],
+  });
   assert.equal(rpc.chamadas.length, 0);
   // E o valor invalido nunca chegou ao estado da conversa.
   const dados = tabelas.estado_conversa[0].dados as Record<string, unknown>;
@@ -390,7 +399,13 @@ test('data de nascimento futura e recusada -- o campo continua faltante', async 
     'nasci em 01/01/2030'
   );
 
-  assert.deepEqual(resultado.decisao, { tipo: 'cadastro_necessario', campos_faltantes: ['data_nascimento'] });
+  // `campos_invalidos`: a data foi INFORMADA e rejeitada, nao apenas omitida
+  // -- a distincao que permite a Iris dizer QUAL campo estava errado.
+  assert.deepEqual(resultado.decisao, {
+    tipo: 'cadastro_necessario',
+    campos_faltantes: ['data_nascimento'],
+    campos_invalidos: ['data_nascimento'],
+  });
 });
 
 // --- CPF ja cadastrado ---

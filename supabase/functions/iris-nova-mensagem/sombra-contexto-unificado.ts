@@ -42,6 +42,7 @@ import {
   ACOES_CONTRATO,
   CAMPOS_CONTRATO,
   type ContextoUnificado,
+  type PerguntaPendente,
   type SaidaContratoUnificado,
 } from './contexto-unificado-tipos.ts';
 import type { HistoricoConversa } from './tipos.ts';
@@ -128,6 +129,13 @@ export function montarContextoUnificado(entrada: {
   agendamentos: readonly AgendamentoAtivo[] | undefined;
   catalogo: CatalogoClinica | null;
   historico: HistoricoConversa | null;
+  /**
+   * A pergunta do turno anterior, quando houver registro (spec v2 §14.6).
+   * Opcional: enquanto ninguém grava a coluna, os chamadores existentes
+   * seguem sem passá-la e o campo continua `null` -- mesmo comportamento de
+   * antes, sem alteração para quem já usa esta função.
+   */
+  aguardando_resposta?: PerguntaPendente | null;
 }): ContextoUnificadoSemMensagem {
   const dadosConhecidos: Record<string, string> = {};
   for (const [campo, valor] of Object.entries(entrada.dados)) {
@@ -151,7 +159,16 @@ export function montarContextoUnificado(entrada: {
       // Sem registro do que foi oferecido no turno anterior, esta lista é
       // sempre vazia. O que foi apresentado aparece no histórico, em texto.
       opcoes_apresentadas: [],
-      aguardando_resposta: null,
+      // A pergunta que a Iris de fato fez no turno anterior, quando já houver
+      // registro dela (spec v2 §14.6). Continua `null` enquanto ninguém
+      // GRAVA a coluna -- a leitura já existe (`aguardando-resposta.ts`,
+      // `identificacao.ts`), a escrita depende de a redatora declarar a
+      // pergunta (spec §14.5), ainda não implementado.
+      //
+      // `null` aqui segue significando "não há pergunta em aberto", nunca
+      // "não sei": um valor malformado é recusado antes, na leitura, e desvia
+      // o turno em vez de chegar como `null`.
+      aguardando_resposta: entrada.aguardando_resposta ?? null,
       procedimentos_disponiveis: (entrada.catalogo?.procedimentos ?? [])
         .filter((p) => p.ativo)
         .map((p) => ({ procedimento_id: p.procedimento_id, nome: p.nome_pt })),

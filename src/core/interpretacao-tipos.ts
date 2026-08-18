@@ -176,6 +176,22 @@ export interface EntradaInterpretacao {
    */
   agendamentos_ativos?: { agendamento_id: string; descricao: string }[];
   /**
+   * CONTEXTO: o que o paciente ja tem marcado (2026-08-17). Sem pergunta em
+   * aberto -- ao contrario de `agendamentos_ativos`.
+   *
+   * Permite a interpretadora resolver "o mesmo dentista", "mesma data",
+   * "trocar meu horario" -- referencias que ela nao conseguia entender por
+   * nao saber que existia agendamento.
+   */
+  agendamentos_do_paciente?: {
+    agendamento_id: string;
+    descricao: string;
+    dentista_id?: string;
+    procedimento_id?: string;
+    data: string;
+    horario: string;
+  }[];
+  /**
    * Ultimos turnos da conversa (specs/historico-conversacional-v1.md secao
    * 6), do mais antigo para o mais recente, ja filtrados por validade (24h)
    * -- permite entender mensagens curtas ou dependentes de contexto ("sim",
@@ -318,6 +334,19 @@ export interface ResultadoInterpretacao {
   alteracoes_interpretadas: AlteracoesDados;
   alteracoes_aplicaveis: AlteracoesDados;
   conflitos: Conflito[];
+  /**
+   * Campos cadastrais informados NESTE turno e rejeitados pelo Core por
+   * serem invalidos (CPF com digito errado, data impossivel, e-mail
+   * malformado).
+   *
+   * Ate 2026-08-16 essa rejeicao era silenciosa: a Iris repetia o pedido
+   * inteiro e o paciente reenviava o mesmo dado errado, sem nunca saber qual
+   * campo estava com problema. Medido em conversa real.
+   *
+   * Carrega SO o nome do campo -- nunca o valor rejeitado, que e PII.
+   * Ausente quando nada foi rejeitado.
+   */
+  campos_cadastrais_invalidos?: readonly CampoCadastralInterpretacao[];
   aplicacao: ResultadoAplicarDados | null;
   /**
    * Candidatos a dentista lidos pela IA nesta mensagem

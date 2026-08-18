@@ -112,7 +112,16 @@ export function construirEntradaMinimizada(
   ofertaProcedimentoPendente?: true,
   cadastroPaciente?: CadastroPaciente,
   trocaTelefonePendente?: true,
-  agendamentosAtivos?: { agendamento_id: string; descricao: string }[]
+  agendamentosAtivos?: { agendamento_id: string; descricao: string }[],
+  /** Contexto: o que o paciente ja tem marcado. Ver interpretar-e-aplicar.ts. */
+  agendamentosDoPaciente?: {
+    agendamento_id: string;
+    descricao: string;
+    dentista_id?: string;
+    procedimento_id?: string;
+    data: string;
+    horario: string;
+  }[]
 ): EntradaInterpretacao {
   return {
     mensagens_atuais: [...mensagensAtuais],
@@ -129,6 +138,9 @@ export function construirEntradaMinimizada(
       : {}),
     ...(trocaTelefonePendente !== undefined ? { troca_telefone_pendente: trocaTelefonePendente } : {}),
     ...(agendamentosAtivos !== undefined ? { agendamentos_ativos: [...agendamentosAtivos] } : {}),
+    ...(agendamentosDoPaciente !== undefined
+      ? { agendamentos_do_paciente: [...agendamentosDoPaciente] }
+      : {}),
     ...(historicoRecente !== undefined ? { historico_recente: [...historicoRecente] } : {}),
   };
 }
@@ -179,6 +191,9 @@ export const CHAVES_OPCIONAIS_INTERPRETACAO = [
   'oferta_procedimento_pendente',
   'troca_telefone_pendente',
   'agendamentos_ativos',
+  // CONTEXTO do que o paciente ja tem marcado (2026-08-17) -- distinto de
+  // `agendamentos_ativos`, que significa "escolha qual destes".
+  'agendamentos_do_paciente',
   'historico_recente',
 ] as const;
 

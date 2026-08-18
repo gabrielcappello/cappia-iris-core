@@ -24,6 +24,7 @@
 import { formatarMinutos } from './gerar-resposta-paciente.ts';
 import type { ClienteBancoDados, ContextoHorarios } from './tipos.ts';
 import type { DecisaoOrquestrador } from './orquestrador-tipos.ts';
+import type { PerguntaPendente } from './contexto-unificado-tipos.ts';
 
 export type AcaoContextoHorarios =
   | { tipo: 'substituir'; horarios: string[] }
@@ -247,6 +248,22 @@ export interface GravarContextoHorariosEntrada {
    */
   atualizado_em_da_decisao: string;
   acao: AcaoContextoHorarios;
+  /**
+   * A anotacao "eu perguntei X" deste turno
+   * (specs/contexto-conversacional-unificado-v2.md secao 14.6), derivada da
+   * decisao por `declararPerguntaPendente`.
+   *
+   * Vai no MESMO UPDATE de `contexto_horarios`, sob o MESMO CAS: os dois
+   * descrevem o mesmo turno, e gravar em instrucoes separadas abriria a
+   * janela de um turno concorrente entrar entre as duas -- deixando o
+   * snapshot de um turno com a anotacao de outro.
+   *
+   * `null` e valor legitimo ("este turno nao deixou pergunta em aberto") e e
+   * gravado como tal. Omitir o campo (`undefined`) NAO grava nada e preserva
+   * o valor anterior -- usado apenas por chamadores que ainda nao derivam a
+   * anotacao, para que a mudanca seja aditiva.
+   */
+  aguardando_resposta?: PerguntaPendente | null;
 }
 
 /**
@@ -280,8 +297,16 @@ export async function gravarContextoHorarios(
   cliente: ClienteBancoDados,
   entrada: GravarContextoHorariosEntrada
 ): Promise<string> {
-  // Preservar nao emite nenhuma instrucao -- nem UPDATE, nem SELECT.
-  if (entrada.acao.tipo === 'preservar') return entrada.atualizado_em_da_decisao;
+  // Preservar nao emite instrucao -- EXCETO quando ha anotacao a gravar.
+  //
+  // `preservar` significa "nao mexa no snapshot de horarios", nunca "nao
+  // mexa em nada": a coleta de cadastro, por exemplo, preserva a proposta
+  // confirmada E faz uma pergunta nova a cada turno. Sem esta excecao, a
+  // anotacao desses turnos se perderia e o turno seguinte voltaria a
+  // adivinhar pelo texto -- exatamente o que ela existe para evitar.
+  if (entrada.acao.tipo === 'preservar' && entrada.aguardando_resposta === undefined) {
+    return entrada.atualizado_em_da_decisao;
+  }
 
   const contexto: ContextoHorarios | null =
     entrada.acao.tipo === 'substituir'
@@ -304,11 +329,23 @@ export async function gravarContextoHorarios(
 
   const proximoValor = proximoTimestamp(entrada.atualizado_em_da_decisao);
 
+  // `preservar` com anotacao: grava SO a anotacao, sem tocar
+  // `contexto_horarios` -- e o que "preservar" quer dizer.
+  const camposHorarios = entrada.acao.tipo === 'preservar' ? {} : { contexto_horarios: contexto };
+  // Chave presente so quando o chamador de fato derivou a anotacao. Ausente
+  // (`undefined`) preserva o valor anterior; `null` grava "nenhuma pergunta
+  // em aberto", que e afirmacao, nao omissao.
+  const campoAnotacao =
+    entrada.aguardando_resposta === undefined
+      ? {}
+      : { aguardando_resposta: entrada.aguardando_resposta };
+
   try {
     const { data } = await cliente
       .from('estado_conversa')
       .update({
-        contexto_horarios: contexto,
+        ...camposHorarios,
+        ...campoAnotacao,
         atualizado_em: proximoValor,
       })
       .eq('id', entrada.conversa_id)

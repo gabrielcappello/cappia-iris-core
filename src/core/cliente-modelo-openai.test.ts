@@ -2061,6 +2061,18 @@ test('fronteira: GUARDA GERAL -- toda chave opcional do payload precisa aparecer
     oferta_procedimento_pendente: { procedimento_id: 'consultation_evaluation' },
     troca_telefone_pendente: true,
     agendamentos_ativos: [{ agendamento_id: 'ag-1', descricao: 'Limpeza com Dra. Ana em 15/08 às 14:00' }],
+    // CONTEXTO do que o paciente ja tem (2026-08-17) -- distinto de
+    // `agendamentos_ativos`, que significa "escolha qual destes".
+    agendamentos_do_paciente: [
+      {
+        agendamento_id: 'ag-1',
+        descricao: 'Limpeza com Dra. Ana em 15/08 às 14:00',
+        dentista_id: 'dent-ana',
+        procedimento_id: 'limpeza',
+        data: '2026-08-15',
+        horario: '14:00',
+      },
+    ],
     historico_recente: HISTORICO_EXEMPLO,
   };
 
