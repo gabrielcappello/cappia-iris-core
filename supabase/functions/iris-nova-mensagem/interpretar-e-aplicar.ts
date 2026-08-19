@@ -11,6 +11,8 @@ import { preAplicar } from './pre-aplicacao.ts';
 import { normalizarCampoCadastral } from './validar-cadastro.ts';
 import { descartarNomeDeEscolhaDeDentista } from './guarda-nome-escolha-dentista.ts';
 import { descartarListaVaziaSemMencao } from './guarda-lista-vazia-dentistas.ts';
+import { aplicarDentistaDoTratamento } from './dentista-do-tratamento.ts';
+import type { TratamentoNoPayload } from './dentista-do-tratamento.ts';
 import type {
   AlteracoesDados,
   CadastroPaciente,
@@ -32,6 +34,12 @@ import type {
 
 export interface InterpretarEAplicarInput extends ContextoConversa {
   mensagens_atuais: string[];
+  /**
+   * Tratamentos que o dentista planejou e a assistente anunciou. Repassados
+   * a IA como contexto E lidos pelo Core, que aplica o `dentista_id`
+   * definido no painel (dentista-do-tratamento.ts, 2026-08-19).
+   */
+  tratamentos_pendentes?: readonly TratamentoNoPayload[];
   /**
    * Horarios ja apresentados ao paciente na ultima pergunta gerada
    * (contexto-horarios.ts). Repassado a IA como contexto de interpretacao;
@@ -545,8 +553,24 @@ export async function interpretarEAplicar(
     console.log('guarda_lista_vazia_dentistas descartada=1');
   }
 
-  const alteracoesFinais = aplicarCandidatoUnicoDeDentista(
+  // 5b-ter. DENTISTA DEFINIDO NO PAINEL (2026-08-19).
+  // Quando o dentista escolheu quem realiza o procedimento, essa decisao vale
+  // sem o paciente precisar responder -- ela e clinica, nao dele. Aplicada
+  // AQUI, no Core, e nao por instrucao: `dentistas_candidatos` responde a
+  // "a quem o paciente se refere", e ele nao se referiu a ninguem.
+  // Ver dentista-do-tratamento.ts.
+  const dentistaDoPlano = aplicarDentistaDoTratamento(
     alteracoesComOferta,
+    guardaLista.candidatos,
+    entrada.tratamentos_pendentes,
+    snapshotOficial
+  );
+  if (dentistaDoPlano.aplicou) {
+    console.log('dentista_do_plano_aplicado=1');
+  }
+
+  const alteracoesFinais = aplicarCandidatoUnicoDeDentista(
+    dentistaDoPlano.alteracoes,
     guardaLista.candidatos,
     snapshotOficial
   );
