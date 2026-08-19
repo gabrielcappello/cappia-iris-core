@@ -226,6 +226,7 @@ export async function processarMensagem(
             nome_pt: t.procedimento,
             ...(t.dente !== undefined ? { dente: t.dente } : {}),
             ...(t.dentista_id !== undefined ? { dentista_id: t.dentista_id } : {}),
+            ...(t.assunto_atual === true ? { assunto_atual: true as const } : {}),
           })),
         }
       : {}),

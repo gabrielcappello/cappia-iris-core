@@ -59,6 +59,15 @@ export interface TratamentoAprovado {
    */
   dentista_id?: string;
   dentista_nome?: string;
+  /**
+   * Este foi o ULTIMO procedimento anunciado ao paciente (2026-08-19).
+   *
+   * Com dois pendentes de nome parecido (Canal pre-molar e Canal molar), a
+   * assistente anunciou um e a interpretadora escolheu o outro. Esta marca
+   * diz qual e o ASSUNTO da conversa; os demais continuam disponiveis se o
+   * paciente pedir outro.
+   */
+  assunto_atual?: true;
 }
 
 /** Linha crua vinda da consulta. */
@@ -69,6 +78,7 @@ export interface LinhaTratamentoAprovado {
   para_agendar?: unknown;
   dentista_id?: unknown;
   dentista_nome?: unknown;
+  avisado_em?: unknown;
 }
 
 function texto(valor: unknown): string | undefined {
@@ -119,6 +129,21 @@ export function derivarTratamentosAprovados(
       ...(texto(linha.dentista_id) !== undefined ? { dentista_id: texto(linha.dentista_id) } : {}),
       ...(texto(linha.dentista_nome) !== undefined ? { dentista_nome: texto(linha.dentista_nome) } : {}),
     });
+  }
+
+  // O primeiro item com `avisado_em` e o ULTIMO anunciado -- a funcao do
+  // banco devolve em ordem decrescente. Comparo pela chave do proprio item,
+  // nunca por indice: linhas sao descartadas no laco acima (sem
+  // `procedimento_id`, duplicadas), e um indice desalinhado marcaria o
+  // procedimento errado -- exatamente o defeito que isto corrige.
+  for (const linha of linhas) {
+    if (linha === null || typeof linha !== 'object') continue;
+    if (linha.avisado_em === undefined || linha.avisado_em === null) continue;
+    const proc = texto(linha.descricao);
+    const dente = texto(linha.dente);
+    const alvo = resultado.find((t) => t.procedimento === proc && t.dente === dente);
+    if (alvo !== undefined) alvo.assunto_atual = true;
+    break;
   }
 
   return resultado.length > 0 ? resultado : undefined;

@@ -121,6 +121,8 @@ export interface EntradaInterpretacao {
     dente?: string;
     /** Quem o dentista definiu para REALIZAR -- quando definiu. */
     dentista_id?: string;
+    /** Este foi o ULTIMO anunciado ao paciente: o assunto da conversa. */
+    assunto_atual?: true;
   }[];
   /**
    * Dentistas ATIVOS desta clinica (specs/dentista-semantico-v1.md). Mesmo
