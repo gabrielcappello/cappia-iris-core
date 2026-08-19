@@ -540,12 +540,28 @@ export async function interpretarEAplicar(
     snapshotOficial
   );
 
-  // 5c. CANDIDATO UNICO DE DENTISTA -- quem escreve `dentista_id` e o Core
+  // PASSO 4. CANDIDATO UNICO DE DENTISTA -- quem escreve `dentista_id` e o Core
   // (specs/dentista-semantico-v1.md secao 12). A IA nao emite esse campo: ela
   // devolve `dentistas_candidatos`, e so o caso de UM candidato vira dado
   // persistido aqui. Zero e varios nao escrevem nada -- viram decisao no
   // orquestrador, que precisa perguntar ao paciente antes de haver escolha.
-  // 5b-bis. LISTA VAZIA SEM MENCAO A PROFISSIONAL (2026-08-19).
+  // ── COMO PROCEDIMENTO E DENTISTA SAO DECIDIDOS ────────────────────────
+  //
+  // Quatro passos, NESTA ordem. Cada um so preenche o que o anterior deixou
+  // vazio -- nunca sobrescreve. A regra de precedencia e sempre a mesma:
+  //
+  //   o que o PACIENTE disse  >  o que o DENTISTA definiu  >  nada
+  //
+  //   1. limpar     -- lista vazia indevida vira `null` (guarda-lista-vazia)
+  //   2. procedimento -- o anunciado, quando ele respondeu sobre QUANDO
+  //   3. dentista   -- o definido no painel para AQUELE procedimento
+  //   4. dentista   -- o candidato unico que a IA leu da fala dele
+  //
+  // O passo 2 vem antes do 3 porque o dentista e escolhido A PARTIR do
+  // procedimento. O passo 4 e o mais antigo e continua valendo: quando o
+  // paciente nomeia alguem, e a fala dele que manda.
+
+  // PASSO 1. LISTA VAZIA SEM MENCAO A PROFISSIONAL (2026-08-19).
   // `[]` significa "falou de alguem que nao existe" e produz "nao encontrei
   // esse profissional". Quando o turno trouxe data/horario/confirmacao, a
   // mensagem era sobre AGENDAR -- ver guarda-lista-vazia-dentistas.ts.
@@ -554,7 +570,7 @@ export async function interpretarEAplicar(
     console.log('guarda_lista_vazia_dentistas descartada=1');
   }
 
-  // 5b-ter. DENTISTA DEFINIDO NO PAINEL (2026-08-19).
+  // PASSO 3. DENTISTA DEFINIDO NO PAINEL (2026-08-19).
   // Quando o dentista escolheu quem realiza o procedimento, essa decisao vale
   // sem o paciente precisar responder -- ela e clinica, nao dele. Aplicada
   // AQUI, no Core, e nao por instrucao: `dentistas_candidatos` responde a
@@ -574,7 +590,7 @@ export async function interpretarEAplicar(
       ` campos=${Object.keys(alteracoesComOferta).join(',') || '-'}`
   );
 
-  // 5b-quater. PROCEDIMENTO ANUNCIADO (2026-08-19).
+  // PASSO 2. PROCEDIMENTO ANUNCIADO (2026-08-19).
   // Quando a assistente acabou de anunciar UM procedimento e o paciente
   // responde sobre data/horario, e daquele que ele fala. Aplicado no Core:
   // a instrucao da interpretadora tem 42 regras, e esta se perdia entre
