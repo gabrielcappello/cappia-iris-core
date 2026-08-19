@@ -37,6 +37,7 @@ import type {
 import type { ResultadoCarregarCatalogo } from './carregar-catalogo.ts';
 import { buscarTratamentosAprovados } from './tratamentos-aprovados.ts';
 import type { TratamentoAprovado } from './tratamentos-aprovados.ts';
+import { identificarAgendamentoPelaData } from './agendamento-pela-data.ts';
 
 /**
  * Orquestrador minimo do primeiro fluxo: identificacao -> interpretacao ->
@@ -184,6 +185,7 @@ export async function processarMensagem(
   // disponibilidade do Core.
   const escolhaAgendamentoPendente = identificacao.conversa.contexto_horarios?.escolha_agendamento_pendente;
   let agendamentosAtivosParaIA: { agendamento_id: string; descricao: string }[] | undefined;
+  let datasDosAgendamentosOferecidos: { agendamento_id: string; data: string }[] | undefined;
   if (escolhaAgendamentoPendente !== undefined && identificacao.paciente.id !== null) {
     const buscaParaContexto = await buscarAgendamentoAtivo(clienteBanco, {
       clinica_id: identificacao.clinica_id,
@@ -205,6 +207,14 @@ export async function processarMensagem(
       .filter((a): a is AgendamentoAtivo => a !== undefined)
       .map((a) => ({ agendamento_id: a.agendamento_id, descricao: descreverAgendamentoAtivo(a) }));
     if (descritos.length > 0) agendamentosAtivosParaIA = descritos;
+
+    // As DATAS dos mesmos agendamentos -- e por elas que o Core identifica
+    // qual o paciente escolheu quando ele responde "o da terca dia 25-8".
+    // Ver agendamento-pela-data.ts.
+    datasDosAgendamentosOferecidos = escolhaAgendamentoPendente.agendamento_ids
+      .map((id) => candidatos.find((a) => a.agendamento_id === id))
+      .filter((a): a is AgendamentoAtivo => a !== undefined)
+      .map((a) => ({ agendamento_id: a.agendamento_id, data: a.data }));
   }
 
   const interpretacao = await interpretarEAplicar(clienteModelo, clienteBanco, {
@@ -632,6 +642,36 @@ export async function processarMensagem(
   // procedimento esta pedindo um SEGUNDO agendamento, nao remarcando o
   // primeiro -- quem distingue e a IA, lendo a frase.
   if (dados.intencao === 'remarcacao') {
+    // QUAL agendamento remarcar, quando a data ja aponta para um so.
+    //
+    // 2026-08-19: o paciente respondeu "o da terca feira dia 25-8" e a IA
+    // anotou a data mas NAO o agendamento. Sem saber qual, o Core nao sabe
+    // dentista nem procedimento -- e nao calcula disponibilidade. A redatora
+    // recebeu um pacote sem horarios e escreveu "nao temos outros", quando o
+    // dia estava quase todo livre.
+    //
+    // Casar data com agendamento e comparacao, nao interpretacao de
+    // linguagem. Ver agendamento-pela-data.ts.
+    if (dados.agendamento_id === undefined && datasDosAgendamentosOferecidos !== undefined) {
+      const temporalParaEscolha = resolverTemporal({
+        clinica_id: identificacao.clinica_id,
+        fuso: (await buscarFusoHorario(clienteBanco, identificacao.clinica_id)) ?? '',
+        instante_atual: entrada.instante_atual,
+        fatos_temporais: montarFatosTemporais({ data_texto: dados.data_texto }),
+      });
+      if (temporalParaEscolha.tipo === 'resolvido') {
+        const escolha = identificarAgendamentoPelaData(
+          {},
+          datasDosAgendamentosOferecidos,
+          temporalParaEscolha.data
+        );
+        if (escolha.identificou) {
+          dados.agendamento_id = escolha.alteracoes.agendamento_id?.valor;
+          console.log('agendamento_identificado_pela_data=1');
+        }
+      }
+    }
+
     const resultadoRemarcacao = await decidirRemarcacao(
       clienteBanco,
       clienteRpc,
