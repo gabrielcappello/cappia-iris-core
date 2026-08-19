@@ -33,6 +33,7 @@ export interface ResultadoRespostaConversacional {
 
 import type { ClinicaConhecida } from './clinica-conhecida.ts';
 import type { DentistaDaClinica } from './dentistas-da-clinica.ts';
+import type { TratamentoAprovado } from './tratamentos-aprovados.ts';
 import type { PrecosClinica } from './precos-clinica.ts';
 
 export interface GerarRespostaConversacionalEntrada {
@@ -47,6 +48,8 @@ export interface GerarRespostaConversacionalEntrada {
   clinicaConhecida?: ClinicaConhecida;
   /** Quem atende na clinica, com especialidades (2026-08-18). */
   dentistasDaClinica?: readonly DentistaDaClinica[];
+  /** Tratamentos aprovados e por agendar (2026-08-18). */
+  tratamentosAprovados?: readonly TratamentoAprovado[];
   /** Precos ja filtrados pelo consentimento da clinica (precos-clinica.ts). */
   precos?: PrecosClinica;
   /**
@@ -112,7 +115,8 @@ export async function gerarRespostaConversacional(
     entrada.cadastroConhecido,
     entrada.clinicaConhecida,
     entrada.precos,
-    entrada.dentistasDaClinica
+    entrada.dentistasDaClinica,
+    entrada.tratamentosAprovados
   );
   const historicoParaEnvio = historicoValidoParaEnvio(entrada.historicoConversa, Date.now());
 

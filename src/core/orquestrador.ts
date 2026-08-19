@@ -35,6 +35,8 @@ import type {
   ResultadoOrquestrador,
 } from './orquestrador-tipos.ts';
 import type { ResultadoCarregarCatalogo } from './carregar-catalogo.ts';
+import { buscarTratamentosAprovados } from './tratamentos-aprovados.ts';
+import type { TratamentoAprovado } from './tratamentos-aprovados.ts';
 
 /**
  * Orquestrador minimo do primeiro fluxo: identificacao -> interpretacao ->
@@ -133,6 +135,7 @@ export async function processarMensagem(
     erroBuscaParaInterpretacao = erro;
     agendamentosParaInterpretacao = undefined;
   }
+
 
   // REMARCACAO -- construir a lista de agendamentos ativos para a IA
   // correlacionar, SOMENTE quando ha uma escolha pendente do turno anterior
@@ -386,6 +389,29 @@ export async function processarMensagem(
       erroBuscaAgendamentos = erroBuscaParaInterpretacao;
     }
 
+    // Tratamentos APROVADOS e ainda por agendar (2026-08-18).
+    //
+    // Buscados SO nas decisoes conversacionais -- as mesmas em que os
+    // agendamentos do paciente ja sao contexto. Num turno que esta cancelando
+    // ou reservando, o paciente ja disse o que quer: oferecer outra coisa
+    // seria atropelar o pedido dele, e a consulta seria desperdicada.
+    //
+    // Essa restricao tambem preserva uma garantia que os testes cobrem: nos
+    // caminhos onde nenhuma RPC deve ser chamada, nenhuma e.
+    let tratamentosParaRedatora: readonly TratamentoAprovado[] | undefined;
+    if (
+      identificacao.paciente.id !== null &&
+      DECISOES_COM_CONTEXTO_DE_AGENDAMENTO.includes(decisao.tipo)
+    ) {
+      // Falha e absorvida dentro da propria funcao: fato acessorio nunca
+      // derruba o atendimento.
+      tratamentosParaRedatora = await buscarTratamentosAprovados(
+        clienteRpc,
+        identificacao.clinica_id,
+        identificacao.paciente.id
+      );
+    }
+
     // POLITICA DE FALHA, deliberadamente diferente por caminho:
     //
     // - nas tres decisoes conversacionais, onde esta busca JA era obrigatoria,
@@ -464,6 +490,9 @@ export async function processarMensagem(
       ...(catalogoCarregado.tipo === 'carregado' &&
       catalogoCarregado.catalogo.dentistasDaClinica !== undefined
         ? { dentistas_da_clinica: catalogoCarregado.catalogo.dentistasDaClinica }
+        : {}),
+      ...(tratamentosParaRedatora !== undefined && tratamentosParaRedatora.length > 0
+        ? { tratamentos_aprovados: tratamentosParaRedatora }
         : {}),
       atualizado_em: atualizadoEmFinal,
       natureza_mensagem: interpretacao.natureza_mensagem,

@@ -192,6 +192,12 @@ Deno.serve(async (req: Request) => {
       ...(resultado.dentistas_da_clinica !== undefined
         ? { dentistasDaClinica: resultado.dentistas_da_clinica }
         : {}),
+      // Tratamentos aprovados e ainda por agendar (2026-08-18): fecha o ciclo
+      // odontograma -> orcamento -> aprovacao -> AGENDAMENTO, que ate aqui
+      // dependia de alguem da clinica lembrar de ligar para o paciente.
+      ...(resultado.tratamentos_aprovados !== undefined
+        ? { tratamentosAprovados: resultado.tratamentos_aprovados }
+        : {}),
     });
     if (motivo_fallback !== null) {
       console.log(`resposta_conversacional_fallback decisao=${resultado.decisao.tipo} motivo=${motivo_fallback}`);

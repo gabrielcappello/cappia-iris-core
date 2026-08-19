@@ -23,6 +23,7 @@ import type { CadastroPaciente } from './tipos.ts';
  */
 import type { ClinicaConhecida } from './clinica-conhecida.ts';
 import type { DentistaDaClinica } from './dentistas-da-clinica.ts';
+import type { TratamentoAprovado } from './tratamentos-aprovados.ts';
 import type { PrecosClinica } from './precos-clinica.ts';
 
 export type CampoFaltante =
@@ -262,6 +263,17 @@ export interface FatosAutorizados {
    */
   dentistas_da_clinica?: DentistaDaClinica[];
   /**
+   * Tratamentos que o paciente JA APROVOU e ainda nao agendou (2026-08-18).
+   *
+   * Nasce do ciclo real da clinica: o dentista planeja no odontograma, gera
+   * o orcamento, o paciente aprova -- e ninguem marca. Antes disso a Iris
+   * respondia "qual procedimento voce deseja agendar?" a quem tinha dois
+   * tratamentos aprovados esperando.
+   *
+   * Nunca traz valor: preco ja foi conversado entre dentista e paciente.
+   */
+  tratamentos_aprovados?: TratamentoAprovado[];
+  /**
    * Precos, separados entre o que a clinica LIBEROU (`mostrar_valor: true`
    * item a item) e o que depende de avaliacao. Ver precos-clinica.ts -- o
    * valor de um procedimento nao liberado nunca chega aqui.
@@ -369,7 +381,9 @@ export function derivarFatosAutorizados(
    */
   precos?: PrecosClinica,
   /** Quem atende na clinica -- ortogonal a decisao, como os dados da clinica. */
-  dentistasDaClinica?: readonly DentistaDaClinica[]
+  dentistasDaClinica?: readonly DentistaDaClinica[],
+  /** Tratamentos aprovados e por agendar -- ortogonal a decisao. */
+  tratamentosAprovados?: readonly TratamentoAprovado[]
 ): FatosAutorizados {
   let fatos = derivarPorDecisao(decisao, dataHoje);
 
@@ -423,6 +437,10 @@ export function derivarFatosAutorizados(
 
   if (dentistasDaClinica !== undefined && dentistasDaClinica.length > 0) {
     fatos = { ...fatos, dentistas_da_clinica: [...dentistasDaClinica] };
+  }
+
+  if (tratamentosAprovados !== undefined && tratamentosAprovados.length > 0) {
+    fatos = { ...fatos, tratamentos_aprovados: [...tratamentosAprovados] };
   }
 
   if (precos !== undefined) {
