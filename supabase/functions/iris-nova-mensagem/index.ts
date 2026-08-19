@@ -309,6 +309,30 @@ Deno.serve(async (req: Request) => {
     if (erro instanceof EntradaInvalidaError) {
       return jsonResponse({ erro: "entrada_invalida" }, 400);
     }
+    // DIAGNOSTICO (2026-08-19): ate aqui o erro era descartado e o turno
+    // devolvia so "erro_interno". Numa falha real -- 1 em 10 turnos -- nao
+    // havia como saber se foi timeout da IA, recusa do provedor ou defeito
+    // no Core: a informacao nunca era gravada em lugar nenhum.
+    //
+    // `ErroClienteModeloOpenAI` ja carrega os campos certos e foi desenhado
+    // para NAO conter PII (ver o cabecalho da classe: "nunca mensagem do
+    // paciente, dados_atuais, resposta bruta, valores interpretados, PII,
+    // chave, corpo bruto de erro da API"). Registramos so esses campos.
+    //
+    // Para erros de outra origem, so o nome e a mensagem do proprio erro --
+    // nunca o payload nem a fala do paciente.
+    const detalhe =
+      erro !== null && typeof erro === "object" && "codigo" in erro
+        ? `codigo=${(erro as { codigo?: unknown }).codigo}` +
+          ` categoria=${(erro as { categoria?: unknown }).categoria ?? "-"}` +
+          ` tentativas=${(erro as { tentativas?: unknown }).tentativas ?? "-"}` +
+          ` duracao_ms=${(erro as { duracaoMs?: unknown }).duracaoMs ?? "-"}` +
+          ` status_http=${(erro as { statusHttp?: unknown }).statusHttp ?? "-"}` +
+          ` modelo=${(erro as { modelo?: unknown }).modelo ?? "-"}`
+        : `tipo=${erro instanceof Error ? erro.name : typeof erro}` +
+          ` mensagem=${erro instanceof Error ? erro.message : String(erro)}`;
+    console.error(`erro_interno ${detalhe}`);
+
     return jsonResponse({ erro: "erro_interno" }, 500);
   }
 });
