@@ -13,6 +13,7 @@ import { descartarNomeDeEscolhaDeDentista } from './guarda-nome-escolha-dentista
 import { descartarListaVaziaSemMencao } from './guarda-lista-vazia-dentistas.ts';
 import { aplicarDentistaDoTratamento } from './dentista-do-tratamento.ts';
 import { aplicarProcedimentoDoAnuncio } from './procedimento-do-anuncio.ts';
+import { aplicarDentistaPreferido } from './dentista-preferido-do-paciente.ts';
 import type { TratamentoNoPayload } from './dentista-do-tratamento.ts';
 import type {
   AlteracoesDados,
@@ -617,8 +618,23 @@ export async function interpretarEAplicar(
     console.log('dentista_do_plano_aplicado=1');
   }
 
-  const alteracoesFinais = aplicarCandidatoUnicoDeDentista(
+  // PASSO 3b. DENTISTA QUE JA ATENDE O PACIENTE (2026-08-19).
+  // "gostaria de uma limpeza para amanha" -- ele tem dois agendamentos, os
+  // dois com o Dr. Diego, e a Iris perguntou com qual dos dois profissionais
+  // ele queria. A regra existe na instrucao e nao foi seguida; aqui e
+  // deducao. Ver dentista-preferido-do-paciente.ts.
+  const dentistaPreferido = aplicarDentistaPreferido(
     dentistaDoPlano.alteracoes,
+    guardaLista.candidatos,
+    entrada.agendamentos_do_paciente,
+    snapshotOficial
+  );
+  if (dentistaPreferido.aplicou) {
+    console.log('dentista_preferido_aplicado=1');
+  }
+
+  const alteracoesFinais = aplicarCandidatoUnicoDeDentista(
+    dentistaPreferido.alteracoes,
     guardaLista.candidatos,
     snapshotOficial
   );
