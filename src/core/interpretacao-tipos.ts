@@ -107,6 +107,16 @@ export interface EntradaInterpretacao {
    */
   procedimentos_disponiveis?: { procedimento_id: string; nome_pt: string }[];
   /**
+   * Procedimentos que o dentista JA PLANEJOU para este paciente e que a
+   * assistente acabou de anunciar (2026-08-19).
+   *
+   * Diferente de `procedimentos_disponiveis`, que e o catalogo inteiro da
+   * clinica: estes sao os que ESTA conversa esta tratando. Quando ha um so,
+   * "pode ser amanha a tarde" ja identifica o procedimento -- nao ha o que
+   * perguntar.
+   */
+  tratamentos_pendentes?: { procedimento_id: string; nome_pt: string; dente?: string }[];
+  /**
    * Dentistas ATIVOS desta clinica (specs/dentista-semantico-v1.md). Mesmo
    * papel que `procedimentos_disponiveis`: a interpretadora correlaciona
    * semanticamente o que o paciente disse ("o Carlos", "a Dra. Vanesa") com

@@ -403,6 +403,9 @@ async function processarTentativa(
           // Catalogo ativo minimo da clinica (specs/procedimento-semantico-v1.md):
           // e o que permite a interpretadora resolver o pedido do paciente
           // semanticamente ate `procedimento_id`, sem o Core casar texto.
+          ...(contexto.entrada.payload.tratamentos_pendentes !== undefined
+            ? { tratamentos_pendentes: contexto.entrada.payload.tratamentos_pendentes }
+            : {}),
           ...(contexto.entrada.payload.procedimentos_disponiveis !== undefined
             ? { procedimentos_disponiveis: contexto.entrada.payload.procedimentos_disponiveis }
             : {}),

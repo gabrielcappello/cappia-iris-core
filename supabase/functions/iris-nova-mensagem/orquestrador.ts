@@ -137,6 +137,27 @@ export async function processarMensagem(
   }
 
 
+  // Tratamentos que o dentista planejou e a assistente anunciou (2026-08-19).
+  //
+  // A interpretadora precisa DISTO para entender "pode ser amanha a tarde"
+  // como resposta ao procedimento anunciado. Sem esse contexto ela via so o
+  // catalogo inteiro da clinica, nao preenchia `procedimento_id`, e o Core
+  // pedia o procedimento que a Iris tinha acabado de listar.
+  //
+  // Falha e absorvida dentro da propria funcao: fato acessorio nunca derruba
+  // o atendimento.
+  // SO quando ha historico: se a conversa acabou de comecar, a assistente
+  // nao anunciou nada e nao ha o que correlacionar. Essa condicao tambem
+  // preserva a garantia que os testes cobrem -- nos caminhos onde nenhuma
+  // RPC deve ser chamada, nenhuma e.
+  const conversaJaTemHistorico =
+    identificacao.conversa.historico_conversa !== null &&
+    identificacao.conversa.historico_conversa.length > 0;
+  const tratamentosParaInterpretacao =
+    identificacao.paciente.id !== null && conversaJaTemHistorico
+      ? await buscarTratamentosAprovados(clienteRpc, identificacao.clinica_id, identificacao.paciente.id)
+      : undefined;
+
   // REMARCACAO -- construir a lista de agendamentos ativos para a IA
   // correlacionar, SOMENTE quando ha uma escolha pendente do turno anterior
   // (specs/remarcacao-conversacional-v1.md secao 3). Sem marcador, a lista
@@ -198,6 +219,15 @@ export async function processarMensagem(
     // para `procedimento_id` (specs/procedimento-semantico-v1.md). Chave
     // AUSENTE quando a clinica nao tem catalogo carregavel -- nunca `[]`.
     ...(procedimentosDisponiveis.length > 0 ? { procedimentos_disponiveis: procedimentosDisponiveis } : {}),
+    ...(tratamentosParaInterpretacao !== undefined && tratamentosParaInterpretacao.length > 0
+      ? {
+          tratamentos_pendentes: tratamentosParaInterpretacao.map((t) => ({
+            procedimento_id: t.procedimento_id,
+            nome_pt: t.procedimento,
+            ...(t.dente !== undefined ? { dente: t.dente } : {}),
+          })),
+        }
+      : {}),
     // Dentistas ativos: a IA correlaciona "o Carlos"/"a Dra. Vanesa" com um
     // `dentista_id` real (specs/dentista-semantico-v1.md). Chave AUSENTE
     // quando nao ha nenhum ativo -- nunca `[]`.
@@ -398,19 +428,11 @@ export async function processarMensagem(
     //
     // Essa restricao tambem preserva uma garantia que os testes cobrem: nos
     // caminhos onde nenhuma RPC deve ser chamada, nenhuma e.
-    let tratamentosParaRedatora: readonly TratamentoAprovado[] | undefined;
-    if (
-      identificacao.paciente.id !== null &&
-      DECISOES_COM_CONTEXTO_DE_AGENDAMENTO.includes(decisao.tipo)
-    ) {
-      // Falha e absorvida dentro da propria funcao: fato acessorio nunca
-      // derruba o atendimento.
-      tratamentosParaRedatora = await buscarTratamentosAprovados(
-        clienteRpc,
-        identificacao.clinica_id,
-        identificacao.paciente.id
-      );
-    }
+    // REAPROVEITA a busca feita antes da interpretacao -- uma consulta por
+    // turno, nunca duas (o mesmo cuidado ja aplicado aos agendamentos).
+    const tratamentosParaRedatora = DECISOES_COM_CONTEXTO_DE_AGENDAMENTO.includes(decisao.tipo)
+      ? tratamentosParaInterpretacao
+      : undefined;
 
     // POLITICA DE FALHA, deliberadamente diferente por caminho:
     //
