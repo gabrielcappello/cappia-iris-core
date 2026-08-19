@@ -440,6 +440,11 @@ const CHAVES_OPCIONAIS_INTEGRADA = [
   'agendamentos_do_paciente',
   'cadastro_paciente',
   'data_referencia',
+  // 2026-08-19: FALTAVA AQUI. O campo foi acrescentado ao payload sem entrar
+  // nesta lista, e a validacao de chaves rejeitava a entrada inteira --
+  // TODA mensagem numa conversa com historico virava 400 e a Iris parava de
+  // responder. Um campo novo no payload precisa SEMPRE entrar aqui.
+  'tratamentos_pendentes',
 ] as const;
 
 /**
