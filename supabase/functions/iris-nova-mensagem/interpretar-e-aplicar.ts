@@ -10,6 +10,7 @@ import { CAMPOS_CADASTRAIS_INTERPRETACAO } from './interpretacao-tipos.ts';
 import { preAplicar } from './pre-aplicacao.ts';
 import { normalizarCampoCadastral } from './validar-cadastro.ts';
 import { descartarNomeDeEscolhaDeDentista } from './guarda-nome-escolha-dentista.ts';
+import { descartarListaVaziaSemMencao } from './guarda-lista-vazia-dentistas.ts';
 import type {
   AlteracoesDados,
   CadastroPaciente,
@@ -535,9 +536,18 @@ export async function interpretarEAplicar(
   // devolve `dentistas_candidatos`, e so o caso de UM candidato vira dado
   // persistido aqui. Zero e varios nao escrevem nada -- viram decisao no
   // orquestrador, que precisa perguntar ao paciente antes de haver escolha.
+  // 5b-bis. LISTA VAZIA SEM MENCAO A PROFISSIONAL (2026-08-19).
+  // `[]` significa "falou de alguem que nao existe" e produz "nao encontrei
+  // esse profissional". Quando o turno trouxe data/horario/confirmacao, a
+  // mensagem era sobre AGENDAR -- ver guarda-lista-vazia-dentistas.ts.
+  const guardaLista = descartarListaVaziaSemMencao(saida.dentistas_candidatos, alteracoesComOferta);
+  if (guardaLista.descartou) {
+    console.log('guarda_lista_vazia_dentistas descartada=1');
+  }
+
   const alteracoesFinais = aplicarCandidatoUnicoDeDentista(
     alteracoesComOferta,
-    saida.dentistas_candidatos,
+    guardaLista.candidatos,
     snapshotOficial
   );
 
@@ -551,7 +561,7 @@ export async function interpretarEAplicar(
   // shadow, que apenas mede. Aqui ela entra na rota que atende de fato.
   // Deteccao ESTRUTURAL (co-ocorrencia dos dois campos), nunca comparacao de
   // texto -- ver guarda-nome-escolha-dentista.ts.
-  const guardaNome = descartarNomeDeEscolhaDeDentista(alteracoesFinais, saida.dentistas_candidatos);
+  const guardaNome = descartarNomeDeEscolhaDeDentista(alteracoesFinais, guardaLista.candidatos);
 
   // 5c-bis. ESCOLHA DE AGENDAMENTO -- gate de integridade contra a lista
   // oficialmente oferecida neste turno (specs/remarcacao-conversacional-v1.md
@@ -633,7 +643,7 @@ export async function interpretarEAplicar(
       ? { campos_cadastrais_invalidos: validacaoCadastral.invalidos }
       : {}),
     aplicacao,
-    dentistas_candidatos: saida.dentistas_candidatos,
+    dentistas_candidatos: guardaLista.candidatos,
     // Transitoria por construcao: sai daqui para o orquestrador e nunca e
     // gravada em `dados` (specs/cpf-outro-telefone-v1.md secao 2).
     resposta_troca_telefone: lerRespostaTrocaTelefone(

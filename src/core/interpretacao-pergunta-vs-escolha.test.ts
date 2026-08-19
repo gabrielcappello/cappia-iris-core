@@ -87,6 +87,11 @@ test('a regra original de dentistas_candidatos continua intacta', () => {
   // A correcao e ADITIVA: a regra de contagem (um / varios / vazio) nao foi
   // tocada, e o Core depende dela.
   assert.match(INSTRUCOES_EXTRATOR, /"dentistas_candidatos" e sempre obrigatorio/);
-  assert.match(INSTRUCOES_EXTRATOR, /a lista vazia quando nenhum dos profissionais da clinica corresponder/);
+  // 2026-08-19: o texto ganhou a palavra SOMENTE e um exemplo, depois de a
+  // IA devolver `[]` para "vamos agendar sexta as 10h" -- mensagem que nao
+  // menciona profissional nenhum. A REGRA e a mesma; a redacao ficou
+  // explicita sobre a diferenca entre `null` e `[]`.
+  assert.match(INSTRUCOES_EXTRATOR, /a lista vazia SOMENTE quando ele nomeou alguem/);
+  assert.match(INSTRUCOES_EXTRATOR, /e null, nunca lista vazia/);
   assert.match(INSTRUCOES_EXTRATOR, /Voce NUNCA escolhe entre varios plausiveis/);
 });
