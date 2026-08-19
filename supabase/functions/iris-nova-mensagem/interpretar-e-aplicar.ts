@@ -12,6 +12,7 @@ import { normalizarCampoCadastral } from './validar-cadastro.ts';
 import { descartarNomeDeEscolhaDeDentista } from './guarda-nome-escolha-dentista.ts';
 import { descartarListaVaziaSemMencao } from './guarda-lista-vazia-dentistas.ts';
 import { aplicarDentistaDoTratamento } from './dentista-do-tratamento.ts';
+import { aplicarProcedimentoDoAnuncio } from './procedimento-do-anuncio.ts';
 import type { TratamentoNoPayload } from './dentista-do-tratamento.ts';
 import type {
   AlteracoesDados,
@@ -573,8 +574,25 @@ export async function interpretarEAplicar(
       ` campos=${Object.keys(alteracoesComOferta).join(',') || '-'}`
   );
 
-  const dentistaDoPlano = aplicarDentistaDoTratamento(
+  // 5b-quater. PROCEDIMENTO ANUNCIADO (2026-08-19).
+  // Quando a assistente acabou de anunciar UM procedimento e o paciente
+  // responde sobre data/horario, e daquele que ele fala. Aplicado no Core:
+  // a instrucao da interpretadora tem 42 regras, e esta se perdia entre
+  // elas -- ver procedimento-do-anuncio.ts.
+  //
+  // Vem ANTES do dentista de proposito: o dentista e escolhido a partir do
+  // procedimento, entao o procedimento precisa existir primeiro.
+  const procedimentoAnunciado = aplicarProcedimentoDoAnuncio(
     alteracoesComOferta,
+    entrada.tratamentos_pendentes,
+    snapshotOficial
+  );
+  if (procedimentoAnunciado.aplicou) {
+    console.log('procedimento_do_anuncio_aplicado=1');
+  }
+
+  const dentistaDoPlano = aplicarDentistaDoTratamento(
+    procedimentoAnunciado.alteracoes,
     guardaLista.candidatos,
     entrada.tratamentos_pendentes,
     snapshotOficial
