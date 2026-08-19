@@ -559,6 +559,20 @@ export async function interpretarEAplicar(
   // AQUI, no Core, e nao por instrucao: `dentistas_candidatos` responde a
   // "a quem o paciente se refere", e ele nao se referiu a ninguem.
   // Ver dentista-do-tratamento.ts.
+  // DIAGNOSTICO (2026-08-19): o par [o que ENTROU no payload, o que a IA
+  // DEVOLVEU]. Sem isto nao da para saber se a Iris perguntou o procedimento
+  // porque o dado nao chegou ou porque a IA nao o usou.
+  //
+  // Sem PII: contagens e ids canonicos do catalogo, nunca texto do paciente.
+  console.log(
+    'interpretacao_tratamentos' +
+      ` no_payload=${entrada.tratamentos_pendentes?.length ?? 0}` +
+      ` assunto=${entrada.tratamentos_pendentes?.find((t) => t.assunto_atual)?.procedimento_id ?? '-'}` +
+      ` ia_procedimento=${alteracoesComOferta.procedimento_id?.valor ?? '-'}` +
+      ` ia_candidatos=${saida.dentistas_candidatos === null ? 'null' : String(saida.dentistas_candidatos.length)}` +
+      ` campos=${Object.keys(alteracoesComOferta).join(',') || '-'}`
+  );
+
   const dentistaDoPlano = aplicarDentistaDoTratamento(
     alteracoesComOferta,
     guardaLista.candidatos,

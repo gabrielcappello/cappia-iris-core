@@ -158,6 +158,22 @@ export async function processarMensagem(
       ? await buscarTratamentosAprovados(clienteRpc, identificacao.clinica_id, identificacao.paciente.id)
       : undefined;
 
+  // DIAGNOSTICO (2026-08-19): a busca absorve falha em silencio (fato
+  // acessorio nunca derruba o atendimento), entao "lista vazia" e "leitura
+  // falhou" produziam o MESMO sintoma -- a Iris perguntando o procedimento
+  // que ela mesma anunciou. Este log separa os dois casos.
+  //
+  // Sem PII: so contagens e ids canonicos do catalogo (`canal_premolar`),
+  // nunca nome de paciente, telefone ou dado clinico.
+  console.log(
+    'tratamentos_para_interpretacao' +
+      ` paciente_identificado=${identificacao.paciente.id !== null ? 1 : 0}` +
+      ` conversa_com_historico=${conversaJaTemHistorico ? 1 : 0}` +
+      ` recebidos=${tratamentosParaInterpretacao?.length ?? 0}` +
+      ` com_dentista=${tratamentosParaInterpretacao?.filter((t) => t.dentista_id !== undefined).length ?? 0}` +
+      ` assunto=${tratamentosParaInterpretacao?.find((t) => t.assunto_atual)?.procedimento_id ?? '-'}`
+  );
+
   // REMARCACAO -- construir a lista de agendamentos ativos para a IA
   // correlacionar, SOMENTE quando ha uma escolha pendente do turno anterior
   // (specs/remarcacao-conversacional-v1.md secao 3). Sem marcador, a lista
