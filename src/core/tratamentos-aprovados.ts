@@ -47,6 +47,18 @@ export interface TratamentoAprovado {
    * apenas listar o que existe.
    */
   indicado_pelo_dentista?: true;
+  /**
+   * Quem vai REALIZAR o procedimento, escolhido pelo dentista da avaliacao
+   * (2026-08-19).
+   *
+   * Quem avalia nem sempre e quem executa. Sem isto a assistente perguntava
+   * ao PACIENTE com qual profissional ele queria -- pergunta que ele nao tem
+   * como responder, porque o criterio e clinico.
+   *
+   * Ausente quando o dentista nao escolheu: nesse caso a Iris pergunta.
+   */
+  dentista_id?: string;
+  dentista_nome?: string;
 }
 
 /** Linha crua vinda da consulta. */
@@ -55,6 +67,8 @@ export interface LinhaTratamentoAprovado {
   dente?: unknown;
   procedimento_id?: unknown;
   para_agendar?: unknown;
+  dentista_id?: unknown;
+  dentista_nome?: unknown;
 }
 
 function texto(valor: unknown): string | undefined {
@@ -102,6 +116,8 @@ export function derivarTratamentosAprovados(
       procedimento_id: procedimentoId,
       ...(dente !== undefined ? { dente } : {}),
       ...(linha.para_agendar === true ? { indicado_pelo_dentista: true as const } : {}),
+      ...(texto(linha.dentista_id) !== undefined ? { dentista_id: texto(linha.dentista_id) } : {}),
+      ...(texto(linha.dentista_nome) !== undefined ? { dentista_nome: texto(linha.dentista_nome) } : {}),
     });
   }
 

@@ -225,6 +225,7 @@ export async function processarMensagem(
             procedimento_id: t.procedimento_id,
             nome_pt: t.procedimento,
             ...(t.dente !== undefined ? { dente: t.dente } : {}),
+            ...(t.dentista_id !== undefined ? { dentista_id: t.dentista_id } : {}),
           })),
         }
       : {}),

@@ -115,7 +115,13 @@ export interface EntradaInterpretacao {
    * "pode ser amanha a tarde" ja identifica o procedimento -- nao ha o que
    * perguntar.
    */
-  tratamentos_pendentes?: { procedimento_id: string; nome_pt: string; dente?: string }[];
+  tratamentos_pendentes?: {
+    procedimento_id: string;
+    nome_pt: string;
+    dente?: string;
+    /** Quem o dentista definiu para REALIZAR -- quando definiu. */
+    dentista_id?: string;
+  }[];
   /**
    * Dentistas ATIVOS desta clinica (specs/dentista-semantico-v1.md). Mesmo
    * papel que `procedimentos_disponiveis`: a interpretadora correlaciona
