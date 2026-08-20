@@ -68,4 +68,16 @@ as $function$
 $function$;
 
 -- Só o servidor chama (service key). Nunca exposta ao navegador.
+--
+-- ARMADILHA REAL, medida em producao (2026-08-20): este revoke JA ESTAVA
+-- aqui e mesmo assim a funcao amanheceu com `EXECUTE` para PUBLIC. Motivo:
+-- `create or replace function` RESTAURA as permissoes padrao do Postgres, e
+-- toda funcao nasce com PUBLIC liberado. Em 19/08 esta funcao foi evoluida
+-- varias vezes por `create or replace` fora desta migration; cada recriacao
+-- desfez o revoke silenciosamente. Resultado: dois UUIDs bastavam para ler
+-- plano de tratamento pela API publica, sem login.
+--
+-- REGRA: toda vez que esta funcao for recriada, o revoke abaixo tem de rodar
+-- de novo, na MESMA transacao. `grant ... to service_role` nao restringe --
+-- so adiciona; sem o revoke a funcao fica aberta.
 revoke all on function public.iris_nova_tratamentos_aprovados(uuid, uuid) from public, anon, authenticated;
