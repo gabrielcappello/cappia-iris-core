@@ -202,6 +202,70 @@ mesmo lugar.
 
 **Conclusão:** a troca se sustenta na evidência. Nenhum bloqueador.
 
+## 5-C. Parecer do Codex — 2026-08-20 (APROVADO, sem bloqueadores)
+
+O bloqueio de 15/08 acabou. O Codex revisou o commit `1880089` nos cinco
+pontos pedidos e **não encontrou bloqueador técnico**. Parecer por ponto:
+
+1. **Predicado da linha autoritativa — aprovado.** Completo na linha 252
+   (`id`, `clinica_id`, `telefone_normalizado`, `paciente_id`, `FOR
+   UPDATE`). Nenhum outro caminho carrega a linha sem ele. O `UPDATE`
+   final (linha 411) usa só `id`, mas **isso não reabre o furo**: é a
+   mesma PK já localizada, validada e mantida sob `FOR UPDATE` durante
+   toda a transação. Verificado por mim no arquivo.
+2. **Locks — aprovado.** A chave advisory é *efetivamente idêntica* à V1:
+   mesmo `hashtextextended`, mesmo intervalo diário, mesma subtração de 1
+   microsecond no limite, mesma aquisição dia a dia em ordem crescente,
+   mesmo predicado de conflito por `tsrange [)`. **V1 e V2 seguem
+   mutuamente exclusivas enquanto coexistirem.** Sem ciclo de deadlock: a
+   V2 trava conversa e depois agenda; a V1 só adquire o lock de agenda e
+   nunca tenta a conversa; conversas diferentes não disputam o mesmo row
+   lock; intervalos de vários dias adquirem em ordem cronológica
+   determinística.
+3. **Versão divergente sem efeito — aprovado.** A comparação ocorre nas
+   linhas 264-266, logo após o lock e antes de ler autorização, chamar
+   resolvedores, adquirir advisory lock, consultar conflito, inserir ou
+   atualizar. Todos os retornos anteriores ao `INSERT` são somente
+   leitura.
+4. **Rollback e atomicidade — aprovados.** São duas ideias distintas e
+   ambas corretas: (a) se o `INSERT` funcionar e o `UPDATE` falhar, a
+   exceção se propaga e o Postgres desfaz tudo, incluindo o agendamento —
+   **não existe commit interno na função**; (b) o rollback de implantação
+   remove exatamente a assinatura criada e **preserva deliberadamente**
+   agendamentos legítimos já concluídos, sem tocar na coluna nem nas
+   funções compartilhadas com V1/cancelamento. No `EXCEPTION` do próprio
+   `INSERT`, o bloco funciona como subtransação.
+5. **`remarcar` — concorda com a decisão canônica.** Não derivar de
+   criar + cancelar. Compor duas RPCs criaria janela de estado parcial e
+   alteraria o conjunto e a ordem dos locks; mesmo uma composição interna
+   precisaria ser operação própria, porque autorização, rollback e commit
+   conversacional não são os de duas operações independentes. A operação
+   precisa, numa transação: travar e validar a conversa; travar o
+   agendamento de origem; adquirir os advisory locks do destino;
+   revalidar o intervalo novo; desativar a origem e criar a sucessora
+   atomicamente; gravar o estado final **uma única vez**.
+
+### Risco não bloqueante apontado
+
+Os testes **não injetam uma falha entre o `INSERT` e o `UPDATE` final**. A
+atomicidade decorre da semântica transacional do Postgres, então não é
+defeito demonstrado — mas seria prova adicional útil. **Melhoria opcional:**
+somar esse cenário à fixture.
+
+### O que o parecer autoriza — e o que NÃO autoriza
+
+**Autoriza:** a migration de criação seguir para **aplicação controlada**,
+pelo procedimento aprovado.
+
+**NÃO autoriza:** ativar a rota V2, nem publicar o resto do commit.
+Continuam valendo, nas palavras dele: o preflight, os testes no destino, o
+teste integrado turno a turno exigido pela spec, e a **autorização final
+explícita do Gabriel**.
+
+O Codex não alterou nenhum arquivo.
+
+---
+
 ## 6. Pendências, em ordem
 
 **O caminho até o Luna** (o objetivo de fundo — o contrato v2 existe porque o
@@ -220,11 +284,14 @@ modelo novo trabalha melhor com ele):
 3. **Medição maior do Luna** — as rodadas atuais são N=2, triagem, não
    estabilidade.
 
-**Em paralelo, dependendo do Codex:**
+**Destravado pelo parecer de 20/08 (§5-C):**
 
-4. **Revisão do Codex** — a RPC de criação **e** as duas decisões de desenho
-   de §5-B.
-5. **Commit local da criação** — após a revisão.
+4. ~~**Revisão do Codex**~~ — ✅ **FEITA em 20/08, aprovada sem
+   bloqueadores** (§5-C). Restam as duas decisões de desenho de §5-B, que
+   o parecer não cobriu.
+5. ~~**Commit local da criação**~~ — ✅ **já commitado** em `1880089`
+   ("AGUARDA REVISAO"), e com push desde 20/08. A descrição antiga
+   ("5 arquivos untracked") está superada: são 14 arquivos versionados.
 6. **`remarcar`** — a terceira RPC. **Não derivar de `criar` nem de
    `cancelar`**: precisa liberar o horário antigo E reivindicar o novo na
    mesma transação, o que muda o conjunto de locks.
