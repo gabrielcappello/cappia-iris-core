@@ -298,17 +298,62 @@ Inverter 3 e 5 derruba o calendário no intervalo entre os dois passos.
 **Ordem inegociável.** Revogar antes de migrar derruba o seletor de cor e a
 agenda em produção.
 
-### F6. Remover o mecanismo antigo (não trocar as senhas)
+### F6. Remover o mecanismo antigo — em duas etapas, forward-only
 
 Depois de F1, `senha` e `token_acesso` deixam de ser credencial. O certo é
-**remover**, não gerar valores mais fortes:
+**remover**, não gerar valores mais fortes: trocar por valores aleatórios
+manteria dois caminhos de autenticação vivos, e o antigo continuaria
+aceitando credencial em URL. Um mecanismo, não dois.
 
-- tirar o ramo de autenticação por `senha` de `/api/access/professional`;
-- tirar `token_acesso` como credencial da secretária;
-- apagar os campos dos registros.
+A remoção acontece em **duas etapas separadas no tempo**, e a distinção é o
+que torna o rollback seguro.
 
-Trocar por valores aleatórios manteria dois caminhos de autenticação vivos —
-e o antigo continuaria aceitando credencial em URL. Um mecanismo, não dois.
+#### F6a — desativar no código (reversível)
+
+- retirar o ramo de autenticação por `senha` de `/api/access/professional`;
+- retirar `token_acesso` como credencial da secretária;
+- **os campos permanecem no banco, intocados.**
+
+Nesta etapa nada é apagado. Se algo falhar, **rollback = voltar o código**
+(`git revert` + redeploy) — os dados nunca saíram do lugar. É por isso que a
+desativação vem antes da exclusão, e não junto.
+
+#### Observação — encerra por critérios verificáveis, não por prazo
+
+Não "uma semana". A etapa fecha quando **todos** forem verdadeiros:
+
+1. **cobertura:** todo profissional ativo (12 dentistas + 2 assistentes)
+   entrou ao menos uma vez pelo mecanismo novo — medido por
+   `access_token_usado_em` preenchido;
+2. **ausência de uso antigo:** zero autenticações pelo caminho antigo desde
+   F6a — medido por contador nos logs da rota, não por suposição;
+3. **zero incidentes:** nenhum relato de acesso perdido no período;
+4. **cobertura dos dois perfis:** dentista **e** secretária, em celular real.
+
+Se qualquer critério não for atingido, a etapa **não fecha** — investiga-se o
+motivo. Prazo fixo esconderia justamente o caso raro (o profissional que
+demora a trocar de aparelho) que a exclusão quebraria.
+
+#### F6b — apagar, forward-only
+
+Só depois dos quatro critérios:
+
+```sql
+-- forward-only: sem tabela de backup
+update clinicas set dentistas = (...jsonb - 'senha'...);
+update clinicas set assistentes = (...jsonb - 'token_acesso'...);
+```
+
+**Sem backup dessas credenciais.** Copiá-las para uma tabela nova
+preservaria senhas fracas (6 e 9 caracteres) num lugar a mais — criaria uma
+segunda cópia da vulnerabilidade em vez de eliminá-la, e alguém teria de
+lembrar de destruí-la depois.
+
+Não há rollback de F6b, **por desenho**: a essa altura os critérios provaram
+que ninguém usa o mecanismo antigo, e o caminho de volta seria restaurar
+exatamente aquilo que a etapa existe para remover. Se um profissional perder
+acesso depois disso, a saída é gerar um QR novo — que é a operação normal do
+mecanismo novo, não uma recuperação.
 
 ### Fora de escopo (registrado, não incluído)
 
@@ -331,20 +376,23 @@ Três naturezas distintas:
 Reversível sem perda: as colunas novas ficam ignoradas se o código voltar
 atrás. Os campos antigos **continuam intactos** nesta fase.
 
-**c) Banco, destrutivo** — F6 (remover `senha` e `token_acesso`).
+**c) Desativação reversível** — F6a. O código para de aceitar o mecanismo
+antigo, mas **os campos continuam no banco**. Rollback = `git revert` +
+redeploy; nenhum dado saiu do lugar. É toda a razão de F6a existir separada.
+
+**d) Banco, destrutivo** — F6b (apagar `senha` e `token_acesso`).
 **`git revert` não recupera isto.** Regras:
 
-- F6 **não roda junto** com F1–F4. Só depois de um período de observação
-  combinado (sugestão: uma semana com todos os profissionais entrando pelo
-  mecanismo novo).
-- Antes de apagar: `create table backup_credenciais_20260820 as select id,
-  nome, dentistas, assistentes from clinicas;` — no próprio banco, com data
-  no nome.
-- Rollback de F6 = restaurar os campos a partir dessa tabela.
-- A tabela de backup **contém credenciais**: acesso só a `service_role`, e
-  descartar quando a etapa fechar.
+- F6b **não roda junto** com F1–F4 nem com F6a.
+- Só depois dos quatro critérios verificáveis de observação (ver F6) —
+  **nunca por prazo decorrido**.
+- **Forward-only, sem backup de credenciais.** Guardar senhas fracas numa
+  tabela nova seria duplicar a vulnerabilidade, e alguém teria de lembrar de
+  destruí-la.
+- Não há caminho de volta, por desenho. Profissional sem acesso depois disso
+  = gerar QR novo, que é a operação normal do mecanismo.
 
-**d) ACLs de RPC** — F5. Registradas em `specs/seguranca-rpcs-publicas.md`;
+**e) ACLs de RPC** — F5. Registradas em `specs/seguranca-rpcs-publicas.md`;
 restaurar é `grant execute ... to public` (e, para `atualizar_cor_dentista`,
 também `anon` e `authenticated`, que são grants explícitos).
 
