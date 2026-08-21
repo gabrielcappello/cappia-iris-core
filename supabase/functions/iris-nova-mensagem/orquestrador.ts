@@ -666,7 +666,37 @@ export async function processarMensagem(
           temporalParaEscolha.data
         );
         if (escolha.identificou) {
-          dados.agendamento_id = escolha.alteracoes.agendamento_id?.valor;
+          const escolhido = escolha.alteracoes.agendamento_id?.valor;
+          dados.agendamento_id = escolhido;
+
+          // PERSISTIR, nao so usar neste turno.
+          //
+          // Ate 2026-08-21 esta atribuicao vivia SO em memoria: o turno
+          // seguinte relia `dados` do banco, nao encontrava
+          // `agendamento_id`, e a conversa voltava para
+          // `aguardando_escolha_agendamento` -- como se o paciente nunca
+          // tivesse escolhido.
+          //
+          // Efeito medido em producao: o paciente escolheu o agendamento,
+          // confirmou ("pode sim"), a Iris respondeu "seu agendamento ESTA
+          // CONFIRMADO para 21/08 as 15h" -- e nada foi remarcado. O
+          // agendamento seguiu as 13:00, e ele saiu da conversa achando
+          // que estava resolvido.
+          //
+          // Best-effort: se a gravacao falhar, o turno atual segue com o
+          // valor em memoria (comportamento antigo) em vez de virar erro.
+          if (escolhido !== undefined) {
+            try {
+              await aplicarDados(clienteBanco, {
+                conversa_id: identificacao.conversa.id,
+                clinica_id: identificacao.clinica_id,
+                telefone_normalizado: entrada.telefone_normalizado,
+                alteracoes: { agendamento_id: { acao: 'informar', valor: escolhido } },
+              });
+            } catch {
+              console.log('agendamento_pela_data_nao_persistido=1');
+            }
+          }
           console.log('agendamento_identificado_pela_data=1');
         }
       }
