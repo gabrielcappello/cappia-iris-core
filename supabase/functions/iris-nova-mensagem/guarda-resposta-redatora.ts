@@ -30,7 +30,11 @@
 
 import type { FatosAutorizados } from './fatos-autorizados.ts';
 
-export type MotivoReprovacaoGuarda = 'texto_vazio' | 'horario_nao_autorizado';
+export type MotivoReprovacaoGuarda =
+  | 'texto_vazio'
+  | 'horario_nao_autorizado'
+  | 'execucao_nao_autorizada'
+  | 'data_nao_autorizada';
 
 export type ResultadoGuarda = { aprovado: true } | { aprovado: false; motivo: MotivoReprovacaoGuarda };
 
@@ -43,15 +47,57 @@ const REGEX_HHMM = /\b([01]?[0-9]|2[0-3]):([0-5][0-9])\b/g;
 const REGEX_NH = /\b([01]?[0-9]|2[0-3])\s*h\b/gi;
 const REGEX_N_HORAS = /\b([01]?[0-9]|2[0-3])\s*horas\b/gi;
 
+// ── AFIRMAÇÃO DE EXECUÇÃO ───────────────────────────────────────────────
+// Verbos que anunciam FATO CONSUMADO na agenda. Dizer um deles sem que o
+// Core tenha executado é o pior erro que a Iris comete: o paciente sai da
+// conversa acreditando numa coisa que não existe.
+//
+// Aconteceu três vezes (2026-08-20 e 21). Num dos casos o Core mandou
+// PERGUNTAR qual agendamento remarcar, e a resposta saiu "seu agendamento
+// está confirmado para 25/08 às 15h" -- nada executado. A frase falsa entrou
+// no histórico e, quatro horas depois, aqueles valores viraram um
+// agendamento REAL que ninguém pediu.
+//
+// A instrução já proibia. Instrução não bastou -- a verificação vem para o
+// Core, onde não depende de a IA obedecer.
+//
+// Só o PARTICÍPIO, que afirma. "Posso confirmar?", "vou remarcar", "quer
+// cancelar?" são pergunta ou intenção, e passam.
+const REGEX_EXECUCAO = /(confirmad[oa]s?|remarcad[oa]s?|cancelad[oa]s?|agendad[oa]s?)/i;
+
+/** Objetivos em que o Core DE FATO executou algo na agenda. */
+const OBJETIVOS_EXECUTADOS: ReadonlySet<string> = new Set([
+  'informar_reserva_criada',
+  'informar_remarcacao_criada',
+  'informar_cancelamento_criado',
+]);
+
 export function verificarRespostaRedatora(texto: string, fatos: FatosAutorizados): ResultadoGuarda {
   if (texto.trim() === '') {
     return { aprovado: false, motivo: 'texto_vazio' };
+  }
+
+  // AFIRMAR EXECUÇÃO SEM O CORE TER EXECUTADO (2026-08-21).
+  if (!OBJETIVOS_EXECUTADOS.has(fatos.objetivo) && REGEX_EXECUCAO.test(texto)) {
+    return { aprovado: false, motivo: 'execucao_nao_autorizada' };
   }
 
   const minutosAutorizados = coletarMinutosAutorizados(fatos);
   for (const minutosCitados of extrairHorariosCitados(texto)) {
     if (!minutosAutorizados.has(minutosCitados)) {
       return { aprovado: false, motivo: 'horario_nao_autorizado' };
+    }
+  }
+
+  // DATA NÃO AUTORIZADA. Mesma lógica do horário: a data citada tem de estar
+  // entre os fatos. Sem isto, o Core executa 24/08 e a resposta diz 25/08 --
+  // e o paciente confere pela mensagem, não pelo banco.
+  const datasAutorizadas = coletarDatasAutorizadas(fatos);
+  if (datasAutorizadas.size > 0) {
+    for (const dataCitada of extrairDatasCitadas(texto)) {
+      if (!datasAutorizadas.has(dataCitada)) {
+        return { aprovado: false, motivo: 'data_nao_autorizada' };
+      }
     }
   }
 
@@ -134,4 +180,46 @@ function extrairHorariosCitados(texto: string): number[] {
     minutos.push(Number(m[1]) * 60);
   }
   return minutos;
+}
+
+
+/**
+ * As datas que o Core autorizou -- mesmas fontes dos horários.
+ *
+ * Formato `DD/MM`, que é como a redatora escreve para o paciente. O ano fica
+ * de fora de propósito: a redatora não o cita, e compará-lo criaria falso
+ * negativo na virada de ano sem cobrir nenhum caso real.
+ */
+function coletarDatasAutorizadas(fatos: FatosAutorizados): Set<string> {
+  const datas = new Set<string>();
+
+  const juntar = (iso: string | undefined) => {
+    if (iso === undefined) return;
+    const p = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(iso);
+    if (p) datas.add(`${p[3]}/${p[2]}`);
+  };
+  const deTexto = (t: string | undefined) => {
+    if (t === undefined) return;
+    // Texto já formatado para o paciente (ex.: "quinta-feira, 27/08 às 15:00").
+    for (const m of t.matchAll(REGEX_DATA)) {
+      datas.add(`${String(m[1]).padStart(2, '0')}/${String(m[2]).padStart(2, '0')}`);
+    }
+  };
+
+  juntar(fatos.proposta_pendente?.data);
+  juntar(fatos.agendamento_confirmado?.data);
+  juntar(fatos.agendamento_atual?.data);
+  for (const d of fatos.agendamentos_candidatos ?? []) deTexto(d);
+  for (const d of fatos.agendamentos_do_paciente ?? []) deTexto(d);
+
+  return datas;
+}
+
+/** Datas `DD/MM` citadas no texto, normalizadas com dois dígitos. */
+function extrairDatasCitadas(texto: string): string[] {
+  const achadas: string[] = [];
+  for (const m of texto.matchAll(REGEX_DATA)) {
+    achadas.push(`${String(m[1]).padStart(2, '0')}/${String(m[2]).padStart(2, '0')}`);
+  }
+  return achadas;
 }

@@ -182,3 +182,73 @@ test('guarda nunca modifica o texto -- so aprova ou reprova (a funcao nunca reto
   const resultado = verificarRespostaRedatora('Tenho 15:00 disponível.', fatos({ horarios_disponiveis: ['14:00'] }));
   assert.equal('texto' in resultado, false);
 });
+
+// ── CASOS REAIS DE 2026-08-20 e 21 ──────────────────────────────────────
+// A redatora afirmou execução que o Core não autorizou, três vezes. Num dos
+// casos o Core mandou PERGUNTAR qual agendamento remarcar e a resposta saiu
+// "está confirmado para 25/08 às 15h" -- e essa frase falsa, no histórico,
+// virou um agendamento REAL quatro horas depois.
+
+test('CASO REAL: "esta confirmado" quando o Core mandou PERGUNTAR -> reprova', () => {
+  const r = verificarRespostaRedatora(
+    'Seu agendamento de limpeza dental *esta confirmado* para 25/08 as 15h.',
+    {
+      objetivo: 'escolher_entre_agendamentos',
+      agendamentos_candidatos: ['segunda-feira, 24/08 as 15:00'],
+    } as FatosAutorizados
+  );
+  assert.equal(r.aprovado, false);
+  // Qualquer um dos dois motivos serve: a frase viola AS DUAS regras --
+  // afirma execução que não houve E cita 25/08, que não está nos fatos.
+  // O que importa é que ela não sai.
+  assert.ok(
+    ['execucao_nao_autorizada', 'data_nao_autorizada'].includes(
+      (r as { motivo: string }).motivo
+    )
+  );
+});
+
+test('o MESMO texto passa quando o Core executou de verdade', () => {
+  const r = verificarRespostaRedatora(
+    'Seu agendamento *esta confirmado* para 24/08 as 15h.',
+    {
+      objetivo: 'informar_reserva_criada',
+      agendamento_confirmado: { data: '2026-08-24', horario: '15:00' },
+    } as FatosAutorizados
+  );
+  assert.equal(r.aprovado, true);
+});
+
+test('PERGUNTA com o mesmo verbo passa -- "posso confirmar?" nao afirma nada', () => {
+  const r = verificarRespostaRedatora(
+    'Posso confirmar 24/08 as 15h para voce?',
+    {
+      objetivo: 'pedir_confirmacao',
+      proposta_pendente: { data: '2026-08-24', horario: '15:00' },
+    } as FatosAutorizados
+  );
+  assert.equal(r.aprovado, true);
+});
+
+test('CASO REAL: data que o Core NAO autorizou -> reprova', () => {
+  // O Core executou 24/08; a resposta disse 25/08.
+  const r = verificarRespostaRedatora(
+    'Seu agendamento *esta confirmado* para 25/08 as 15h.',
+    {
+      objetivo: 'informar_reserva_criada',
+      agendamento_confirmado: { data: '2026-08-24', horario: '15:00' },
+    } as FatosAutorizados
+  );
+  assert.equal(r.aprovado, false);
+  assert.equal((r as { motivo: string }).motivo, 'data_nao_autorizada');
+});
+
+test('sem nenhuma data nos fatos, a checagem de data NAO reprova', () => {
+  // Conversa livre: a redatora pode citar uma data que o paciente mencionou
+  // sem que ela esteja nos fatos. Reprovar ali seria falso positivo.
+  const r = verificarRespostaRedatora(
+    'Voce mencionou 30/09 -- posso ver os horarios desse dia?',
+    { objetivo: 'acolher_e_retomar' } as FatosAutorizados
+  );
+  assert.equal(r.aprovado, true);
+});

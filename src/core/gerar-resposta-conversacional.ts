@@ -23,7 +23,16 @@ import type { NaturezaMensagem } from './interpretacao-tipos.ts';
 import type { CadastroPaciente, HistoricoConversa } from './tipos.ts';
 import type { AgendamentoAtivo } from './buscar-agendamento-ativo.ts';
 
-export type MotivoFallbackResposta = 'redator_nao_configurado' | 'falha_redatora' | 'texto_vazio' | 'horario_nao_autorizado';
+export type MotivoFallbackResposta =
+  | 'redator_nao_configurado'
+  | 'falha_redatora'
+  | 'texto_vazio'
+  | 'horario_nao_autorizado'
+  // 2026-08-21: a redatora afirmou execução ("está confirmado") sem o Core
+  // ter executado, e citou data que não estava nos fatos. Ver
+  // `guarda-resposta-redatora.ts`.
+  | 'execucao_nao_autorizada'
+  | 'data_nao_autorizada';
 
 export interface ResultadoRespostaConversacional {
   resposta: string;
