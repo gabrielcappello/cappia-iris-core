@@ -155,3 +155,72 @@ test('desligar o procedimento zera o preco liberado (regra do painel)', () => {
   ]);
   assert.equal(p, undefined);
 });
+
+// GRATUIDADE (specs/catalogo-avaliacao-obrigatoria-gratuita-v1.md secao
+// 2.2) -- escolha EXPLICITA da clinica via campo `gratuito`, nunca inferida
+// de valor zerado.
+
+test('gratuito:true vai para gratuitos, nunca liberados nem sob_avaliacao', () => {
+  const p = derivarPrecosClinica([
+    { esp: '🦷 Clínico Geral', nome: 'Consulta / Avaliação', ativo: true, valor: 120, mostrar_valor: false, gratuito: true },
+  ]);
+  assert.deepEqual(p!.gratuitos, ['Consulta / Avaliação']);
+  assert.equal(p!.liberados, undefined);
+  assert.equal(p!.sob_avaliacao, undefined);
+
+  // O valor antigo (120) nunca pode vazar quando o item e gratuito.
+  assert.ok(!JSON.stringify(p).includes('120'), 'valor vazou num item gratuito');
+});
+
+test('gratuito:true IGNORA mostrar_valor e valor -- nao precisam concordar', () => {
+  const p = derivarPrecosClinica([
+    { esp: 'X', nome: 'A', ativo: true, valor: 500, mostrar_valor: true, gratuito: true },
+  ]);
+  assert.deepEqual(p!.gratuitos, ['A']);
+  assert.equal(p!.liberados, undefined);
+});
+
+test('gratuito:false (ou ausente) segue o fluxo normal de sempre -- comportamento inalterado', () => {
+  const semCampo = derivarPrecosClinica([
+    { esp: '🦷 Clínico Geral', nome: 'Consulta / Avaliação', ativo: true, valor: 120, mostrar_valor: true },
+  ]);
+  const comFalse = derivarPrecosClinica([
+    { esp: '🦷 Clínico Geral', nome: 'Consulta / Avaliação', ativo: true, valor: 120, mostrar_valor: true, gratuito: false },
+  ]);
+  for (const p of [semCampo, comFalse]) {
+    assert.deepEqual(p!.liberados, [{ procedimento: 'Consulta / Avaliação', valor: 'R$ 120,00' }]);
+    assert.equal(p!.gratuitos, undefined);
+  }
+});
+
+test('valor=0 continua "ainda nao definido", NUNCA vira gratuito por si so', () => {
+  // A regra que ja existia (linha 90+ do modulo) nao pode ser revertida em
+  // silencio -- so o campo `gratuito` explicito produz `gratuitos`.
+  const p = derivarPrecosClinica([{ esp: 'X', nome: 'A', ativo: true, valor: 0, mostrar_valor: true }]);
+  assert.equal(p!.gratuitos, undefined);
+  assert.deepEqual(p!.sob_avaliacao, ['A']);
+});
+
+test('item gratuito porem INATIVO some por completo -- mesma regra de qualquer item inativo', () => {
+  const p = derivarPrecosClinica([
+    { esp: 'X', nome: 'A', ativo: false, valor: 100, mostrar_valor: false, gratuito: true },
+  ]);
+  assert.equal(p, undefined);
+});
+
+test('gratuito precisa ser true DE VERDADE -- "true", 1 ou {} nao contam', () => {
+  for (const impostor of ['true', 1, {}, [], 'sim']) {
+    const p = derivarPrecosClinica([{ esp: 'X', nome: 'A', ativo: true, valor: 300, mostrar_valor: true, gratuito: impostor }]);
+    assert.equal(p!.gratuitos, undefined, `virou gratuito com gratuito=${JSON.stringify(impostor)}`);
+    assert.deepEqual(p!.liberados, [{ procedimento: 'A', valor: 'R$ 300,00' }]);
+  }
+});
+
+test('varios itens gratuitos e um liberado, misturados', () => {
+  const p = derivarPrecosClinica([
+    { esp: '🦷 Clínico Geral', nome: 'Consulta / Avaliação', ativo: true, valor: 0, mostrar_valor: false, gratuito: true },
+    { esp: '🦷 Clínico Geral', nome: 'Limpeza dental (profilaxia)', ativo: true, valor: 45, mostrar_valor: true },
+  ]);
+  assert.deepEqual(p!.gratuitos, ['Consulta / Avaliação']);
+  assert.deepEqual(p!.liberados, [{ procedimento: 'Limpeza dental (profilaxia)', valor: 'R$ 45,00' }]);
+});

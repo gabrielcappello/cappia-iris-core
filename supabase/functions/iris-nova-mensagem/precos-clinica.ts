@@ -21,10 +21,6 @@
 // `mostrar_valor` dele, entao um item desligado nunca fica com preco
 // liberado por esquecimento.
 //
-// (Existe uma tela mais antiga em dashboard/procedimentos que decide por
-// especialidade. A leitura item a item aqui atende as duas, porque le o que
-// FOI GRAVADO em cada item -- nunca reinterpreta a intencao da tela.)
-//
 // So o que estiver com `true` vira fato para a redatora; todo o resto NUNCA
 // sai do Core -- nem o valor, nem a existencia dele.
 //
@@ -37,6 +33,14 @@
 // Quando o procedimento NAO esta liberado, a redatora recebe apenas o nome
 // em `precos_sob_avaliacao` -- ela sabe que o procedimento existe e que o
 // valor depende de avaliacao, sem nunca ver o numero.
+//
+// ── GRATUIDADE, campo `gratuito` (2026-08-22) ─────────────────────────────
+// specs/catalogo-avaliacao-obrigatoria-gratuita-v1.md secao 2.2. Escolha
+// EXPLICITA da clinica, campo proprio -- NUNCA inferida de `valor <= 0`
+// (que continua significando "ainda nao definido", nao "gratuito"; ver a
+// regra logo abaixo). Hoje so "Consulta / Avaliação" tem esse controle no
+// painel (ela e o unico procedimento fixo/inamovivel do catalogo), mas o
+// campo e generico o bastante para qualquer item futuro.
 //
 // ── MULTICLINICA ────────────────────────────────────────────────────────
 // Tudo vem da linha da clinica do turno. Uma clinica que nunca liberou nada
@@ -58,6 +62,16 @@ export interface PrecosClinica {
    * que permite a Iris dizer "esse depende de avaliacao" sem inventar preco.
    */
   sob_avaliacao?: string[];
+  /**
+   * Procedimentos que a clinica marcou como GRATUITOS (specs/catalogo-
+   * avaliacao-obrigatoria-gratuita-v1.md secao 2.2) -- so o nome, nunca
+   * valor. Escolha EXPLICITA da clinica via o campo `gratuito`, nunca
+   * inferida de `valor <= 0` (que continua significando "ainda nao
+   * definido", nao "gratuito" -- decisao preservada, ver derivarPrecosClinica
+   * abaixo). Hoje so "Consulta / Avaliação" tem esse controle no painel,
+   * mas o campo e generico: qualquer item marcado `gratuito: true` cai aqui.
+   */
+  gratuitos?: string[];
 }
 
 interface ItemPreco {
@@ -65,6 +79,7 @@ interface ItemPreco {
   valor?: unknown;
   ativo?: unknown;
   mostrar_valor?: unknown;
+  gratuito?: unknown;
 }
 
 function texto(valor: unknown): string | undefined {
@@ -82,22 +97,32 @@ function formatarValor(valor: number): string {
 }
 
 /**
- * Separa os precos em "pode informar" e "depende de avaliacao".
+ * Separa os precos em "pode informar", "depende de avaliacao" e "gratuito".
  *
  * Regras, todas conservadoras por decisao:
  *   - item inativo         -> ignorado por completo (nao e oferecido)
+ *   - `gratuito` === true  -> vai para `gratuitos`, ANTES de qualquer
+ *                             checagem de valor -- ESCOLHA EXPLICITA da
+ *                             clinica (specs/catalogo-avaliacao-obrigatoria-
+ *                             gratuita-v1.md secao 2.2), nunca inferida.
+ *                             `valor`/`mostrar_valor` do item sao ignorados
+ *                             quando `gratuito` e true.
  *   - `mostrar_valor` != true -> so o nome, nunca o valor
  *   - valor ausente/<= 0   -> tratado como NAO liberado, mesmo com
  *                             `mostrar_valor: true`. Zero no cadastro
  *                             significa "ainda nao definido" (ha varios
  *                             assim no banco), e "R$ 0,00" seria uma
  *                             promessa de gratuidade que ninguem fez.
+ *                             ESSA REGRA CONTINUA VALENDO -- gratuidade so
+ *                             existe pelo campo `gratuito` explicito, nunca
+ *                             por valor zerado.
  */
 export function derivarPrecosClinica(precios: unknown): PrecosClinica | undefined {
   if (!Array.isArray(precios)) return undefined;
 
   const liberados: PrecoLiberado[] = [];
   const sobAvaliacao: string[] = [];
+  const gratuitos: string[] = [];
 
   for (const bruto of precios) {
     if (bruto === null || typeof bruto !== 'object') continue;
@@ -107,6 +132,11 @@ export function derivarPrecosClinica(precios: unknown): PrecosClinica | undefine
 
     const nome = texto(item.nome);
     if (nome === undefined) continue;
+
+    if (item.gratuito === true) {
+      gratuitos.push(nome);
+      continue;
+    }
 
     const valorNumerico = typeof item.valor === 'number' && Number.isFinite(item.valor) ? item.valor : null;
     const liberado = item.mostrar_valor === true && valorNumerico !== null && valorNumerico > 0;
@@ -118,6 +148,7 @@ export function derivarPrecosClinica(precios: unknown): PrecosClinica | undefine
   const resultado: PrecosClinica = {};
   if (liberados.length > 0) resultado.liberados = liberados;
   if (sobAvaliacao.length > 0) resultado.sob_avaliacao = sobAvaliacao;
+  if (gratuitos.length > 0) resultado.gratuitos = gratuitos;
 
   return Object.keys(resultado).length > 0 ? resultado : undefined;
 }
