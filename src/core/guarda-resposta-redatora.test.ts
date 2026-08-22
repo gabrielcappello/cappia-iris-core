@@ -133,37 +133,27 @@ test('nao reprova numeros dentro de um padrao de data DD/MM/AAAA', () => {
 // --- Variacoes naturais de linguagem sobre confirmacao NAO sao julgadas
 // pela guarda (ajuste 2026-08-06, principio "reciprocidade") ---
 //
-// A guarda tinha uma checagem lexical de afirmacao de reserva (marcado/
-// agendado/confirmado/reservado), com deteccao de negacao numa janela de
-// texto -- um segundo interpretador de portugues em regex, que cresceu a
-// cada frase nova que nao previa (proprio historico deste arquivo: chegou a
-// reprovar "Ainda nao esta confirmado, ta?" por conter a palavra
-// "confirmado", ate ganhar deteccao de negacao -- que ja era o sintoma do
-// problema, nao a solucao). Removida por completo: a guarda so verifica
-// agora o que e objetivamente verificavel (horario citado existe nos
-// fatos?). Qualquer redacao sobre confirmacao passa por aqui, mesmo
-// afirmando ou negando reserva em texto livre -- a garantia de nunca
-// afirmar reserva sem fato agora vem do principio operacional do prompt
-// (redator-instrucoes.ts), nunca de regex tentando entender a frase.
+// A checagem lexical voltou depois de uma afirmação falsa da redatora virar
+// dado real. Ela diferencia a negação diretamente ligada ao particípio de
+// uma afirmação positiva; os testes abaixo preservam essa fronteira.
 
-test('variacao de linguagem sobre confirmacao: qualquer frase passa pela guarda, aprovada ou reprovada SO por horario', () => {
+test('negacao direta passa, mas afirmacao de execucao sem autorizacao e reprovada', () => {
   const semHorarioAutorizado = fatos();
-  const frases = [
+  const negacoes = [
     'Ainda não está confirmado, tá?',
-    'Está confirmado!',
-    'Não, está confirmado!',
-    'Prontinho, já está marcado!',
-    'Ainda não ficou reservado.',
-    'Tudo certo, agendado!',
+    'O horário não foi confirmado.',
+    'O atendimento não está mais agendado.',
   ];
-  for (const frase of frases) {
+  for (const frase of negacoes) {
     assert.deepEqual(verificarRespostaRedatora(frase, semHorarioAutorizado), { aprovado: true }, `esperava aprovado para "${frase}"`);
   }
-});
-
-test('afirmar/negar confirmacao nunca aparece como motivo de reprovacao (removido do vocabulario da guarda)', () => {
-  const resultado = verificarRespostaRedatora('Está confirmado!', fatos());
-  assert.equal(resultado.aprovado, true);
+  for (const frase of ['Está confirmado!', 'Não, está confirmado!', 'Prontinho, já está marcado!', 'Tudo certo, agendado!']) {
+    assert.deepEqual(
+      verificarRespostaRedatora(frase, semHorarioAutorizado),
+      { aprovado: false, motivo: 'execucao_nao_autorizada' },
+      `esperava reprovado para "${frase}"`
+    );
+  }
 });
 
 // --- Texto vazio ---
@@ -217,6 +207,18 @@ test('o MESMO texto passa quando o Core executou de verdade', () => {
     } as FatosAutorizados
   );
   assert.equal(r.aprovado, true);
+});
+
+test('afirmacao de execucao e reprovada mesmo quando data e horario estao autorizados', () => {
+  const r = verificarRespostaRedatora(
+    'Seu agendamento esta confirmado para 25/08 as 15h.',
+    {
+      objetivo: 'escolher_entre_agendamentos',
+      agendamentos_candidatos: ['terça-feira, 25/08 as 15:00'],
+    } as FatosAutorizados
+  );
+  assert.equal(r.aprovado, false);
+  assert.equal((r as { motivo: string }).motivo, 'execucao_nao_autorizada');
 });
 
 test('PERGUNTA com o mesmo verbo passa -- "posso confirmar?" nao afirma nada', () => {

@@ -63,7 +63,7 @@ const REGEX_N_HORAS = /\b([01]?[0-9]|2[0-3])\s*horas\b/gi;
 //
 // Só o PARTICÍPIO, que afirma. "Posso confirmar?", "vou remarcar", "quer
 // cancelar?" são pergunta ou intenção, e passam.
-const REGEX_EXECUCAO = /(confirmad[oa]s?|remarcad[oa]s?|cancelad[oa]s?|agendad[oa]s?)/i;
+const REGEX_EXECUCAO = /\b(confirmad[oa]s?|remarcad[oa]s?|marcad[oa]s?|cancelad[oa]s?|agendad[oa]s?)\b/gi;
 
 /** Objetivos em que o Core DE FATO executou algo na agenda. */
 const OBJETIVOS_EXECUTADOS: ReadonlySet<string> = new Set([
@@ -78,7 +78,7 @@ export function verificarRespostaRedatora(texto: string, fatos: FatosAutorizados
   }
 
   // AFIRMAR EXECUÇÃO SEM O CORE TER EXECUTADO (2026-08-21).
-  if (!OBJETIVOS_EXECUTADOS.has(fatos.objetivo) && REGEX_EXECUCAO.test(texto)) {
+  if (!OBJETIVOS_EXECUTADOS.has(fatos.objetivo) && afirmaExecucao(texto, fatos)) {
     return { aprovado: false, motivo: 'execucao_nao_autorizada' };
   }
 
@@ -102,6 +102,30 @@ export function verificarRespostaRedatora(texto: string, fatos: FatosAutorizados
   }
 
   return { aprovado: true };
+}
+
+function afirmaExecucao(texto: string, fatos: FatosAutorizados): boolean {
+  const temAgendamentoExistente =
+    fatos.agendamento_confirmado !== undefined ||
+    fatos.agendamento_atual !== undefined ||
+    (fatos.agendamentos_do_paciente?.length ?? 0) > 0;
+  for (const match of texto.matchAll(REGEX_EXECUCAO)) {
+    const antes = texto.slice(Math.max(0, (match.index ?? 0) - 32), match.index);
+    // A negação precisa governar diretamente o particípio. Assim,
+    // "não está confirmado" passa, mas "não, está confirmado" continua
+    // sendo tratado como afirmação.
+    if (/\bn[aã]o\s+(?:(?:est[aá]|foi|ficou)\s+)?(?:mais\s+)?$/i.test(antes)) {
+      continue;
+    }
+    // Dizer que um agendamento existente está marcado/agendado/confirmado
+    // descreve um fato carregado pelo Core; não anuncia uma execução nova.
+    const participio = match[0].toLocaleLowerCase('pt-BR');
+    if (temAgendamentoExistente && /^(?:confirmad|marcad|agendad)/.test(participio)) {
+      continue;
+    }
+    return true;
+  }
+  return false;
 }
 
 function coletarMinutosAutorizados(fatos: FatosAutorizados): Set<number> {
