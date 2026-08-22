@@ -20,6 +20,7 @@ Thumbs.db
 
 # Config local de ferramenta (Claude Code / Supabase CLI) — nunca versionado
 .mcp.json
+.claude/
 supabase/.temp/
 # artefatos do `supabase link` rodado de um cwd aninhado
 **/supabase/.temp/
