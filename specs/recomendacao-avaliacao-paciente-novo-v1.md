@@ -1,7 +1,12 @@
 # Recomendação de avaliação para paciente novo — spec mínima v1
 
-**Status:** proposta para revisão. **Não implementada.** Não autoriza código,
-migration, alteração de banco, painel ou n8n.
+**Status:** **implementada, testada e publicada em 2026-08-22.** Commit
+`af6df85`. Edge `iris-nova-mensagem` v78 `ACTIVE` no operacional
+`udizowyfjnhuhgxkeayk`, `verify_jwt: true` preservado. Suíte determinística
+1549/1554 (5 skipped, 0 falhas). Teste contra IA real (redatora, OpenAI):
+4/4 — `src/eval/teste-real-paciente-novo.ts`, cenários 6-9 da seção 6.
+Validação de tráfego real em produção (WhatsApp) ainda pendente — nenhuma
+mensagem processada pela v78 até a publicação desta nota.
 
 **Origem:** pedido do Gabriel (2026-08-22) discutido primeiro com o Codex, que
 propôs a regra e a definição de "paciente novo" abaixo. Esta spec formaliza
