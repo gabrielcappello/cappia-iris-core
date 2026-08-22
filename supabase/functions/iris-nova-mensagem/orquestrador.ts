@@ -8,6 +8,7 @@ import { carregarEntradaDisponibilidade } from './carregar-disponibilidade.ts';
 import { carregarCatalogo } from './carregar-catalogo.ts';
 import { reservarAgendamento } from './reservar-agendamento.ts';
 import { buscarAgendamentoAtivo } from './buscar-agendamento-ativo.ts';
+import { verificarPacienteNovo } from './verificar-paciente-novo.ts';
 import { remarcarAgendamento } from './remarcar-agendamento.ts';
 import { cancelarAgendamento } from './cancelar-agendamento.ts';
 import { persistirPaciente } from './persistir-paciente.ts';
@@ -480,6 +481,24 @@ export async function processarMensagem(
     // justamente quando ele quis fechar.
     const agendamentosParaRedatora = decisao.tipo === 'desistencia' ? undefined : agendamentosDoPaciente;
 
+    // Fato "paciente novo nesta clinica" (specs/recomendacao-avaliacao-
+    // paciente-novo-v1.md secao 3). Relevante SOMENTE enquanto o
+    // procedimento ainda nao esta resolvido -- as tres decisoes
+    // conversacionais mais `aguardando_procedimento`, nunca nos passos
+    // seguintes de agendamento, onde o fato deixaria de fazer sentido.
+    //
+    // Consulta PROPRIA, separada de `buscarAgendamentosParaContexto`: aquela
+    // e sobre agendamento FUTURO (`confirmado`), esta e sobre HISTORICO
+    // (`concluido`) -- escopos diferentes, nao ha o que reaproveitar.
+    let pacienteNovoNaClinica: true | undefined;
+    if (DECISOES_PACIENTE_NOVO.includes(decisao.tipo) && identificacao.paciente.id !== null) {
+      const novo = await verificarPacienteNovo(clienteBanco, {
+        clinica_id: identificacao.clinica_id,
+        paciente_id: identificacao.paciente.id,
+      });
+      if (novo) pacienteNovoNaClinica = true;
+    }
+
     let atualizadoEmParaContexto = atualizadoEmDaDecisao;
 
     // LIMPEZA DE ESTADO OPERACIONAL AO CONCLUIR (specs/remarcacao-conversacional-v1.md,
@@ -552,6 +571,7 @@ export async function processarMensagem(
       ...(agendamentosParaRedatora !== undefined && agendamentosParaRedatora.length > 0
         ? { agendamentos_do_paciente: agendamentosParaRedatora }
         : {}),
+      ...(pacienteNovoNaClinica !== undefined ? { paciente_novo_na_clinica: pacienteNovoNaClinica } : {}),
       ...((() => {
         const contextoSombra = montarContextoSombraV2(
           dados,
@@ -745,6 +765,23 @@ const DECISOES_COM_CONTEXTO_DE_AGENDAMENTO: readonly DecisaoOrquestrador['tipo']
   'saudacao',
   'duvida_livre',
   'mensagem_nao_compreendida',
+];
+
+/**
+ * Decisoes em que o fato `paciente_novo_na_clinica` e relevante
+ * (specs/recomendacao-avaliacao-paciente-novo-v1.md secao 3): as mesmas tres
+ * conversacionais de `DECISOES_COM_CONTEXTO_DE_AGENDAMENTO` mais
+ * `aguardando_procedimento` -- o desfecho exato de "a IA nao conseguiu
+ * resolver procedimento", onde a duvida real do paciente se manifesta no
+ * Core. Lista propria e nao um superconjunto/subconjunto da outra: as duas
+ * respondem perguntas diferentes (qual contexto de agendamento mostrar vs.
+ * quando "novo aqui" ainda e relevante).
+ */
+const DECISOES_PACIENTE_NOVO: readonly DecisaoOrquestrador['tipo'][] = [
+  'saudacao',
+  'duvida_livre',
+  'mensagem_nao_compreendida',
+  'aguardando_procedimento',
 ];
 
 /**

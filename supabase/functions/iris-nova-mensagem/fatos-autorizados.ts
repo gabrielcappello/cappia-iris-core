@@ -248,6 +248,27 @@ export interface FatosAutorizados {
    */
   agendamentos_do_paciente?: string[];
   /**
+   * Paciente identificado sem NENHUM atendimento `concluido` nesta clinica
+   * (specs/recomendacao-avaliacao-paciente-novo-v1.md). Fato do turno, mesmo
+   * estatuto de `agendamentos_do_paciente` acima -- CONTEXTO DISPONIVEL,
+   * nunca assunto obrigatorio; o `objetivo` da resposta nao muda por causa
+   * dele.
+   *
+   * Nao forca `informar_sem_avaliacao` nem nenhum objetivo dedicado: a
+   * redatora so usa este fato quando o assunto for "o paciente ainda nao
+   * sabe o que precisa" -- a mesma decisao de dúvida real que ja resolve
+   * `consultation_evaluation` no procedimento (`procedimento-semantico-
+   * v1.md` secao 3). O fato aqui so da CONTEXTO para explicar o porque,
+   * quando for o caso.
+   *
+   * PRESENTE SOMENTE quando o orquestrador autorizou -- nas quatro decisoes
+   * de `DECISOES_PACIENTE_NOVO` em orquestrador.ts (`saudacao`,
+   * `duvida_livre`, `mensagem_nao_compreendida`, `aguardando_procedimento`).
+   * AUSENTE (nunca `false`) quando o paciente nao e novo, mesma disciplina
+   * das demais chaves opcionais.
+   */
+  paciente_novo_na_clinica?: true;
+  /**
    * Dados da PROPRIA CLINICA (2026-08-17). Sem isso a Iris nao sabia para
    * quem trabalhava: perguntada "qual e a clinica? fica onde", respondia
    * "somos a clinica odontologica". Ver clinica-conhecida.ts.
@@ -383,7 +404,14 @@ export function derivarFatosAutorizados(
   /** Quem atende na clinica -- ortogonal a decisao, como os dados da clinica. */
   dentistasDaClinica?: readonly DentistaDaClinica[],
   /** Tratamentos aprovados e por agendar -- ortogonal a decisao. */
-  tratamentosAprovados?: readonly TratamentoAprovado[]
+  tratamentosAprovados?: readonly TratamentoAprovado[],
+  /**
+   * `ResultadoOrquestrador.paciente_novo_na_clinica`, quando presente
+   * (specs/recomendacao-avaliacao-paciente-novo-v1.md). Quem restringe a
+   * quais decisoes ele chega e o orquestrador (`DECISOES_PACIENTE_NOVO`),
+   * nunca esta funcao -- aqui, se veio `true`, e porque ja foi autorizado.
+   */
+  pacienteNovoNaClinica?: true
 ): FatosAutorizados {
   let fatos = derivarPorDecisao(decisao, dataHoje);
 
@@ -445,6 +473,12 @@ export function derivarFatosAutorizados(
 
   if (precos !== undefined) {
     fatos = { ...fatos, precos };
+  }
+
+  // Mesmo padrao de agendamentosDoPaciente/substituicaoPorAvaliacao acima:
+  // fato do turno, anexado fora do switch, sem tocar no `objetivo`.
+  if (pacienteNovoNaClinica !== undefined) {
+    fatos = { ...fatos, paciente_novo_na_clinica: pacienteNovoNaClinica };
   }
 
   return fatos;

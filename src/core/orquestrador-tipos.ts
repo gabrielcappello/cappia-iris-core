@@ -521,6 +521,37 @@ export interface ResultadoOrquestrador {
    */
   agendamentos_do_paciente?: readonly AgendamentoAtivo[];
   /**
+   * Paciente identificado sem NENHUM atendimento `concluido` nesta clinica
+   * (specs/recomendacao-avaliacao-paciente-novo-v1.md). Mesma natureza de
+   * `substituicao_por_avaliacao` e `agendamentos_do_paciente` acima: nao e
+   * estado, nao e decisao, e um fato deste turno anexado FORA do switch de
+   * `derivarFatosAutorizados`. O `objetivo` da resposta nunca muda por causa
+   * dele -- o Core disponibiliza, a redatora decide se e relevante explicar
+   * que o caminho e comecar por uma avaliacao.
+   *
+   * "Novo" e definido por HISTORICO DE ATENDIMENTO, nunca por ausencia de
+   * cadastro nem por ausencia de agendamento futuro: um paciente com
+   * agendamento `confirmado` pendente mas nenhum `concluido` ainda e novo
+   * para este fato. `clinica_id` sempre no predicado -- o mesmo paciente
+   * pode ser novo numa clinica e nao em outra.
+   *
+   * PRESENTE SOMENTE nas mesmas tres decisoes conversacionais de
+   * `agendamentos_do_paciente` (`saudacao`, `duvida_livre`,
+   * `mensagem_nao_compreendida`) mais `aguardando_procedimento` -- o
+   * desfecho exato de "a IA nao conseguiu resolver procedimento", momento em
+   * que a duvida real do paciente se manifesta no Core
+   * (specs/procedimento-semantico-v1.md secao 4). Nos passos seguintes de
+   * agendamento (dentista, horario, confirmacao) o procedimento ja esta
+   * resolvido e este fato deixa de ser relevante -- por isso NAO acompanha
+   * `agendamentos_do_paciente` em todas as decisoes, so nestas quatro.
+   * `desistencia` fica de fora, mesmo motivo de `agendamentos_do_paciente`.
+   *
+   * AUSENTE (nunca `false` explicito) quando o paciente NAO e novo, ou
+   * quando a decisao do turno nao e uma das quatro acima -- mesma disciplina
+   * das demais chaves opcionais do Core.
+   */
+  paciente_novo_na_clinica?: true;
+  /**
    * ETAPA 2 da Arquitetura V2 (docs/07-arquitetura-v2.md secao 10) --
    * EXPERIMENTAL, SOMENTE PARA MEDICAO EM SHADOW MODE.
    *

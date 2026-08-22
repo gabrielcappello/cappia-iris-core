@@ -86,6 +86,16 @@ export interface GerarRespostaConversacionalEntrada {
    * e o orquestrador.
    */
   agendamentosDoPaciente?: readonly AgendamentoAtivo[];
+  /**
+   * `ResultadoOrquestrador.paciente_novo_na_clinica`, quando presente
+   * (specs/recomendacao-avaliacao-paciente-novo-v1.md): o paciente
+   * identificado nao tem nenhum atendimento `concluido` nesta clinica.
+   *
+   * Mesmo papel de `agendamentosDoPaciente` acima -- fato do turno, nunca
+   * estado nem decisao. So chega aqui nas quatro decisoes que o orquestrador
+   * autoriza; quem filtra e o orquestrador.
+   */
+  pacienteNovoNaClinica?: true;
 
   /**
    * Cadastro ja conhecido do paciente -- a visao EFETIVA do turno (ficha do
@@ -125,7 +135,8 @@ export async function gerarRespostaConversacional(
     entrada.clinicaConhecida,
     entrada.precos,
     entrada.dentistasDaClinica,
-    entrada.tratamentosAprovados
+    entrada.tratamentosAprovados,
+    entrada.pacienteNovoNaClinica
   );
   const historicoParaEnvio = historicoValidoParaEnvio(entrada.historicoConversa, Date.now());
 

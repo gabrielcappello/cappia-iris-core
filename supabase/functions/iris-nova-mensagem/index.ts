@@ -175,6 +175,12 @@ Deno.serve(async (req: Request) => {
       ...(resultado.agendamentos_do_paciente !== undefined
         ? { agendamentosDoPaciente: resultado.agendamentos_do_paciente }
         : {}),
+      // Paciente novo nesta clinica (specs/recomendacao-avaliacao-paciente-
+      // novo-v1.md). So vem preenchido nas quatro decisoes que o
+      // orquestrador autoriza -- o orquestrador e quem filtra.
+      ...(resultado.paciente_novo_na_clinica !== undefined
+        ? { pacienteNovoNaClinica: resultado.paciente_novo_na_clinica }
+        : {}),
       // Cadastro ja conhecido (2026-08-17): permite a Iris conferir um dado
       // com o paciente e reconhecer quem ja tem ficha, em vez de pedir de
       // novo o que a clinica ja sabe.
