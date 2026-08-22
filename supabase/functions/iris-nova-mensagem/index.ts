@@ -181,6 +181,16 @@ Deno.serve(async (req: Request) => {
       ...(resultado.paciente_novo_na_clinica !== undefined
         ? { pacienteNovoNaClinica: resultado.paciente_novo_na_clinica }
         : {}),
+      // Catalogo real -- corrige a Iris inventando exemplos genericos
+      // (2026-08-22). Dois fatos mutuamente exclusivos: nome unico da
+      // avaliacao em aguardando_procedimento, lista completa em
+      // duvida_livre. Nunca os dois juntos.
+      ...(resultado.procedimento_avaliacao_disponivel !== undefined
+        ? { procedimentoAvaliacaoDisponivel: resultado.procedimento_avaliacao_disponivel }
+        : {}),
+      ...(resultado.procedimentos_ativos_da_clinica !== undefined
+        ? { procedimentosAtivosDaClinica: resultado.procedimentos_ativos_da_clinica }
+        : {}),
       // Cadastro ja conhecido (2026-08-17): permite a Iris conferir um dado
       // com o paciente e reconhecer quem ja tem ficha, em vez de pedir de
       // novo o que a clinica ja sabe.

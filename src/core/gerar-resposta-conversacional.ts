@@ -96,6 +96,17 @@ export interface GerarRespostaConversacionalEntrada {
    * autoriza; quem filtra e o orquestrador.
    */
   pacienteNovoNaClinica?: true;
+  /**
+   * `ResultadoOrquestrador.procedimento_avaliacao_disponivel`, quando
+   * presente: nome UNICO da avaliacao, SO em `aguardando_procedimento`.
+   * Nunca acompanha `procedimentosAtivosDaClinica` no mesmo turno.
+   */
+  procedimentoAvaliacaoDisponivel?: string;
+  /**
+   * `ResultadoOrquestrador.procedimentos_ativos_da_clinica`, quando presente:
+   * nomes de TODOS os procedimentos ativos, SO em `duvida_livre`.
+   */
+  procedimentosAtivosDaClinica?: string[];
 
   /**
    * Cadastro ja conhecido do paciente -- a visao EFETIVA do turno (ficha do
@@ -136,7 +147,9 @@ export async function gerarRespostaConversacional(
     entrada.precos,
     entrada.dentistasDaClinica,
     entrada.tratamentosAprovados,
-    entrada.pacienteNovoNaClinica
+    entrada.pacienteNovoNaClinica,
+    entrada.procedimentosAtivosDaClinica,
+    entrada.procedimentoAvaliacaoDisponivel
   );
   const historicoParaEnvio = historicoValidoParaEnvio(entrada.historicoConversa, Date.now());
 

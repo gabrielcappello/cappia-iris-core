@@ -572,6 +572,36 @@ export async function processarMensagem(
         ? { agendamentos_do_paciente: agendamentosParaRedatora }
         : {}),
       ...(pacienteNovoNaClinica !== undefined ? { paciente_novo_na_clinica: pacienteNovoNaClinica } : {}),
+      // Catalogo real, para a redatora nunca inventar exemplo generico
+      // ("limpeza, restauracao, extracao") -- e para nunca esquecer de
+      // oferecer Avaliacao quando ela existe (2026-08-22, achado do Gabriel
+      // em teste real de WhatsApp). Reaproveita `procedimentosDisponiveis`,
+      // ja calculado acima para a interpretadora.
+      //
+      // DOIS FATOS, mutuamente exclusivos por decisao -- NUNCA os dois no
+      // mesmo turno. Motivo: uma tentativa anterior mandava a LISTA INTEIRA
+      // sempre, com instrucao pedindo para a redatora mencionar so a
+      // avaliacao -- o modelo ignorou a instrucao repetidas vezes e listou
+      // tudo de qualquer forma (a lista visivel no payload pesa mais que
+      // texto de instrucao). A correcao e estrutural: o Core decide qual
+      // dos dois fatos manda, a redatora so usa o que recebeu.
+      //
+      // - `aguardando_procedimento` (paciente tentou agendar sem dizer o
+      //   que quer): manda SO o nome da avaliacao, se existir no catalogo
+      //   -- nunca a lista inteira, entao a redatora fisicamente nao tem
+      //   como listar mais de uma opcao.
+      // - `duvida_livre` (pergunta livre, ex.: "quais procedimentos voces
+      //   fazem?"): manda a lista completa -- e o momento em que descrever
+      //   as opcoes faz sentido de verdade.
+      ...(decisao.tipo === 'aguardando_procedimento'
+        ? (() => {
+            const avaliacao = procedimentosDisponiveis.find((p) => p.procedimento_id === 'consultation_evaluation');
+            return avaliacao !== undefined ? { procedimento_avaliacao_disponivel: avaliacao.nome_pt } : {};
+          })()
+        : {}),
+      ...(decisao.tipo === 'duvida_livre' && procedimentosDisponiveis.length > 0
+        ? { procedimentos_ativos_da_clinica: procedimentosDisponiveis.map((p) => p.nome_pt) }
+        : {}),
       ...((() => {
         const contextoSombra = montarContextoSombraV2(
           dados,

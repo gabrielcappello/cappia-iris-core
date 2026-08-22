@@ -552,6 +552,33 @@ export interface ResultadoOrquestrador {
    */
   paciente_novo_na_clinica?: true;
   /**
+   * Nome (nome_pt) da Avaliacao/Consulta, SOMENTE quando a decisao e
+   * `aguardando_procedimento` (paciente tentou agendar sem dizer o
+   * procedimento) E o catalogo da clinica tem esse item ativo.
+   *
+   * DELIBERADAMENTE um nome UNICO, nunca a lista inteira: uma tentativa
+   * anterior mandava `procedimentos_ativos_da_clinica` tambem aqui, com
+   * instrucao pedindo para a redatora mencionar so a avaliacao -- medido
+   * contra a IA real e reprovado repetidas vezes (2026-08-22): a lista
+   * inteira visivel no payload pesava mais que a instrucao de texto, e a
+   * redatora listava tudo mesmo assim. Mandar so este fato torna a
+   * violacao fisicamente impossivel.
+   */
+  procedimento_avaliacao_disponivel?: string;
+  /**
+   * Nomes (nome_pt) de TODOS os procedimentos ATIVOS da clinica, SOMENTE
+   * quando a decisao e `duvida_livre` (pergunta livre do tipo "quais
+   * procedimentos vocês fazem?") -- o momento em que descrever as opcoes
+   * faz sentido de verdade. NUNCA acompanha `procedimento_avaliacao_
+   * disponivel` no mesmo turno -- as duas decisoes sao mutuamente
+   * exclusivas (specs/catalogo-avaliacao-obrigatoria-gratuita-v1.md nao
+   * cobre isto; achado de 2026-08-22, sem spec propria ainda).
+   *
+   * AUSENTE quando a lista esta vazia ou a decisao nao e essa -- mesma
+   * disciplina das demais chaves opcionais.
+   */
+  procedimentos_ativos_da_clinica?: string[];
+  /**
    * ETAPA 2 da Arquitetura V2 (docs/07-arquitetura-v2.md secao 10) --
    * EXPERIMENTAL, SOMENTE PARA MEDICAO EM SHADOW MODE.
    *

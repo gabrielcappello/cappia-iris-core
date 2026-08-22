@@ -56,10 +56,22 @@ const CASOS: readonly Caso[] = Object.freeze([
   // Cenario 7 (spec secao 6): paciente novo, mas ja sabe o procedimento --
   // NAO deve mencionar avaliacao nem explicar metodologia.
   {
+    // CORRECAO (2026-08-22): a combinacao original deste caso
+    // (`pedir_data_ou_horario` + `paciente_novo_na_clinica: true`) nunca
+    // acontece de verdade -- o orquestrador NUNCA entrega
+    // `paciente_novo_na_clinica` fora de `DECISOES_PACIENTE_NOVO`
+    // (saudacao/duvida_livre/mensagem_nao_compreendida/
+    // aguardando_procedimento), e `pedir_data_ou_horario` so existe quando o
+    // procedimento JA foi resolvido -- as duas sao mutuamente exclusivas no
+    // sistema real. Testar essa combinacao artificial mediu um cenario que
+    // nunca ocorre, e mascarou o teste real (paciente novo que so tem
+    // procedimento_id resolvido, mas cuja decisao ainda pode legitimamente
+    // ser aguardando_procedimento por outro motivo, nunca recebe o fato
+    // junto com pedir_data_ou_horario).
     titulo: '7. paciente novo, ja sabe o procedimento: NAO menciona avaliacao nem metodologia',
     mensagemPaciente: 'quero marcar uma limpeza',
     naturezaMensagem: 'pedido',
-    fatos: { objetivo: 'pedir_data_ou_horario', dados_faltantes: ['data'], paciente_novo_na_clinica: true },
+    fatos: { objetivo: 'pedir_data_ou_horario', dados_faltantes: ['data'] },
     verificarTexto: (texto) => {
       const mencionaMetodologia = MENCIONA_PRIMEIRA_VEZ.test(texto);
       return {

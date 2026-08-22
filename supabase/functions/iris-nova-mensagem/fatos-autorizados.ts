@@ -269,6 +269,21 @@ export interface FatosAutorizados {
    */
   paciente_novo_na_clinica?: true;
   /**
+   * Nome UNICO da Avaliacao/Consulta, SO quando `objetivo` e
+   * `pedir_procedimento` E o catalogo tem esse item ativo. DELIBERADAMENTE
+   * um nome so, nunca a lista inteira -- mandar a lista com instrucao de
+   * "mencione so este" foi medido e reprovado contra a IA real (2026-08-22):
+   * a lista visivel no payload pesava mais que a instrucao textual, e a
+   * redatora listava tudo mesmo assim.
+   */
+  procedimento_avaliacao_disponivel?: string;
+  /**
+   * Nomes de TODOS os procedimentos ATIVOS da clinica, SO em pergunta livre
+   * sobre o catalogo (quando o paciente pede para ver as opcoes) -- NUNCA
+   * acompanha `procedimento_avaliacao_disponivel` no mesmo turno.
+   */
+  procedimentos_ativos_da_clinica?: string[];
+  /**
    * Dados da PROPRIA CLINICA (2026-08-17). Sem isso a Iris nao sabia para
    * quem trabalhava: perguntada "qual e a clinica? fica onde", respondia
    * "somos a clinica odontologica". Ver clinica-conhecida.ts.
@@ -411,7 +426,19 @@ export function derivarFatosAutorizados(
    * quais decisoes ele chega e o orquestrador (`DECISOES_PACIENTE_NOVO`),
    * nunca esta funcao -- aqui, se veio `true`, e porque ja foi autorizado.
    */
-  pacienteNovoNaClinica?: true
+  pacienteNovoNaClinica?: true,
+  /**
+   * `ResultadoOrquestrador.procedimentos_ativos_da_clinica`, quando
+   * presente. Quem restringe a `duvida_livre` e o orquestrador, nunca esta
+   * funcao.
+   */
+  procedimentosAtivosDaClinica?: readonly string[],
+  /**
+   * `ResultadoOrquestrador.procedimento_avaliacao_disponivel`, quando
+   * presente. Quem restringe a `aguardando_procedimento` e o orquestrador,
+   * nunca esta funcao.
+   */
+  procedimentoAvaliacaoDisponivel?: string
 ): FatosAutorizados {
   let fatos = derivarPorDecisao(decisao, dataHoje);
 
@@ -479,6 +506,14 @@ export function derivarFatosAutorizados(
   // fato do turno, anexado fora do switch, sem tocar no `objetivo`.
   if (pacienteNovoNaClinica !== undefined) {
     fatos = { ...fatos, paciente_novo_na_clinica: pacienteNovoNaClinica };
+  }
+
+  if (procedimentosAtivosDaClinica !== undefined && procedimentosAtivosDaClinica.length > 0) {
+    fatos = { ...fatos, procedimentos_ativos_da_clinica: [...procedimentosAtivosDaClinica] };
+  }
+
+  if (procedimentoAvaliacaoDisponivel !== undefined) {
+    fatos = { ...fatos, procedimento_avaliacao_disponivel: procedimentoAvaliacaoDisponivel };
   }
 
   return fatos;
