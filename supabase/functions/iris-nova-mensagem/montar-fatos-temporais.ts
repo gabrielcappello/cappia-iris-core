@@ -113,7 +113,8 @@ const DIAS_DA_SEMANA: ReadonlyMap<string, DiaDaSemana> = new Map([
 ]);
 
 /**
- * Remove o sufixo "feira", com hifen OU com espaco.
+ * Remove o sufixo "feira" -- exato OU um erro de digitacao proximo dele --
+ * com hifen OU com espaco.
  *
  * A primeira versao (2026-08-17) cadastrou so a forma com hifen
  * (`sexta-feira`) e a forma curta (`sexta`). Em conversa real o paciente
@@ -121,9 +122,57 @@ const DIAS_DA_SEMANA: ReadonlyMap<string, DiaDaSemana> = new Map([
  * e a Iris voltou a pedir a data em dois turnos seguidos. Como as duas
  * grafias sao igualmente comuns, o sufixo passou a ser removido em vez de
  * enumerado.
+ *
+ * ERRO DE DIGITACAO (2026-08-22): paciente real escreveu "segunda feria"
+ * (letras trocadas -- "feria" em vez de "feira"). O texto e preservado
+ * exatamente como veio ate aqui, por instrucao deliberada da IA
+ * (interpretacao-instrucoes.ts nao corrige o paciente) -- sem tolerancia
+ * aqui, o sufixo nao casava, `atomoDeDataTexto` devolvia `null`, e o Core
+ * concluia "nenhuma data foi dita" para quem tinha acabado de dizer a data.
+ *
+ * TOLERANCIA POR DISTANCIA DE EDICAO, nunca lista de variacoes previstas
+ * (decisao do Gabriel, 2026-08-22 -- uma lista fixa so cobre o erro que
+ * alguem catalogou, nunca o proximo erro real que aparecer). A ULTIMA
+ * palavra do texto (depois de separar por espaco/hifen) e comparada contra
+ * "feira" por distancia de Levenshtein; ate 2 edicoes (trocar, inserir ou
+ * remover uma letra) e tratada como o mesmo sufixo e removida. O NUCLEO do
+ * dia (`segunda`, `terca`...) nunca passa por essa tolerancia -- so o
+ * sufixo, que e sempre a mesma palavra e nao muda qual dia e; tolerar erro
+ * no nucleo arriscaria confundir um dia com outro.
  */
 function semSufixoFeira(texto: string): string {
-  return texto.replace(/[\s-]+feira$/, '').trim();
+  const partes = texto.split(/[\s-]+/);
+  if (partes.length < 2) return texto;
+  const ultima = partes[partes.length - 1]!;
+  if (distanciaEdicao(ultima, 'feira') > 2) return texto;
+  return partes.slice(0, -1).join(' ').trim();
+}
+
+/**
+ * Distancia de Levenshtein classica (numero minimo de insercoes, remocoes
+ * ou substituicoes de UM caractere para transformar `a` em `b`). Programacao
+ * dinamica O(n*m), suficiente para palavras curtas como "feira".
+ */
+function distanciaEdicao(a: string, b: string): number {
+  const linhas = a.length + 1;
+  const colunas = b.length + 1;
+  const matriz: number[][] = Array.from({ length: linhas }, () => new Array<number>(colunas).fill(0));
+
+  for (let i = 0; i < linhas; i++) matriz[i]![0] = i;
+  for (let j = 0; j < colunas; j++) matriz[0]![j] = j;
+
+  for (let i = 1; i < linhas; i++) {
+    for (let j = 1; j < colunas; j++) {
+      const custo = a[i - 1] === b[j - 1] ? 0 : 1;
+      matriz[i]![j] = Math.min(
+        matriz[i - 1]![j]! + 1, // remocao
+        matriz[i]![j - 1]! + 1, // insercao
+        matriz[i - 1]![j - 1]! + custo // substituicao
+      );
+    }
+  }
+
+  return matriz[linhas - 1]![colunas - 1]!;
 }
 
 /**

@@ -18,12 +18,14 @@ import { verificarRespostaRedatora } from '../core/guarda-resposta-redatora.ts';
 import { MODELO_GPT_4_1_MINI } from '../core/cliente-modelo-openai.ts';
 import type { FatosAutorizados } from '../core/fatos-autorizados.ts';
 import type { NaturezaMensagem } from '../core/interpretacao-tipos.ts';
+import type { ParConversa } from '../core/tipos.ts';
 
 interface Caso {
   titulo: string;
   mensagemPaciente: string;
   naturezaMensagem: NaturezaMensagem;
   fatos: FatosAutorizados;
+  historicoRecente?: ParConversa[];
   verificarTexto: (texto: string) => { ok: boolean; motivo?: string };
 }
 
@@ -46,6 +48,31 @@ const CASOS: readonly Caso[] = Object.freeze([
     mensagemPaciente: 'quero agendar um turno para segunda feira',
     naturezaMensagem: 'pedido',
     fatos: { objetivo: 'pedir_procedimento', dados_faltantes: ['procedimento'], procedimento_avaliacao_disponivel: 'Consulta / Avaliação' },
+    verificarTexto: (texto) => {
+      const avaliacao = MENCIONA_AVALIACAO.test(texto);
+      const mencionouOutro = [MENCIONA_LIMPEZA, MENCIONA_RESTAURACAO, MENCIONA_EXTRACAO].some((r) => r.test(texto));
+      if (!avaliacao) return { ok: false, motivo: 'nao ofereceu avaliacao para paciente sem procedimento definido' };
+      if (mencionouOutro) return { ok: false, motivo: 'mencionou outro procedimento que nao estava nos fatos (alucinacao)' };
+      return { ok: true };
+    },
+  },
+  {
+    // REPRODUCAO EXATA da conversa real do Gabriel (2026-08-22, 17:01-17:02):
+    // "boa tarde" -> saudacao -> "quero um turno pra terça feira" -> com
+    // HISTORICO do turno anterior desta vez (o teste acima nunca inclui
+    // historico). Objetivo: descobrir se o historico muda o comportamento
+    // que o teste sem historico nao capturou em ~18 rodadas consecutivas.
+    titulo: 'REPRODUCAO EXATA com historico: "boa tarrde" -> "quero um turno pra terça feira"',
+    mensagemPaciente: 'quero um turno pra terça feira',
+    naturezaMensagem: 'pedido',
+    fatos: { objetivo: 'pedir_procedimento', dados_faltantes: ['procedimento'], procedimento_avaliacao_disponivel: 'Consulta / Avaliação' },
+    historicoRecente: [
+      {
+        mensagem_paciente: 'boa tarrde',
+        resposta_iris: 'Boa tarde! Aqui é a Iris, assistente da Cleardent. Como posso ajudar você hoje?',
+        gerada_em: new Date().toISOString(),
+      },
+    ],
     verificarTexto: (texto) => {
       const avaliacao = MENCIONA_AVALIACAO.test(texto);
       const mencionouOutro = [MENCIONA_LIMPEZA, MENCIONA_RESTAURACAO, MENCIONA_EXTRACAO].some((r) => r.test(texto));
@@ -102,6 +129,7 @@ async function executarCaso(cliente: ReturnType<typeof criarClienteModeloRedator
       mensagemPaciente: caso.mensagemPaciente,
       naturezaMensagem: caso.naturezaMensagem,
       fatos: caso.fatos,
+      ...(caso.historicoRecente !== undefined ? { historicoRecente: caso.historicoRecente } : {}),
     });
     const resultadoGuarda = verificarRespostaRedatora(texto, caso.fatos);
     const verificacao = caso.verificarTexto(texto);

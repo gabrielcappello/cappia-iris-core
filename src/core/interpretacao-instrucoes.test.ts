@@ -71,7 +71,27 @@ test('instrucoes: "hoje"/"amanha" preenchem data_texto mesmo em forma de pergunt
 // silenciosamente perdido) ---
 
 test('instrucoes: data continua preservada literalmente, nunca calculada (regra inalterada)', () => {
-  assert.match(INSTRUCOES_EXTRATOR, /Datas sao sempre preservadas como texto, exatamente como mencionadas — nunca calcule, resolva ou normalize datas relativas\./);
+  assert.match(INSTRUCOES_EXTRATOR, /Datas sao sempre preservadas como texto, exatamente como mencionadas — nunca calcule, resolva ou normalize datas relativas/);
+});
+
+// --- tolerancia GERAL a erro de digitacao, regra unica para todo
+// vocabulario fechado (achado real via WhatsApp, 2026-08-22: "segunda
+// feria" preservado verbatim nunca batia no sufixo "feira" de
+// montar-fatos-temporais.ts, e a data dita pelo paciente era
+// silenciosamente perdida. Corrigido primeiro so para dia da semana; o
+// Gabriel pediu explicitamente uma regra UNICA que funcione para qualquer
+// campo, nunca remendo campo por campo -- corrigido em seguida) ---
+
+test('instrucoes: tolerancia a erro de digitacao e uma regra GERAL, para qualquer campo de vocabulario fechado', () => {
+  assert.match(INSTRUCOES_EXTRATOR, /VOCABULARIO FECHADO/);
+  assert.match(INSTRUCOES_EXTRATOR, /"qintafeaa", "sabao" por "sabado", "vcs trablaham"/);
+  assert.match(INSTRUCOES_EXTRATOR, /NUNCA fique restrita a um unico campo por instrucao especifica/);
+  assert.match(INSTRUCOES_EXTRATOR, /interpretar "segunda feria" como "segunda-feira" e leitura/);
+});
+
+test('instrucoes: tolerancia a erro de digitacao NUNCA se aplica a dados de identidade do paciente', () => {
+  assert.match(INSTRUCOES_EXTRATOR, /ESSA TOLERANCIA NAO SE APLICA a dados de IDENTIDADE do paciente \("nome", "cpf", "data_nascimento", "email"\)/);
+  assert.match(INSTRUCOES_EXTRATOR, /Se o paciente escreveu "Gabirel", o nome dele PODE ser exatamente esse/);
 });
 
 test('instrucoes: horario e normalizado para HH:MM em 24h quando inequivoco', () => {

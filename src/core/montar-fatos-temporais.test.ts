@@ -70,6 +70,29 @@ test('dia da semana: com e sem "feira", com hifen ou espaco', () => {
   }
 });
 
+test('REAL (WhatsApp 2026-08-22): erro de digitacao "feria" em vez de "feira" ainda reconhece o dia', () => {
+  // O paciente escreveu "segunda feria" (letras trocadas). A IA preserva o
+  // texto exatamente como veio (nao corrige o paciente) -- sem essa
+  // tolerancia, o sufixo nao casava, o Core concluia "nenhuma data foi
+  // dita" e perguntava "hoje, amanha ou uma data especifica?" para um
+  // paciente que tinha acabado de dizer a data.
+  for (const [texto, dia] of [
+    ['segunda feria', 'segunda'],
+    ['segunda-feria', 'segunda'],
+    ['sexta feria', 'sexta'],
+    ['quarta ferira', 'quarta'],
+  ] as const) {
+    assert.deepEqual(
+      montarFatosTemporais({ data_texto: texto }),
+      [
+        { tipo: 'dia_semana', dia, qualificador: null },
+        { tipo: 'intencao', valor: 'data_especifica' },
+      ],
+      `texto ${texto}`
+    );
+  }
+});
+
 test('qualificador explicito e preservado -- "que vem" e "proxima" viram `proxima`', () => {
   for (const texto of ['sexta que vem', 'proxima sexta', 'sexta feira que vem', 'proxima sexta-feira']) {
     assert.deepEqual(
