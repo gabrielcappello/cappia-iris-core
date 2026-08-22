@@ -1,26 +1,36 @@
 # RPCs públicas — estado de segurança
 
 Levantado em 2026-08-20, com consulta ao banco operacional
-(`udizowyfjnhuhgxkeayk`) e revisão do Codex.
-
-**Nenhuma das duas vulnerabilidades abaixo está corrigida.** Este documento
-existe para que isso não seja confundido com trabalho concluído.
+(`udizowyfjnhuhgxkeayk`) e revisão do Codex. **Reconferido em 2026-08-22**
+(consulta direta às ACLs do banco + teste real de leitura como `anon`) — este
+documento estava desatualizado e foi corrigido.
 
 ---
 
-## Estado das três funções `SECURITY DEFINER` públicas
+## Estado das três funções `SECURITY DEFINER` públicas (reconferido 22/08)
 
 | Função | Estado | Risco |
 |---|---|---|
 | `iris_nova_tratamentos_aprovados` | ✅ **CORRIGIDA** (20/08) | — |
-| `atualizar_cor_dentista` | 🔴 **ABERTA** | escrita não autorizada |
-| `buscar_agendamentos_confirmados_dentista_dia` | 🟡 **em auditoria** | leitura de dado de paciente |
+| `atualizar_cor_dentista` | ✅ **CORRIGIDA** (21/08, commit `47ae6c1`) | — |
+| `buscar_agendamentos_confirmados_dentista_dia` | 🔴 **ABERTA** — confirmado no banco em 22/08 | leitura de dado de paciente |
+
+**Verificado em 22/08 (`pg_proc` + ACL real, não presumido do código):**
+`atualizar_cor_dentista` hoje só concede `EXECUTE` a `service_role` — a
+correção proposta nas seções abaixo foi de fato aplicada, não só escrita no
+commit. `buscar_agendamentos_confirmados_dentista_dia` continua com `EXECUTE`
+para `anon` **e** `authenticated` — nenhuma correção aplicada, apesar do que
+a seção 2 já indicava desde 20/08.
 
 ---
 
-## 1. `atualizar_cor_dentista` — ABERTA
+## 1. `atualizar_cor_dentista` — CORRIGIDA (21/08, commit `47ae6c1`)
 
-### O que é
+**Histórico preservado abaixo** (a análise que levou à correção). ACL real,
+confirmada em 22/08: `EXECUTE` só para `service_role` — `anon` e
+`authenticated` não têm mais acesso.
+
+### O que era
 
 `SECURITY DEFINER`, faz `UPDATE clinicas`. Chamada **direto do navegador**
 (`src/app/dashboard/calendario/page.tsx:415`) com a chave pública
@@ -86,7 +96,7 @@ padrão não pode existir num produto multiclínica.
 
 ---
 
-## 2. `buscar_agendamentos_confirmados_dentista_dia` — EM AUDITORIA
+## 2. `buscar_agendamentos_confirmados_dentista_dia` — ABERTA, confirmado 22/08
 
 ### O que devolve
 
@@ -147,3 +157,51 @@ sem aviso.
 **Regra:** o `revoke` tem de rodar na mesma transação de cada `create or
 replace`, e a ACL precisa ser conferida no banco depois — nunca presumida a
 partir do arquivo.
+
+---
+
+## 3. RLS ligado sem política nas 24 tabelas — NÃO é exposição (confirmado 22/08)
+
+Registro anterior (20/08) descrevia "22 tabelas com RLS ligado e nenhuma
+política" como parte do que bloqueava venda, ao lado das RPCs abertas. Isso
+estava certo tecnicamente sobre a *contagem*, mas **errado sobre a
+gravidade** — RLS ligado sem nenhuma política é o padrão **mais restritivo**
+do Postgres, não o mais aberto: sem política nenhuma, a ausência de política
+já nega qualquer linha por padrão, mesmo quando a tabela tem `GRANT` para
+`anon`/`authenticated`.
+
+**Testado de verdade em 22/08**, não presumido: `set role anon; select
+count(*) from pacientes;` devolveu `0`, mesmo havendo linha real na tabela.
+`GRANT SELECT` para `anon` existe em `pacientes`, `agendamentos`, `usuarios`,
+`clinicas`, `planos_tratamento` — mas o RLS sem política bloqueia a leitura
+de qualquer forma.
+
+**Contagem atual: 24 tabelas** (recontado em 22/08, não 22) com RLS ligado e
+zero políticas: `acoes_outbox`, `acoes_pendentes`, `agendamentos`,
+`clinicas`, `comandos_remarcacao`, `conversas_manuais`, `estado_conversa`,
+`financeiro_lancamentos`, `financeiro_orcamento_itens`,
+`financeiro_orcamentos`, `horarios_bloqueados`, `lembretes_envios`,
+`mensagens_fila`, `mensagens_manuais`, `odontograma_consultas`,
+`odontograma_dentes`, `odontograma_observacoes`, `odontograma_periodontal`,
+`pacientes`, `password_resets`, `planos_tratamento`, `remarcacoes_pendentes`,
+`usuarios`, `whatsapp_presenca`.
+
+**Isto NÃO é um convite a ignorar o assunto.** Continua sendo um estado
+frágil por dois motivos reais:
+
+- `service_role` **ignora RLS por completo** — qualquer código que rode com
+  a chave de serviço (Edge Functions, rotas `/api/secure/`) já tem acesso
+  total, independente de política. O RLS só protege contra acesso via
+  `anon`/`authenticated` (navegador com chave pública).
+- Ausência de política é frágil a mudança futura: se alguém um dia criar uma
+  política permissiva por engano numa dessas tabelas, ou desligar RLS
+  "temporariamente" para debug, a exposição vira real sem nenhum aviso — o
+  mesmo padrão de risco silencioso que já aconteceu com `revoke` desfeito em
+  `create or replace` (seção acima). O ideal de produto ainda é ter políticas
+  explícitas (nunca depender só da ausência delas), mas isso é dívida
+  técnica a resolver com calma, não bloqueador de venda.
+
+**Reclassificação:** isto não bloqueia venda. O bloqueador real e único hoje
+é a seção 2 (`buscar_agendamentos_confirmados_dentista_dia`, dado de paciente
+exposto de verdade a `anon`/`authenticated`, confirmado por ACL real, não
+por RLS).
