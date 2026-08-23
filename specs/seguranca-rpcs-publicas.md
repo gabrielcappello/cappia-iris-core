@@ -5,6 +5,15 @@ Levantado em 2026-08-20, com consulta ao banco operacional
 (consulta direta às ACLs do banco + teste real de leitura como `anon`) — este
 documento estava desatualizado e foi corrigido.
 
+> **Atualização final de 22/08:** a RPC
+> `buscar_agendamentos_confirmados_dentista_dia` foi fechada depois de nova
+> auditoria confirmar zero dentistas com `token_acesso`, o único workflow
+> consumidor desativado e nenhum outro workflow referenciando a função.
+> `PUBLIC`, `anon` e `authenticated` perderam `EXECUTE`; `service_role` foi
+> preservada. Migration:
+> `20260822230000_revoga_buscar_agendamentos_dentista_dia.sql`.
+> A seção 2 abaixo permanece como histórico do diagnóstico anterior.
+
 ---
 
 ## Estado das três funções `SECURITY DEFINER` públicas (reconferido 22/08)
@@ -13,14 +22,13 @@ documento estava desatualizado e foi corrigido.
 |---|---|---|
 | `iris_nova_tratamentos_aprovados` | ✅ **CORRIGIDA** (20/08) | — |
 | `atualizar_cor_dentista` | ✅ **CORRIGIDA** (21/08, commit `47ae6c1`) | — |
-| `buscar_agendamentos_confirmados_dentista_dia` | 🔴 **ABERTA** — confirmado no banco em 22/08 | leitura de dado de paciente |
+| `buscar_agendamentos_confirmados_dentista_dia` | ✅ **CORRIGIDA** (22/08) | — |
 
 **Verificado em 22/08 (`pg_proc` + ACL real, não presumido do código):**
 `atualizar_cor_dentista` hoje só concede `EXECUTE` a `service_role` — a
 correção proposta nas seções abaixo foi de fato aplicada, não só escrita no
-commit. `buscar_agendamentos_confirmados_dentista_dia` continua com `EXECUTE`
-para `anon` **e** `authenticated` — nenhuma correção aplicada, apesar do que
-a seção 2 já indicava desde 20/08.
+commit. `buscar_agendamentos_confirmados_dentista_dia` também ficou restrita
+a `service_role` depois da auditoria final e do teste HTTP real.
 
 ---
 
@@ -96,7 +104,7 @@ padrão não pode existir num produto multiclínica.
 
 ---
 
-## 2. `buscar_agendamentos_confirmados_dentista_dia` — ABERTA, confirmado 22/08
+## 2. `buscar_agendamentos_confirmados_dentista_dia` — CORRIGIDA (22/08)
 
 ### O que devolve
 
@@ -106,7 +114,7 @@ Nome, telefone, procedimento e horário dos pacientes de um dentista num dia.
 Exige `token_acesso` do dentista — sem os atalhos por `id` ou nome. É mais
 protegida que a função 1.
 
-### ACL atual
+### ACL anterior
 
 ```
 buscar_agendamentos_confirmados_dentista_dia(uuid,date,text)
@@ -116,7 +124,7 @@ buscar_agendamentos_confirmados_dentista_dia(uuid,date,text)
 Só o `PUBLIC` herdado (o `=X` inicial), sem grants explícitos — mesmo caso da
 função que foi corrigida hoje. Rollback = devolver `EXECUTE` a `PUBLIC`.
 
-### Por que NÃO foi revogada
+### Por que não foi revogada inicialmente
 
 Cheguei a considerar seguro revogar, porque nenhum arquivo de código a chama
 (só aparece em `database.types.ts`, que é gerado automaticamente).
@@ -131,16 +139,17 @@ Cheguei a considerar seguro revogar, porque nenhum arquivo de código a chama
 vive num servidor. Revogar às cegas poderia derrubar um fluxo da agenda em
 produção.
 
-### Próximo passo
+### Encerramento
 
-Inspeção **read-only** do n8n: confirmar se `l6pNUaIccr2h4Gid` está ativo e
-qual chave/papel ele usa.
+Uma nova inspeção read-only confirmou:
 
-- usa `service_role` → o revoke é seguro
-- usa a chave pública (`anon`) → o revoke quebra, e a correção passa a ser
-  outra
+- `l6pNUaIccr2h4Gid` está desativado;
+- ele é o único workflow que referencia a RPC;
+- zero dos 12 dentistas possui `token_acesso`.
 
-Nenhuma execução, edição ou ativação de workflow.
+O `EXECUTE` de `PUBLIC`, `anon` e `authenticated` foi revogado, preservando
+`service_role`. Teste HTTP: chave pública recebe `401`; `service_role` recebe
+`200`. Nenhum workflow foi executado, editado ou ativado.
 
 ---
 
@@ -201,7 +210,6 @@ frágil por dois motivos reais:
   explícitas (nunca depender só da ausência delas), mas isso é dívida
   técnica a resolver com calma, não bloqueador de venda.
 
-**Reclassificação:** isto não bloqueia venda. O bloqueador real e único hoje
-é a seção 2 (`buscar_agendamentos_confirmados_dentista_dia`, dado de paciente
-exposto de verdade a `anon`/`authenticated`, confirmado por ACL real, não
-por RLS).
+**Reclassificação:** isto não bloqueia venda. A RPC antes citada como
+bloqueador foi fechada em 22/08; não resta bloqueador confirmado neste
+levantamento específico.
