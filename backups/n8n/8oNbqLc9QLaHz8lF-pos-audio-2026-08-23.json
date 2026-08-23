@@ -1,0 +1,1344 @@
+{
+  "updatedAt": "2026-08-23T00:32:33.785Z",
+  "createdAt": "2026-08-04T21:30:48.390Z",
+  "id": "8oNbqLc9QLaHz8lF",
+  "name": "Iris Nova - Transporte Minimo (gabriel teste)",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "iris-nova-mensagem-teste",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1600,
+        400
+      ],
+      "id": "wh-001",
+      "name": "Webhook Evolution",
+      "webhookId": "1dda8aaa-b7e9-4cd7-bb5e-6dd1d3767e47"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond-event",
+              "leftValue": "={{ $json.body.event }}",
+              "rightValue": "messages.upsert",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "cond-fromme",
+              "leftValue": "={{ $json.body.data.key.fromMe }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "cond-broadcast",
+              "leftValue": "={{ $json.body.data.key.remoteJid }}",
+              "rightValue": "status@broadcast",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -1360,
+        400
+      ],
+      "id": "if-001",
+      "name": "Mensagem valida?"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "instancia",
+              "value": "={{ $json.body.instance }}",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "telefone",
+              "value": "={{ $json.body.data.key.remoteJid.replace('@s.whatsapp.net', '') }}",
+              "type": "string"
+            },
+            {
+              "id": "a3",
+              "name": "mensagem",
+              "value": "={{ $json.body.data.message.conversation }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1120,
+        400
+      ],
+      "id": "set-001",
+      "name": "Extrair campos"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://udizowyfjnhuhgxkeayk.supabase.co/functions/v1/iris-nova-mensagem",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer sb_publishable_0mN6LUu3G2r9dE5YUzgaIQ_vrB8NE2C"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"provider\": \"evolution\", \"instancia_whatsapp\": $json.instancia, \"telefone_normalizado\": $json.telefone, \"mensagem\": $json.mensagem } }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -880,
+        400
+      ],
+      "id": "http-001",
+      "name": "Chamar Iris Nova"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond-resposta",
+              "leftValue": "={{ $json.resposta }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -640,
+        400
+      ],
+      "id": "if-002",
+      "name": "Tem resposta?"
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "instanceName": "={{ $('Extrair campos').isExecuted ? $('Extrair campos').first().json.instancia : $('Montar mensagem transcrita').isExecuted ? $('Montar mensagem transcrita').first().json.instancia : $('Fallback: pedir reenvio').first().json.instancia }}",
+        "remoteJid": "={{ $('Extrair campos').isExecuted ? $('Extrair campos').first().json.telefone : $('Montar mensagem transcrita').isExecuted ? $('Montar mensagem transcrita').first().json.telefone : $('Fallback: pedir reenvio').first().json.telefone }}",
+        "messageText": "={{ $json.resposta }}",
+        "options_message": {}
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        -400,
+        400
+      ],
+      "id": "evo-001",
+      "name": "Enviar resposta Evolution",
+      "credentials": {
+        "evolutionApi": {
+          "id": "96W3h9YNHcqkdi52",
+          "name": "evolution_cloudfy"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond-audio",
+              "leftValue": "={{ $json.body.data.message.audioMessage ? 'sim' : '' }}",
+              "rightValue": "sim",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -1200,
+        128
+      ],
+      "id": "if-eh-audio",
+      "name": "É áudio?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond-duracao",
+              "leftValue": "={{ $json.body.data.message.audioMessage.seconds }}",
+              "rightValue": 300,
+              "operator": {
+                "type": "number",
+                "operation": "lte"
+              }
+            },
+            {
+              "id": "cond-tamanho",
+              "leftValue": "={{ $json.body.data.message.audioMessage.fileLength.low }}",
+              "rightValue": 15728640,
+              "operator": {
+                "type": "number",
+                "operation": "lte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -944,
+        112
+      ],
+      "id": "if-dentro-limite",
+      "name": "Áudio dentro do limite? (5min/15MB)"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://singingdugong-evolution.cloudfy.live/chat/getBase64FromMediaMessage/{{ $json.body.instance }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"message\": { \"key\": { \"id\": $json.body.data.key.id } }, \"convertToMp4\": false } }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -720,
+        64
+      ],
+      "id": "http-buscar-base64",
+      "name": "Buscar áudio (base64)",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "7caF8ohR4lwF9oDP",
+          "name": "Header Auth account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "toBinary",
+        "sourceProperty": "base64",
+        "options": {
+          "fileName": "audio.ogg",
+          "mimeType": "audio/ogg"
+        }
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        -512,
+        96
+      ],
+      "id": "convert-binario",
+      "name": "Converter para arquivo"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/audio/transcriptions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            },
+            {
+              "name": "model",
+              "value": "whisper-1"
+            },
+            {
+              "name": "language",
+              "value": "pt"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -320,
+        96
+      ],
+      "id": "http-transcrever",
+      "name": "Transcrever (Whisper)",
+      "credentials": {
+        "openAiApi": {
+          "id": "arZYYv1z6zQatZSF",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond-vazio",
+              "leftValue": "={{ ($json.text || '').trim() }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -144,
+        112
+      ],
+      "id": "if-falha-transcricao",
+      "name": "Falha ou texto vazio?"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "b1",
+              "name": "instancia",
+              "value": "={{ $('Webhook Evolution').first().json.body.instance }}",
+              "type": "string"
+            },
+            {
+              "id": "b2",
+              "name": "telefone",
+              "value": "={{ $('Webhook Evolution').first().json.body.data.key.remoteJid.replace('@s.whatsapp.net', '') }}",
+              "type": "string"
+            },
+            {
+              "id": "b3",
+              "name": "mensagem",
+              "value": "={{ $json.text }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -176,
+        496
+      ],
+      "id": "set-montar-transcrita",
+      "name": "Montar mensagem transcrita"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "c1",
+              "name": "resposta",
+              "value": "Não consegui entender esse áudio. Pode escrever a mensagem ou mandar de novo, por favor?",
+              "type": "string"
+            },
+            {
+              "id": "c2",
+              "name": "instancia",
+              "value": "={{ $('Webhook Evolution').first().json.body.instance }}",
+              "type": "string"
+            },
+            {
+              "id": "c3",
+              "name": "telefone",
+              "value": "={{ $('Webhook Evolution').first().json.body.data.key.remoteJid.replace('@s.whatsapp.net', '') }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        48,
+        336
+      ],
+      "id": "set-fallback-fixo",
+      "name": "Fallback: pedir reenvio"
+    }
+  ],
+  "connections": {
+    "Webhook Evolution": {
+      "main": [
+        [
+          {
+            "node": "Mensagem valida?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mensagem valida?": {
+      "main": [
+        [
+          {
+            "node": "É áudio?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Extrair campos": {
+      "main": [
+        [
+          {
+            "node": "Chamar Iris Nova",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chamar Iris Nova": {
+      "main": [
+        [
+          {
+            "node": "Tem resposta?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tem resposta?": {
+      "main": [
+        [
+          {
+            "node": "Enviar resposta Evolution",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "É áudio?": {
+      "main": [
+        [
+          {
+            "node": "Áudio dentro do limite? (5min/15MB)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extrair campos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Áudio dentro do limite? (5min/15MB)": {
+      "main": [
+        [
+          {
+            "node": "Buscar áudio (base64)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fallback: pedir reenvio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar áudio (base64)": {
+      "main": [
+        [
+          {
+            "node": "Converter para arquivo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Converter para arquivo": {
+      "main": [
+        [
+          {
+            "node": "Transcrever (Whisper)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transcrever (Whisper)": {
+      "main": [
+        [
+          {
+            "node": "Falha ou texto vazio?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Falha ou texto vazio?": {
+      "main": [
+        [
+          {
+            "node": "Fallback: pedir reenvio",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Montar mensagem transcrita",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar mensagem transcrita": {
+      "main": [
+        [
+          {
+            "node": "Chamar Iris Nova",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fallback: pedir reenvio": {
+      "main": [
+        [
+          {
+            "node": "Enviar resposta Evolution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false,
+    "binaryMode": "separate"
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": {},
+  "versionId": "1e54d964-0bb0-45e8-beee-6b8caddf1687",
+  "activeVersionId": "1e54d964-0bb0-45e8-beee-6b8caddf1687",
+  "versionCounter": 42,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-08-04T21:30:48.390Z",
+      "createdAt": "2026-08-04T21:30:48.390Z",
+      "role": "workflow:owner",
+      "workflowId": "8oNbqLc9QLaHz8lF",
+      "projectId": "4GYloibuIHCEPct2",
+      "project": {
+        "updatedAt": "2026-04-26T11:53:35.308Z",
+        "createdAt": "2026-04-26T11:47:19.743Z",
+        "id": "4GYloibuIHCEPct2",
+        "name": "GABRIEL CAPPELLO <agentesia.cappello@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "d12afd30-9651-4d9b-8ea4-773be700b0ce"
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-08-23T00:32:33.787Z",
+    "createdAt": "2026-08-23T00:32:33.787Z",
+    "versionId": "1e54d964-0bb0-45e8-beee-6b8caddf1687",
+    "workflowId": "8oNbqLc9QLaHz8lF",
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "iris-nova-mensagem-teste",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2.1,
+        "position": [
+          -1600,
+          400
+        ],
+        "id": "wh-001",
+        "name": "Webhook Evolution",
+        "webhookId": "1dda8aaa-b7e9-4cd7-bb5e-6dd1d3767e47"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 1
+            },
+            "conditions": [
+              {
+                "id": "cond-event",
+                "leftValue": "={{ $json.body.event }}",
+                "rightValue": "messages.upsert",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                }
+              },
+              {
+                "id": "cond-fromme",
+                "leftValue": "={{ $json.body.data.key.fromMe }}",
+                "rightValue": false,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              },
+              {
+                "id": "cond-broadcast",
+                "leftValue": "={{ $json.body.data.key.remoteJid }}",
+                "rightValue": "status@broadcast",
+                "operator": {
+                  "type": "string",
+                  "operation": "notEquals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          -1360,
+          400
+        ],
+        "id": "if-001",
+        "name": "Mensagem valida?"
+      },
+      {
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "a1",
+                "name": "instancia",
+                "value": "={{ $json.body.instance }}",
+                "type": "string"
+              },
+              {
+                "id": "a2",
+                "name": "telefone",
+                "value": "={{ $json.body.data.key.remoteJid.replace('@s.whatsapp.net', '') }}",
+                "type": "string"
+              },
+              {
+                "id": "a3",
+                "name": "mensagem",
+                "value": "={{ $json.body.data.message.conversation }}",
+                "type": "string"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          -1120,
+          400
+        ],
+        "id": "set-001",
+        "name": "Extrair campos"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://udizowyfjnhuhgxkeayk.supabase.co/functions/v1/iris-nova-mensagem",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "Bearer sb_publishable_0mN6LUu3G2r9dE5YUzgaIQ_vrB8NE2C"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ { \"provider\": \"evolution\", \"instancia_whatsapp\": $json.instancia, \"telefone_normalizado\": $json.telefone, \"mensagem\": $json.mensagem } }}",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          -880,
+          400
+        ],
+        "id": "http-001",
+        "name": "Chamar Iris Nova"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 1
+            },
+            "conditions": [
+              {
+                "id": "cond-resposta",
+                "leftValue": "={{ $json.resposta }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "notEmpty",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          -640,
+          400
+        ],
+        "id": "if-002",
+        "name": "Tem resposta?"
+      },
+      {
+        "parameters": {
+          "resource": "messages-api",
+          "instanceName": "={{ $('Extrair campos').isExecuted ? $('Extrair campos').first().json.instancia : $('Montar mensagem transcrita').isExecuted ? $('Montar mensagem transcrita').first().json.instancia : $('Fallback: pedir reenvio').first().json.instancia }}",
+          "remoteJid": "={{ $('Extrair campos').isExecuted ? $('Extrair campos').first().json.telefone : $('Montar mensagem transcrita').isExecuted ? $('Montar mensagem transcrita').first().json.telefone : $('Fallback: pedir reenvio').first().json.telefone }}",
+          "messageText": "={{ $json.resposta }}",
+          "options_message": {}
+        },
+        "type": "n8n-nodes-evolution-api.evolutionApi",
+        "typeVersion": 1,
+        "position": [
+          -400,
+          400
+        ],
+        "id": "evo-001",
+        "name": "Enviar resposta Evolution",
+        "credentials": {
+          "evolutionApi": {
+            "id": "96W3h9YNHcqkdi52",
+            "name": "evolution_cloudfy"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose",
+              "version": 1
+            },
+            "conditions": [
+              {
+                "id": "cond-audio",
+                "leftValue": "={{ $json.body.data.message.audioMessage ? 'sim' : '' }}",
+                "rightValue": "sim",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          -1200,
+          128
+        ],
+        "id": "if-eh-audio",
+        "name": "É áudio?"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose",
+              "version": 1
+            },
+            "conditions": [
+              {
+                "id": "cond-duracao",
+                "leftValue": "={{ $json.body.data.message.audioMessage.seconds }}",
+                "rightValue": 300,
+                "operator": {
+                  "type": "number",
+                  "operation": "lte"
+                }
+              },
+              {
+                "id": "cond-tamanho",
+                "leftValue": "={{ $json.body.data.message.audioMessage.fileLength.low }}",
+                "rightValue": 15728640,
+                "operator": {
+                  "type": "number",
+                  "operation": "lte"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          -944,
+          112
+        ],
+        "id": "if-dentro-limite",
+        "name": "Áudio dentro do limite? (5min/15MB)"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "=https://singingdugong-evolution.cloudfy.live/chat/getBase64FromMediaMessage/{{ $json.body.instance }}",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ { \"message\": { \"key\": { \"id\": $json.body.data.key.id } }, \"convertToMp4\": false } }}",
+          "options": {
+            "timeout": 60000
+          }
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          -720,
+          64
+        ],
+        "id": "http-buscar-base64",
+        "name": "Buscar áudio (base64)",
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "7caF8ohR4lwF9oDP",
+            "name": "Header Auth account 3"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "operation": "toBinary",
+          "sourceProperty": "base64",
+          "options": {
+            "fileName": "audio.ogg",
+            "mimeType": "audio/ogg"
+          }
+        },
+        "type": "n8n-nodes-base.convertToFile",
+        "typeVersion": 1.1,
+        "position": [
+          -512,
+          96
+        ],
+        "id": "convert-binario",
+        "name": "Converter para arquivo"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.openai.com/v1/audio/transcriptions",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "openAiApi",
+          "sendBody": true,
+          "contentType": "multipart-form-data",
+          "bodyParameters": {
+            "parameters": [
+              {
+                "parameterType": "formBinaryData",
+                "name": "file",
+                "inputDataFieldName": "data"
+              },
+              {
+                "name": "model",
+                "value": "whisper-1"
+              },
+              {
+                "name": "language",
+                "value": "pt"
+              }
+            ]
+          },
+          "options": {
+            "timeout": 60000
+          }
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          -320,
+          96
+        ],
+        "id": "http-transcrever",
+        "name": "Transcrever (Whisper)",
+        "credentials": {
+          "openAiApi": {
+            "id": "arZYYv1z6zQatZSF",
+            "name": "OpenAI account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "loose",
+              "version": 1
+            },
+            "conditions": [
+              {
+                "id": "cond-vazio",
+                "leftValue": "={{ ($json.text || '').trim() }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "or"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          -144,
+          112
+        ],
+        "id": "if-falha-transcricao",
+        "name": "Falha ou texto vazio?"
+      },
+      {
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "b1",
+                "name": "instancia",
+                "value": "={{ $('Webhook Evolution').first().json.body.instance }}",
+                "type": "string"
+              },
+              {
+                "id": "b2",
+                "name": "telefone",
+                "value": "={{ $('Webhook Evolution').first().json.body.data.key.remoteJid.replace('@s.whatsapp.net', '') }}",
+                "type": "string"
+              },
+              {
+                "id": "b3",
+                "name": "mensagem",
+                "value": "={{ $json.text }}",
+                "type": "string"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          -176,
+          496
+        ],
+        "id": "set-montar-transcrita",
+        "name": "Montar mensagem transcrita"
+      },
+      {
+        "parameters": {
+          "assignments": {
+            "assignments": [
+              {
+                "id": "c1",
+                "name": "resposta",
+                "value": "Não consegui entender esse áudio. Pode escrever a mensagem ou mandar de novo, por favor?",
+                "type": "string"
+              },
+              {
+                "id": "c2",
+                "name": "instancia",
+                "value": "={{ $('Webhook Evolution').first().json.body.instance }}",
+                "type": "string"
+              },
+              {
+                "id": "c3",
+                "name": "telefone",
+                "value": "={{ $('Webhook Evolution').first().json.body.data.key.remoteJid.replace('@s.whatsapp.net', '') }}",
+                "type": "string"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.set",
+        "typeVersion": 3.4,
+        "position": [
+          48,
+          336
+        ],
+        "id": "set-fallback-fixo",
+        "name": "Fallback: pedir reenvio"
+      }
+    ],
+    "connections": {
+      "Webhook Evolution": {
+        "main": [
+          [
+            {
+              "node": "Mensagem valida?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Mensagem valida?": {
+        "main": [
+          [
+            {
+              "node": "É áudio?",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          []
+        ]
+      },
+      "Extrair campos": {
+        "main": [
+          [
+            {
+              "node": "Chamar Iris Nova",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Chamar Iris Nova": {
+        "main": [
+          [
+            {
+              "node": "Tem resposta?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Tem resposta?": {
+        "main": [
+          [
+            {
+              "node": "Enviar resposta Evolution",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          []
+        ]
+      },
+      "É áudio?": {
+        "main": [
+          [
+            {
+              "node": "Áudio dentro do limite? (5min/15MB)",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Extrair campos",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Áudio dentro do limite? (5min/15MB)": {
+        "main": [
+          [
+            {
+              "node": "Buscar áudio (base64)",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Fallback: pedir reenvio",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Buscar áudio (base64)": {
+        "main": [
+          [
+            {
+              "node": "Converter para arquivo",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Converter para arquivo": {
+        "main": [
+          [
+            {
+              "node": "Transcrever (Whisper)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Transcrever (Whisper)": {
+        "main": [
+          [
+            {
+              "node": "Falha ou texto vazio?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Falha ou texto vazio?": {
+        "main": [
+          [
+            {
+              "node": "Fallback: pedir reenvio",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Montar mensagem transcrita",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Montar mensagem transcrita": {
+        "main": [
+          [
+            {
+              "node": "Chamar Iris Nova",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fallback: pedir reenvio": {
+        "main": [
+          [
+            {
+              "node": "Enviar resposta Evolution",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "GABRIEL CAPPELLO",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-08-23T00:32:33.892Z",
+        "id": 3635,
+        "workflowId": "8oNbqLc9QLaHz8lF",
+        "versionId": "1e54d964-0bb0-45e8-beee-6b8caddf1687",
+        "event": "deactivated",
+        "userId": "d12afd30-9651-4d9b-8ea4-773be700b0ce"
+      },
+      {
+        "createdAt": "2026-08-23T00:32:33.931Z",
+        "id": 3636,
+        "workflowId": "8oNbqLc9QLaHz8lF",
+        "versionId": "1e54d964-0bb0-45e8-beee-6b8caddf1687",
+        "event": "activated",
+        "userId": "d12afd30-9651-4d9b-8ea4-773be700b0ce"
+      }
+    ]
+  }
+}
