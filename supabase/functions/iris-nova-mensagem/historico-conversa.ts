@@ -32,8 +32,8 @@
 
 import type { ClienteBancoDados, HistoricoConversa, ParConversa } from './tipos.ts';
 
-/** Janela de validade da memoria conversacional. Aprovada por Gabriel em 2026-08-06. */
-export const VALIDADE_HISTORICO_MS = 24 * 60 * 60 * 1000;
+/** Janela de validade da memoria conversacional. Alterada de 24h para 12h por Gabriel em 2026-08-23. */
+export const VALIDADE_HISTORICO_MS = 12 * 60 * 60 * 1000;
 
 /** Tamanho maximo do historico. Aprovado por Gabriel em 2026-08-07 como valor definitivo. */
 export const MAX_PARES_HISTORICO = 10;

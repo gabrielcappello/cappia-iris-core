@@ -211,7 +211,7 @@ export interface EntradaInterpretacao {
   }[];
   /**
    * Ultimos turnos da conversa (specs/historico-conversacional-v1.md secao
-   * 6), do mais antigo para o mais recente, ja filtrados por validade (24h)
+   * 6), do mais antigo para o mais recente, ja filtrados por validade (12h)
    * -- permite entender mensagens curtas ou dependentes de contexto ("sim",
    * "esse mesmo", "aquele que voce falou") exatamente como uma pessoa
    * entenderia numa conversa real. AUSENTE quando nao ha nenhum par valido.

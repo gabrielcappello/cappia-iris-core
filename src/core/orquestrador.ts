@@ -67,7 +67,7 @@ export async function processarMensagem(
     telefone_normalizado: entrada.telefone_normalizado,
   });
 
-  // Filtro de validade (24h) aplicado AQUI, no ponto de leitura para a
+  // Filtro de validade (12h) aplicado AQUI, no ponto de leitura para a
   // interpretadora (specs/historico-conversacional-v1.md secao 6) -- o
   // valor cru (sem filtro) e o que segue para ResultadoOrquestrador.historico_conversa,
   // usado depois na gravacao (seção 3 da mesma spec).

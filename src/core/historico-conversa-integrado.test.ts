@@ -305,7 +305,7 @@ test('sem historico_conversa na conversa, historico_recente nao e enviado a IA i
   assert.equal('historico_recente' in clienteModelo.chamadas[0].payload, false);
 });
 
-test('historico_conversa expirado (> 24h) nao e enviado a IA interpretadora', async () => {
+test('historico_conversa expirado (alem da janela de validade) nao e enviado a IA interpretadora', async () => {
   const tabelas = criarTabelasFalsasVazias();
   const clinicaId = semearClinicaComAgenda(tabelas);
   semearConversa(tabelas, clinicaId, {

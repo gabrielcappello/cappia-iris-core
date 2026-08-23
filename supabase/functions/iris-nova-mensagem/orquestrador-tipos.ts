@@ -477,7 +477,7 @@ export interface ResultadoOrquestrador {
    * (antes de qualquer escrita) -- `null` quando nao ha nenhum turno
    * anterior. SEM filtro de validade aqui: e sobre este valor cru que a
    * gravacao anexa o par novo (specs/historico-conversacional-v1.md secao
-   * 3). O filtro de idade (24h) e aplicado no ponto de leitura para os dois
+   * 3). O filtro de idade (12h) e aplicado no ponto de leitura para os dois
    * modelos (orquestrador.ts, para a interpretadora; gerar-resposta-
    * conversacional.ts, para a redatora), nunca aqui.
    */

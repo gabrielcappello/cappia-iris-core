@@ -63,7 +63,7 @@ export interface GerarRespostaConversacionalEntrada {
   precos?: PrecosClinica;
   /**
    * Valor CRU lido no inicio do turno (ResultadoOrquestrador.historico_conversa)
-   * -- `null` quando nao ha nenhum turno anterior. O filtro de validade (24h)
+   * -- `null` quando nao ha nenhum turno anterior. O filtro de validade (12h)
    * e aplicado AQUI, no ponto de leitura para a redatora
    * (specs/historico-conversacional-v1.md secao 6), nunca antes.
    */

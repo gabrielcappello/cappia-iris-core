@@ -65,7 +65,7 @@ test('idade: null nunca vira valor -- devolve undefined (campo ausente do payloa
   assert.equal(historicoValidoParaEnvio(null, Date.now()), undefined);
 });
 
-test('idade: todos os pares dentro da janela de 24h atravessam intactos, na mesma ordem', () => {
+test('idade: todos os pares dentro da janela de validade atravessam intactos, na mesma ordem', () => {
   const agoraMs = Date.parse('2026-08-06T12:00:00.000Z');
   const historico = [parComIdade(2 * 60 * 60 * 1000, agoraMs, 'a'), parComIdade(1 * 60 * 60 * 1000, agoraMs, 'b')];
   assert.deepEqual(historicoValidoParaEnvio(historico, agoraMs), historico);

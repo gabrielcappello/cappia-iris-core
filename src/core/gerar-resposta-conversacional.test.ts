@@ -188,7 +188,7 @@ test('historicoConversa null: nunca chega a EntradaRedator (campo ausente, nunca
   assert.equal('historicoRecente' in capturada[0], false);
 });
 
-test('historicoConversa dentro da janela de 24h: chega intacta a EntradaRedator', async () => {
+test('historicoConversa dentro da janela de validade: chega intacta a EntradaRedator', async () => {
   const { cliente, capturada } = clienteQueCaptura();
   const historico = historicoComIdade(60 * 60 * 1000); // 1h atras
   await gerarRespostaConversacional(cliente, {
@@ -201,7 +201,7 @@ test('historicoConversa dentro da janela de 24h: chega intacta a EntradaRedator'
   assert.deepEqual(capturada[0].historicoRecente, historico);
 });
 
-test('historicoConversa totalmente expirado (> 24h): omitido do payload, nunca enviado', async () => {
+test('historicoConversa totalmente expirado (alem da janela de validade): omitido do payload, nunca enviado', async () => {
   const { cliente, capturada } = clienteQueCaptura();
   const historico = historicoComIdade(VALIDADE_HISTORICO_MS + 1000);
   await gerarRespostaConversacional(cliente, {
