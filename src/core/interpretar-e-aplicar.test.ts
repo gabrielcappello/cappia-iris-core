@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { EntradaInvalidaError, InterpretacaoInvalidaError } from './erros.ts';
 import { interpretarEAplicar } from './interpretar-e-aplicar.ts';
+import { criarClienteModeloOpenAI, ErroClienteModeloOpenAI, MODELO_GPT_4_1_MINI } from './cliente-modelo-openai.ts';
 import type { ClienteModeloEstruturado } from './interpretacao-tipos.ts';
 import { ClienteFalso, criarTabelasFalsasVazias, type TabelasFalsas } from './teste-cliente-falso.ts';
 import { ClienteModeloFalso, ClienteModeloNuncaDeveSerChamado } from './teste-cliente-modelo-falso.ts';
@@ -316,4 +317,155 @@ test('snapshot oficial com campo legado desconhecido: conversa continua normalme
   const dadosAtuaisEnviados = (clienteModelo.chamadas[0]!.payload as { dados_atuais?: Record<string, unknown> })
     .dados_atuais;
   assert.equal(dadosAtuaisEnviados?.periodo, 'tarde');
+});
+
+// --- INT-21 e INT-23: politica de tentativas para resposta truncada
+// (specs/interpretacao-ia.md, "Politica de tentativas", decisao aprovada por
+// Gabriel em 24/08/2026). A repeticao unica em si (INT-20) e o descarte do
+// fragmento (INT-22) sao testados no adaptador isolado
+// (cliente-modelo-openai.test.ts) -- aqui o que importa e o comportamento do
+// ORQUESTRADOR quando o adaptador ja esgotou as duas tentativas e propagou
+// ErroClienteModeloOpenAI(categoria='resposta_truncada'): interpretarEAplicar
+// nao intercepta esse erro (index.ts, na Edge Function, e quem decide
+// devolver HTTP 200 com a mensagem fixa -- ver o branch adicionado la), mas
+// precisa propaga-lo sem tocar no banco.
+
+// Dublê minimo: simula um adaptador que ja fez a unica segunda tentativa
+// internamente (responsabilidade do adaptador, nao deste orquestrador) e
+// esgotou -- exatamente o que criarClienteModeloOpenAI().executar() lança
+// depois de duas tentativas truncadas.
+function clienteModeloEsgotadoPorTruncamento(): ClienteModeloEstruturado {
+  return {
+    async executar() {
+      throw new ErroClienteModeloOpenAI(
+        'resposta_truncada',
+        'resposta_incompleta',
+        2,
+        120,
+        MODELO_GPT_4_1_MINI,
+        200
+      );
+    },
+  };
+}
+
+test('INT-21: erro de resposta_truncada esgotada e propagado intacto, sem persistir nada', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const conversa = semearEstado(tabelas, { procedimento_id: 'limpeza' });
+  const clienteBanco = new ClienteFalso(tabelas);
+  const clienteModelo = clienteModeloEsgotadoPorTruncamento();
+
+  let erro: unknown;
+  try {
+    await interpretarEAplicar(clienteModelo, clienteBanco, contexto(conversa.id, ['oi, queria remarcar']));
+  } catch (e) {
+    erro = e;
+  }
+
+  assert.ok(erro instanceof ErroClienteModeloOpenAI, `esperava ErroClienteModeloOpenAI, recebeu ${String(erro)}`);
+  assert.equal((erro as ErroClienteModeloOpenAI).categoria, 'resposta_truncada');
+  assert.equal((erro as ErroClienteModeloOpenAI).tentativas, 2);
+
+  // nenhuma acao operacional, nenhuma persistencia -- nem parcial.
+  assert.equal(clienteBanco.estatisticas.chamadasUpdate['estado_conversa'] ?? 0, 0);
+  assert.deepEqual(tabelas.estado_conversa[0].dados, { procedimento_id: 'limpeza' }, 'snapshot original intacto');
+});
+
+test('INT-21: erro sanitizado de resposta_truncada esgotada nunca contem a mensagem do paciente nem dados_atuais', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const mensagemSensivel = 'meu cpf e 12345678900, quero cancelar tudo';
+  const conversa = semearEstado(tabelas, { nome: 'Maria Sensivel' });
+  const clienteBanco = new ClienteFalso(tabelas);
+  const clienteModelo = clienteModeloEsgotadoPorTruncamento();
+
+  let erro: unknown;
+  try {
+    await interpretarEAplicar(clienteModelo, clienteBanco, contexto(conversa.id, [mensagemSensivel]));
+  } catch (e) {
+    erro = e;
+  }
+
+  assert.ok(erro instanceof ErroClienteModeloOpenAI);
+  const representacao = JSON.stringify(erro) + (erro as Error).message + (erro as ErroClienteModeloOpenAI).codigo;
+  assert.ok(!representacao.includes(mensagemSensivel));
+  assert.ok(!representacao.includes('Maria Sensivel'));
+  assert.ok(!representacao.includes('12345678900'));
+});
+
+// Fabrica um corpo HTTP identico ao que a OpenAI Responses API devolveria --
+// mesmo formato usado em cliente-modelo-openai.test.ts (respostaSucesso).
+function corpoRespostaCompleta(alteracoesPortatil: unknown[], naturezaMensagem = 'pedido') {
+  return {
+    status: 'completed',
+    output: [
+      {
+        type: 'message',
+        content: [
+          {
+            type: 'output_text',
+            text: JSON.stringify({
+              natureza_mensagem: naturezaMensagem,
+              alteracoes: alteracoesPortatil,
+              eventos_candidatos: [],
+              dentistas_candidatos: null,
+            }),
+          },
+        ],
+      },
+    ],
+    usage: { input_tokens: 1, output_tokens: 1 },
+  };
+}
+
+function corpoRespostaTruncada() {
+  return { status: 'incomplete', output: [] };
+}
+
+test('INT-23: 1a tentativa truncada e 2a completa, DENTRO DE UM UNICO TURNO, usando o adaptador real -- mesmo snapshot, exatamente uma acao operacional aplicada', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const conversa = semearEstado(tabelas, { procedimento_id: 'limpeza' });
+  const clienteBanco = new ClienteFalso(tabelas);
+
+  // fetch fake de duas respostas: a 1a truncada (o adaptador real repete
+  // sozinho, internamente -- CATEGORIAS_REPETIVEIS inclui resposta_truncada
+  // desde a mudanca de 24/08/2026), a 2a completa com a alteracao real.
+  let chamadasFetch = 0;
+  const fetchFalso = (async () => {
+    chamadasFetch++;
+    const corpo = chamadasFetch === 1 ? corpoRespostaTruncada() : corpoRespostaCompleta([
+      { campo: 'data_texto', acao: 'informar', valor: 'sexta' },
+    ]);
+    return new Response(JSON.stringify(corpo), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }) as typeof fetch;
+
+  // ADAPTADOR REAL (nao ClienteModeloFalso): a mesma funcao que roda em
+  // producao, com fetch injetado. interpretarEAplicar recebe exatamente o
+  // que o Core recebe hoje -- a repeticao acontece TODA dentro desta unica
+  // chamada a interpretarEAplicar, nunca em um segundo turno/reenvio.
+  const clienteModeloReal = criarClienteModeloOpenAI({
+    chaveApi: 'chave-de-teste',
+    modelo: MODELO_GPT_4_1_MINI,
+    fetch: fetchFalso,
+    timeoutPorTentativaMs: 2000,
+    prazoTotalMs: 5000,
+    esperaEntreTentativasMs: 5,
+  } as never);
+
+  const resultado = await interpretarEAplicar(
+    clienteModeloReal,
+    clienteBanco,
+    contexto(conversa.id, ['pode remarcar pra sexta'])
+  );
+
+  assert.equal(chamadasFetch, 2, 'uma unica repeticao interna do adaptador, nunca uma terceira chamada');
+
+  // o snapshot que chegou ao modelo (em QUALQUER das duas tentativas) e o
+  // oficial lido do banco no INICIO do turno -- nunca um estado parcial.
+  assert.equal(resultado.aplicacao?.dados.procedimento_id, 'limpeza', 'partiu do snapshot oficial');
+  assert.equal(resultado.aplicacao?.dados.data_texto, 'sexta', 'so a saida da 2a tentativa (completa) foi aceita');
+
+  // exatamente uma acao operacional aplicada nesta unica chamada ao turno --
+  // sem duplicidade, sem um segundo update por causa da tentativa truncada.
+  assert.equal(clienteBanco.estatisticas.chamadasUpdate['estado_conversa'] ?? 0, 1);
+  assert.equal(comoRegistro(tabelas.estado_conversa[0].dados).data_texto, 'sexta');
 });

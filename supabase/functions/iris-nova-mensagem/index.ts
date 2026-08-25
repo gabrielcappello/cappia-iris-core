@@ -11,6 +11,7 @@ import { gerarRespostaConversacional } from "./gerar-resposta-conversacional.ts"
 import { gravarHistoricoConversa } from "./historico-conversa.ts";
 import {
   criarClienteModeloOpenAI,
+  ErroClienteModeloOpenAI,
   ESPERA_ENTRE_TENTATIVAS_MS_APROVADO,
   MODELO_GPT_4_1_MINI,
   PRAZO_TOTAL_MS_APROVADO,
@@ -83,7 +84,87 @@ function jsonResponse(corpo: unknown, status: number): Response {
   return new Response(JSON.stringify(corpo), { status, headers: { "Content-Type": "application/json" } });
 }
 
-Deno.serve(async (req: Request) => {
+// Extraida do corpo do handler para ser testavel de verdade (a mesma funcao
+// que roda em producao, chamada aqui e no teste) sem precisar de banco nem
+// de OpenAI reais -- so recebe o erro ja lancado por processarMensagem/
+// interpretarEAplicar e decide a resposta HTTP do turno. Exportada so para
+// uso em teste (index.test.ts); Deno.serve continua sendo o unico chamador
+// em producao.
+export function tratarErroDoTurno(erro: unknown): Response {
+  if (erro instanceof ClinicaNaoEncontradaError) {
+    return jsonResponse({ erro: "clinica_nao_encontrada" }, 404);
+  }
+  if (erro instanceof EntradaInvalidaError) {
+    return jsonResponse({ erro: "entrada_invalida" }, 400);
+  }
+  // Decisao aprovada por Gabriel em 24/08/2026 (specs/interpretacao-ia.md,
+  // "Politica de tentativas"): resposta truncada nunca deixa o paciente em
+  // silencio. O adaptador ja fez a unica segunda tentativa permitida (ver
+  // CATEGORIAS_REPETIVEIS em cliente-modelo-openai.ts) quando a 1a
+  // tentativa veio truncada. O desfecho seguro dispara em QUALQUER falha
+  // tecnica da 2a tentativa nesse caso -- nao so quando ela tambem trunca
+  // -- porque o paciente ja esperou a unica repeticao permitida e nao
+  // pode ficar em silencio so porque a 2a falhou por outro motivo (ex.:
+  // timeout, indisponibilidade). `erro.categoria` preserva a categoria
+  // REAL da falha final para o log nunca mascarar o motivo tecnico
+  // verdadeiro; `categoriaPrimeiraTentativa` (preenchido pelo adaptador
+  // so quando a 2a categoria difere da 1a) e quem sinaliza que a 1a
+  // tentativa foi truncada. O turno responde HTTP 200 com mensagem fixa
+  // deterministica -- nunca 500 silencioso -- sem executar nenhuma acao
+  // operacional nem persistir interpretacao incompleta. Cenario INT-21
+  // (tests/cenarios-obrigatorios.md).
+  if (
+    erro instanceof ErroClienteModeloOpenAI &&
+    (erro.categoria === "resposta_truncada" || erro.categoriaPrimeiraTentativa === "resposta_truncada")
+  ) {
+    console.error(
+      `resposta_truncada_apos_retry categoria=${erro.categoria}` +
+        ` categoria_primeira_tentativa=${erro.categoriaPrimeiraTentativa ?? "-"} codigo=${erro.codigo}` +
+        ` tentativas=${erro.tentativas} duracao_ms=${erro.duracaoMs} status_http=${erro.statusHttp ?? "-"}` +
+        ` modelo=${erro.modelo}`
+    );
+    return jsonResponse(
+      { resposta: "Tive uma dificuldade para entender sua mensagem agora. Você pode repeti-la, por favor?" },
+      200
+    );
+  }
+  // DIAGNOSTICO (2026-08-19): ate aqui o erro era descartado e o turno
+  // devolvia so "erro_interno". Numa falha real -- 1 em 10 turnos -- nao
+  // havia como saber se foi timeout da IA, recusa do provedor ou defeito
+  // no Core: a informacao nunca era gravada em lugar nenhum.
+  //
+  // `ErroClienteModeloOpenAI` ja carrega os campos certos e foi desenhado
+  // para NAO conter PII (ver o cabecalho da classe: "nunca mensagem do
+  // paciente, dados_atuais, resposta bruta, valores interpretados, PII,
+  // chave, corpo bruto de erro da API"). Registramos so esses campos.
+  //
+  // Para erros de outra origem, so o nome e a mensagem do proprio erro --
+  // nunca o payload nem a fala do paciente.
+  const detalhe =
+    erro !== null && typeof erro === "object" && "codigo" in erro
+      ? `codigo=${(erro as { codigo?: unknown }).codigo}` +
+        ` categoria=${(erro as { categoria?: unknown }).categoria ?? "-"}` +
+        ` tentativas=${(erro as { tentativas?: unknown }).tentativas ?? "-"}` +
+        ` duracao_ms=${(erro as { duracaoMs?: unknown }).duracaoMs ?? "-"}` +
+        ` status_http=${(erro as { statusHttp?: unknown }).statusHttp ?? "-"}` +
+        ` modelo=${(erro as { modelo?: unknown }).modelo ?? "-"}`
+      : `tipo=${erro instanceof Error ? erro.name : typeof erro}` +
+        ` mensagem=${erro instanceof Error ? erro.message : String(erro)}`;
+  console.error(`erro_interno ${detalhe}`);
+
+  return jsonResponse({ erro: "erro_interno" }, 500);
+}
+
+// `import.meta.main` so e true quando este arquivo e o entrypoint carregado
+// diretamente (Deno.serve real do runtime da Edge Function) -- nunca
+// quando outro modulo o importa, como index.test.ts importando
+// tratarErroDoTurno. Sem essa guarda, o teste dispararia um listener de
+// rede real so por importar o arquivo (Deno.serve abre porta no import).
+if (import.meta.main) {
+  Deno.serve(handler);
+}
+
+async function handler(req: Request): Promise<Response> {
   if (req.method !== "POST") {
     return jsonResponse({ erro: "metodo_nao_permitido" }, 405);
   }
@@ -319,36 +400,6 @@ Deno.serve(async (req: Request) => {
 
     return jsonResponse({ resposta }, 200);
   } catch (erro) {
-    if (erro instanceof ClinicaNaoEncontradaError) {
-      return jsonResponse({ erro: "clinica_nao_encontrada" }, 404);
-    }
-    if (erro instanceof EntradaInvalidaError) {
-      return jsonResponse({ erro: "entrada_invalida" }, 400);
-    }
-    // DIAGNOSTICO (2026-08-19): ate aqui o erro era descartado e o turno
-    // devolvia so "erro_interno". Numa falha real -- 1 em 10 turnos -- nao
-    // havia como saber se foi timeout da IA, recusa do provedor ou defeito
-    // no Core: a informacao nunca era gravada em lugar nenhum.
-    //
-    // `ErroClienteModeloOpenAI` ja carrega os campos certos e foi desenhado
-    // para NAO conter PII (ver o cabecalho da classe: "nunca mensagem do
-    // paciente, dados_atuais, resposta bruta, valores interpretados, PII,
-    // chave, corpo bruto de erro da API"). Registramos so esses campos.
-    //
-    // Para erros de outra origem, so o nome e a mensagem do proprio erro --
-    // nunca o payload nem a fala do paciente.
-    const detalhe =
-      erro !== null && typeof erro === "object" && "codigo" in erro
-        ? `codigo=${(erro as { codigo?: unknown }).codigo}` +
-          ` categoria=${(erro as { categoria?: unknown }).categoria ?? "-"}` +
-          ` tentativas=${(erro as { tentativas?: unknown }).tentativas ?? "-"}` +
-          ` duracao_ms=${(erro as { duracaoMs?: unknown }).duracaoMs ?? "-"}` +
-          ` status_http=${(erro as { statusHttp?: unknown }).statusHttp ?? "-"}` +
-          ` modelo=${(erro as { modelo?: unknown }).modelo ?? "-"}`
-        : `tipo=${erro instanceof Error ? erro.name : typeof erro}` +
-          ` mensagem=${erro instanceof Error ? erro.message : String(erro)}`;
-    console.error(`erro_interno ${detalhe}`);
-
-    return jsonResponse({ erro: "erro_interno" }, 500);
+    return tratarErroDoTurno(erro);
   }
-});
+}

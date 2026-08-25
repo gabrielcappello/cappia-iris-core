@@ -120,11 +120,22 @@ export type CategoriaErroModelo =
 // Todas as demais categorias de conteudo/estrutura invalida NUNCA repetem
 // -- repetir uma resposta estruturalmente invalida so reproduziria o
 // mesmo resultado.
+//
+// resposta_truncada e EXCECAO a essa regra, por decisao aprovada por
+// Gabriel em 24/08/2026 (specs/interpretacao-ia.md, "Politica de
+// tentativas"): truncamento nao e garantidamente deterministico (pode vir
+// de variacao genuina do modelo entre chamadas, nao so de max_output_tokens
+// insuficiente para aquela entrada), e o custo de nunca repetir seria o
+// paciente ficar em silencio. Usa o MESMO mecanismo de uma unica segunda
+// tentativa ja existente abaixo (executarComRetry) -- nunca uma terceira
+// tentativa, nunca um laco separado. Cenarios INT-20 a INT-23
+// (tests/cenarios-obrigatorios.md). Espelha src/core/cliente-modelo-openai.ts.
 const CATEGORIAS_REPETIVEIS = new Set<CategoriaErroModelo>([
   'limite_taxa',
   'indisponibilidade',
   'timeout',
   'resposta_vazia',
+  'resposta_truncada',
 ]);
 
 // WeakMap privado do modulo, nunca exportado: guarda o Retry-After ja
@@ -140,10 +151,13 @@ const mapaRetryAfterMs = new WeakMap<ErroClienteModeloOpenAI, number | null>();
 
 // A interface publica da instancia so pode conter: categoria, codigo
 // tecnico fixo, numero de tentativas realmente iniciadas, duracao,
-// modelo (sempre a constante aprovada), e status HTTP quando existir --
-// alem das propriedades padrao de qualquer Error (name, message, stack).
-// Nunca mensagem do paciente, dados_atuais, resposta bruta, valores
-// interpretados, PII, chave, corpo bruto de erro da API ou Retry-After.
+// modelo (sempre a constante aprovada), status HTTP quando existir, e
+// categoriaPrimeiraTentativa quando a 2a tentativa falhou com categoria
+// DIFERENTE da 1a -- alem das propriedades padrao de qualquer Error (name,
+// message, stack). Nunca mensagem do paciente, dados_atuais, resposta
+// bruta, valores interpretados, PII, chave, corpo bruto de erro da API ou
+// Retry-After. categoriaPrimeiraTentativa e outro CategoriaErroModelo (um
+// enum fechado), nunca texto livre -- nao viola a restricao de PII.
 export class ErroClienteModeloOpenAI extends Error {
   categoria: CategoriaErroModelo;
   codigo: string;
@@ -151,6 +165,12 @@ export class ErroClienteModeloOpenAI extends Error {
   duracaoMs: number;
   modelo: string;
   statusHttp: number | null;
+  // Preenchido SOMENTE quando executarComRetry chega na tentativa 2 e ela
+  // falha com uma categoria diferente da 1a (ex.: 1a=resposta_truncada,
+  // 2a=timeout). `categoria` acima permanece a da falha final REAL --
+  // nunca mascarada -- para o log nunca perder o motivo tecnico verdadeiro
+  // da 2a falha (specs/interpretacao-ia.md, "Politica de tentativas").
+  categoriaPrimeiraTentativa: CategoriaErroModelo | null;
 
   constructor(
     categoria: CategoriaErroModelo,
@@ -159,7 +179,8 @@ export class ErroClienteModeloOpenAI extends Error {
     duracaoMs: number,
     modelo: string,
     statusHttp: number | null = null,
-    retryAfterMs: number | null = null
+    retryAfterMs: number | null = null,
+    categoriaPrimeiraTentativa: CategoriaErroModelo | null = null
   ) {
     super(`cliente de modelo OpenAI: categoria=${categoria} codigo=${codigo} tentativas=${tentativas}`);
     this.name = 'ErroClienteModeloOpenAI';
@@ -169,6 +190,7 @@ export class ErroClienteModeloOpenAI extends Error {
     this.duracaoMs = duracaoMs;
     this.modelo = modelo;
     this.statusHttp = statusHttp;
+    this.categoriaPrimeiraTentativa = categoriaPrimeiraTentativa;
 
     mapaRetryAfterMs.set(this, retryAfterMs);
   }
@@ -338,8 +360,29 @@ async function executarComRetry(contexto: ContextoChamada): Promise<unknown> {
     }
 
     // Tentativa 2 -- sempre com o timeout completo, nunca reduzido.
-    // Se falhar, o erro propaga diretamente: nunca ha terceira tentativa.
-    return await executarUmaTentativa(contexto, 2, contexto.timeoutPorTentativaMs, inicioTotal);
+    // Nunca ha terceira tentativa, seja qual for o desfecho desta.
+    try {
+      return await executarUmaTentativa(contexto, 2, contexto.timeoutPorTentativaMs, inicioTotal);
+    } catch (erroTentativa2) {
+      if (!(erroTentativa2 instanceof ErroClienteModeloOpenAI)) throw erroTentativa2;
+      // A 1a tentativa foi repetivel (checagem no topo do catch). Se a 2a
+      // falhou com categoria DIFERENTE, a categoria real da 2a (nunca
+      // mascarada) segue no log, mas a informacao de que a 1a foi
+      // repetivel (ex.: resposta_truncada) nao pode se perder -- e ela
+      // que decide o desfecho seguro do turno (specs/interpretacao-ia.md,
+      // "Politica de tentativas"; INT-21/INT-23).
+      if (erroTentativa2.categoria === erroTentativa1.categoria) throw erroTentativa2;
+      throw new ErroClienteModeloOpenAI(
+        erroTentativa2.categoria,
+        erroTentativa2.codigo,
+        erroTentativa2.tentativas,
+        erroTentativa2.duracaoMs,
+        erroTentativa2.modelo,
+        erroTentativa2.statusHttp,
+        obterRetryAfterMs(erroTentativa2),
+        erroTentativa1.categoria
+      );
+    }
   }
 }
 

@@ -88,6 +88,10 @@ Fonte: `interpretacao-ia.md` · `novo-agendamento.md` §4, §8
 | INT-17 | Saída vazia, idempotente ou só conflito | I | Marcador gravado; estado pode permanecer igual |
 | INT-18 | Reclaim com marcador preenchido | I | Sem nova chamada ao modelo; resposta fixa |
 | INT-19 | Rollback conjunto em qualquer falha | I | Nunca persistência parcial |
+| INT-20 | Primeira resposta do modelo truncada; segunda completa | U | Uma única repetição; somente a segunda saída é aceita |
+| INT-21 | Primeira resposta truncada; segunda falha tecnicamente por qualquer categoria (truncada de novo, timeout, indisponibilidade, etc.) | I | HTTP 200 com resposta determinística; paciente nunca fica sem resposta; log preserva a categoria real da segunda falha e sinaliza a primeira separadamente |
+| INT-22 | Resposta truncada contém fragmento de ação | S | Fragmento integralmente descartado; nenhum efeito ou persistência parcial |
+| INT-23 | Repetição após truncamento | I | Mesmo snapshot; no máximo uma ação operacional, sem duplicidade |
 
 > INT-11 e INT-12 têm divergência conhecida no código atual, registrada em
 > `interpretacao-ia.md` ("Divergência conhecida no código"). **Bloqueadores antes de

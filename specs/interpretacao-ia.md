@@ -1020,6 +1020,31 @@ ser recuperado após o lease.
 - Retry técnico interno do adaptador (`criarClienteModeloOpenAI`, já aprovado) permanece
   permitido; continua pertencendo à mesma tentativa do worker e não representa uma nova
   aplicação da interpretação.
+- **Decisão aprovada por Gabriel em 24/08/2026 — resposta truncada nunca deixa o
+  paciente em silêncio:** quando a API do modelo responder com HTTP bem-sucedido, mas o
+  envelope indicar resposta incompleta (`resposta_truncada` / `resposta_incompleta`), o
+  adaptador deve tratá-la como falha técnica repetível e fazer **uma única segunda
+  tentativa**, sob os mesmos limites de prazo total e timeout já aprovados. Nunca existe
+  terceira tentativa.
+- Nenhuma saída da tentativa truncada pode ser interpretada, persistida ou aplicada,
+  mesmo parcialmente. A segunda tentativa começa do mesmo snapshot válido de entrada;
+  ela não reaplica nem continua a saída incompleta.
+- Se a segunda tentativa produzir uma resposta completa, somente essa resposta válida
+  segue para interpretação, persistência e eventual decisão operacional.
+- Se a segunda tentativa falhar tecnicamente — por qualquer categoria de falha, não só
+  por truncar de novo (ex.: também truncada, ou timeout, indisponibilidade, etc.) —, o
+  turno não devolve HTTP 500 silencioso ao transporte: responde com HTTP 200 e a mensagem
+  determinística
+  `Tive uma dificuldade para entender sua mensagem agora. Você pode repeti-la, por favor?`
+  Nenhuma ação operacional é executada, nenhum agendamento é criado ou alterado e nenhuma
+  interpretação incompleta é persistida. O paciente já esperou a única repetição
+  permitida por causa do truncamento da primeira tentativa; não pode ficar em silêncio só
+  porque a segunda falhou por outro motivo técnico.
+- O log desse caminho registra a categoria real da falha que encerrou o turno (nunca
+  mascarada como truncamento se foi outra), além de código, número de tentativas,
+  duração, status HTTP e modelo — e, quando a primeira tentativa foi truncada e a
+  segunda falhou com categoria diferente, registra também essa categoria da primeira
+  tentativa separadamente. Nunca mensagem do paciente, resposta bruta ou PII.
 - Depois que `interpretacao_persistida_em` estiver preenchido para um `message_id`,
   qualquer nova chamada ao modelo para esse `message_id` é **proibida** (ver
   "Deduplicação e lease" → "Reclaim e `interpretacao_persistida_em`").

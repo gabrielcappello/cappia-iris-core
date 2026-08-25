@@ -1266,7 +1266,15 @@ test('correcao2b: erro publico expoe somente os campos aprovados (categoria, cod
     erro = e;
   }
   assertCategoria(erro, 'autenticacao');
-  const camposAprovados = ['categoria', 'codigo', 'tentativas', 'duracaoMs', 'modelo', 'statusHttp'];
+  const camposAprovados = [
+    'categoria',
+    'codigo',
+    'tentativas',
+    'duracaoMs',
+    'modelo',
+    'statusHttp',
+    'categoriaPrimeiraTentativa',
+  ];
   const chaves = Object.keys(erro as object);
   for (const campo of camposAprovados) {
     assert.ok(chaves.includes(campo), `campo aprovado ausente: ${campo}`);
@@ -1457,8 +1465,12 @@ test('correcao5c: status de tipo diferente de string (numero, booleano, array, o
   }
 });
 
-test('correcao5d: status string diferente de "completed" continua gerando resposta_truncada, sem retry', async () => {
-  const { fetchFalso, chamadas } = criarFetchFalso([() => respostaComStatusInvalido('in_progress'), () => respostaSucesso([])]);
+test('correcao5d: status string diferente de "completed" gera resposta_truncada; repete uma unica vez (specs/interpretacao-ia.md, Politica de tentativas, 24/08/2026)', async () => {
+  const { fetchFalso, chamadas } = criarFetchFalso([
+    () => respostaComStatusInvalido('in_progress'),
+    () => respostaComStatusInvalido('in_progress'),
+    () => respostaSucesso([]),
+  ]);
   const cliente = criarCliente({ fetch: fetchFalso });
   let erro: unknown;
   try {
@@ -1467,7 +1479,128 @@ test('correcao5d: status string diferente de "completed" continua gerando respos
     erro = e;
   }
   assertCategoria(erro, 'resposta_truncada');
-  assert.equal(chamadas.length, 1);
+  assert.equal(chamadas.length, 2, 'uma unica segunda tentativa, nunca uma terceira');
+});
+
+// --- INT-20 a INT-23: politica de tentativas para resposta truncada
+// (specs/interpretacao-ia.md, "Politica de tentativas", decisao aprovada por
+// Gabriel em 24/08/2026). INT-21 e INT-23 sao de integracao (nivel do turno
+// completo, HTTP 200 + mensagem fixa) e vivem em
+// interpretar-e-aplicar.test.ts, ja que dependem do orquestrador e do
+// index.ts da Edge Function -- nao do adaptador isolado. ---
+
+test('INT-20b: 1a tentativa truncada, 2a falha por motivo tecnico diferente (timeout) -- categoria real da 2a falha preservada no log, categoriaPrimeiraTentativa sinaliza o truncamento', async () => {
+  // 1a chamada: truncada. 2a chamada: nunca resolve -> a 2a tentativa
+  // estoura o proprio timeoutPorTentativaMs e vira categoria='timeout',
+  // NAO 'resposta_truncada' -- exatamente o cenario que a spec exige que
+  // ainda assim produza o desfecho seguro do turno (ver INT-21b em
+  // interpretar-e-aplicar.test.ts para a ponta HTTP).
+  let chamada = 0;
+  const fetchMisto = (async (_url: string | URL, opcoes?: RequestInit) => {
+    chamada++;
+    if (chamada === 1) return respostaComStatusInvalido('in_progress');
+    return await new Promise<Response>((_resolve, reject) => {
+      opcoes?.signal?.addEventListener('abort', () => reject(new DOMException('abortado', 'AbortError')));
+    });
+  }) as typeof fetch;
+  const cliente = criarCliente({ fetch: fetchMisto, timeoutPorTentativaMs: 30, esperaEntreTentativasMs: 5, prazoTotalMs: 5000 });
+
+  let erro: unknown;
+  try {
+    await cliente.executar(entradaValida());
+  } catch (e) {
+    erro = e;
+  }
+
+  assertCategoria(erro, 'timeout');
+  assert.equal(chamada, 2, 'uma unica segunda tentativa, nunca uma terceira');
+  assert.equal(
+    (erro as ErroClienteModeloOpenAI).categoriaPrimeiraTentativa,
+    'resposta_truncada',
+    'a 1a tentativa truncada precisa continuar sinalizada mesmo com a 2a falhando por outro motivo'
+  );
+});
+
+test('INT-20: primeira resposta truncada, segunda completa -- uma unica repeticao, somente a segunda saida e aceita', async () => {
+  const { fetchFalso, chamadas } = criarFetchFalso([
+    () => respostaComStatusInvalido('in_progress'),
+    () => respostaSucesso([{ campo: 'procedimento_id', acao: 'informar', valor: 'limpeza' }]),
+  ]);
+  const cliente = criarCliente({ fetch: fetchFalso });
+
+  const resultado = await cliente.executar(entradaValida());
+
+  assert.equal(chamadas.length, 2, 'uma unica repeticao apos o truncamento');
+  assert.deepEqual(resultado, {
+    natureza_mensagem: 'pedido',
+    alteracoes: { procedimento_id: { acao: 'informar', valor: 'limpeza' } },
+    eventos_candidatos: [],
+    dentistas_candidatos: null,
+  });
+});
+
+test('INT-22: fragmento de acao dentro de uma resposta truncada e integralmente descartado, nenhum efeito parcial', async () => {
+  // Simula o formato mais perigoso de truncamento: o texto contem um
+  // fragmento que PARECE uma alteracao valida (campo/acao/valor
+  // reconheciveis), mas o envelope indica status incompleto. O adaptador
+  // nunca deve tentar interpretar esse fragmento -- so o status decide.
+  const corpoComFragmento = {
+    status: 'incomplete',
+    output: [
+      {
+        type: 'message',
+        content: [
+          {
+            type: 'output_text',
+            text: '{"natureza_mensagem":"pedido","alteracoes":[{"campo":"procedimento_id","acao":"informar","valor":"clarea',
+          },
+        ],
+      },
+    ],
+  };
+  const { fetchFalso, chamadas } = criarFetchFalso([
+    () => new Response(JSON.stringify(corpoComFragmento), { status: 200 }),
+    () => respostaSucesso([]),
+  ]);
+  const cliente = criarCliente({ fetch: fetchFalso });
+
+  const resultado = await cliente.executar(entradaValida());
+
+  // a segunda tentativa (completa, sem alteracoes) e a UNICA fonte aceita --
+  // o fragmento da primeira nunca aparece no resultado nem em forma parcial.
+  assert.deepEqual(resultado, {
+    natureza_mensagem: 'pedido',
+    alteracoes: {},
+    eventos_candidatos: [],
+    dentistas_candidatos: null,
+  });
+  assert.equal(chamadas.length, 2);
+});
+
+test('INT-22b: se as duas tentativas truncarem, o fragmento de acao nunca aparece no erro sanitizado', async () => {
+  const corpoComFragmento = {
+    status: 'incomplete',
+    output: [
+      {
+        type: 'message',
+        content: [{ type: 'output_text', text: '{"alteracoes":[{"campo":"procedimento_id","acao":"remover' }],
+      },
+    ],
+  };
+  const { fetchFalso } = criarFetchFalso([() => new Response(JSON.stringify(corpoComFragmento), { status: 200 })]);
+  const cliente = criarCliente({ fetch: fetchFalso });
+
+  let erro: unknown;
+  try {
+    await cliente.executar(entradaValida());
+  } catch (e) {
+    erro = e;
+  }
+
+  assertCategoria(erro, 'resposta_truncada');
+  const representacao = JSON.stringify(erro) + (erro as Error).message + (erro as ErroClienteModeloOpenAI).codigo;
+  assert.ok(!representacao.includes('procedimento_id'));
+  assert.ok(!representacao.includes('remover'));
 });
 
 test('correcao5e: recusa/filtro tem prioridade mesmo quando status tambem esta ausente ou invalido', async () => {
@@ -1588,12 +1721,14 @@ test('correcao4-4: valor numerico ambiguo (epoch em segundos) e tratado como del
 // --- Correcao 2: WeakMap privado, nenhuma forma de reflexao revela Retry-After ---
 
 // Conjunto exato de propriedades publicas que a instancia de
-// ErroClienteModeloOpenAI pode ter: os seis campos aprovados mais as tres
-// propriedades padrao de qualquer instancia de Error (name, message,
-// stack). Usado para comparacao de conjunto exato (nao so "pertence a
-// lista"), tanto em Object.getOwnPropertyNames quanto em Reflect.ownKeys
-// -- qualquer propriedade a mais (ex.: retryAfterMs) ou a menos deve
-// fazer o teste falhar.
+// ErroClienteModeloOpenAI pode ter: os sete campos aprovados (o setimo,
+// categoriaPrimeiraTentativa, adicionado em 24/08/2026 pela politica de
+// tentativas -- ver o cabecalho da classe) mais as tres propriedades
+// padrao de qualquer instancia de Error (name, message, stack). Usado
+// para comparacao de conjunto exato (nao so "pertence a lista"), tanto em
+// Object.getOwnPropertyNames quanto em Reflect.ownKeys -- qualquer
+// propriedade a mais (ex.: retryAfterMs) ou a menos deve fazer o teste
+// falhar.
 const PROPRIEDADES_PUBLICAS_ESPERADAS_DO_ERRO = [
   'categoria',
   'codigo',
@@ -1601,12 +1736,13 @@ const PROPRIEDADES_PUBLICAS_ESPERADAS_DO_ERRO = [
   'duracaoMs',
   'modelo',
   'statusHttp',
+  'categoriaPrimeiraTentativa',
   'name',
   'message',
   'stack',
 ].sort();
 
-test('correcao4-7: Object.getOwnPropertyNames corresponde exatamente as nove propriedades permitidas (nenhuma a mais, nenhuma a menos)', async () => {
+test('correcao4-7: Object.getOwnPropertyNames corresponde exatamente as dez propriedades permitidas (nenhuma a mais, nenhuma a menos)', async () => {
   const { fetchFalso } = criarFetchFalso([() => respostaErroHttp(429, {}, { 'Retry-After': '3600' })]);
   const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 100, prazoTotalMs: 200 });
   let erro: unknown;
@@ -1633,7 +1769,7 @@ test('correcao4-8: Object.getOwnPropertySymbols nao revela nenhum Retry-After', 
   assert.deepEqual(Object.getOwnPropertySymbols(erro as object), []);
 });
 
-test('correcao4-9: Reflect.ownKeys corresponde exatamente as mesmas nove chaves string, sem nenhum Symbol', async () => {
+test('correcao4-9: Reflect.ownKeys corresponde exatamente as mesmas dez chaves string, sem nenhum Symbol', async () => {
   const { fetchFalso } = criarFetchFalso([() => respostaErroHttp(429, {}, { 'Retry-After': '3600' })]);
   const cliente = criarCliente({ fetch: fetchFalso, esperaEntreTentativasMs: 5, timeoutPorTentativaMs: 100, prazoTotalMs: 200 });
   let erro: unknown;
@@ -1644,7 +1780,7 @@ test('correcao4-9: Reflect.ownKeys corresponde exatamente as mesmas nove chaves 
   }
   assertCategoria(erro, 'limite_taxa');
   const chaves = Reflect.ownKeys(erro as object);
-  assert.equal(chaves.length, PROPRIEDADES_PUBLICAS_ESPERADAS_DO_ERRO.length, 'nenhuma chave alem das nove esperadas (nem string extra, nem symbol)');
+  assert.equal(chaves.length, PROPRIEDADES_PUBLICAS_ESPERADAS_DO_ERRO.length, 'nenhuma chave alem das dez esperadas (nem string extra, nem symbol)');
   assert.deepEqual(
     chaves.filter((chave) => typeof chave === 'symbol'),
     [],
