@@ -134,10 +134,25 @@ async function buscarClinica(cliente: ClienteBancoDados, clinicaId: string): Pro
 // sabado (bool) + sab_ini/sab_fim, alm_ini/alm_fim, dur (modo auto),
 // procedimentos[] com {id, tempo, ativo} (modo procedimento). Sem campo de
 // domingo -- nenhuma clinica atende, tratado como jornada sempre vazia.
+//
+// dias_semana (specs/dias-atendimento-dentista-v1.md): liga/desliga cada dia
+// de segunda a sexta individualmente SO para a oferta automatica da Iris.
+// Campo ou chave ausente = true (compat com dentista cadastrado antes desta
+// mudanca). Nao afeta sabado/domingo nem o agendamento manual -- este
+// carregador so alimenta resolverDisponibilidade, nunca a rota manual.
+interface DiasSemanaConfig {
+  seg?: unknown;
+  ter?: unknown;
+  qua?: unknown;
+  qui?: unknown;
+  sex?: unknown;
+}
+
 interface DentistaCarregado {
   modo: unknown;
   inicio: unknown;
   fim: unknown;
+  dias_semana: unknown;
   sabado: unknown;
   sab_ini: unknown;
   sab_fim: unknown;
@@ -158,6 +173,7 @@ function encontrarDentista(dentistasBrutos: unknown, dentistaId: string): Dentis
     modo: registro.modo,
     inicio: registro.inicio,
     fim: registro.fim,
+    dias_semana: registro.dias_semana,
     sabado: registro.sabado,
     sab_ini: registro.sab_ini,
     sab_fim: registro.sab_fim,
@@ -166,6 +182,25 @@ function encontrarDentista(dentistasBrutos: unknown, dentistaId: string): Dentis
     dur: registro.dur,
     procedimentos: registro.procedimentos,
   };
+}
+
+// dia local 0=segunda .. 4=sexta -> chave em dias_semana. Ausencia da chave,
+// do objeto inteiro, ou valor que nao seja booleano estrito = dia ativo
+// (mesma regra de compat que o resto do carregador aplica a campos novos).
+const CHAVE_DIA_SEMANA: Record<number, keyof DiasSemanaConfig> = {
+  0: 'seg',
+  1: 'ter',
+  2: 'qua',
+  3: 'qui',
+  4: 'sex',
+};
+
+function diaUtilAtivo(dentista: DentistaCarregado, diaSemana: number): boolean {
+  const config = dentista.dias_semana;
+  if (config === null || typeof config !== 'object') return true;
+  const chave = CHAVE_DIA_SEMANA[diaSemana];
+  const valor = (config as Record<string, unknown>)[chave];
+  return valor !== false;
 }
 
 // --- Duracao (alimenta resolverDuracao, ja pronto -- nunca reimplementado) ---
@@ -232,6 +267,7 @@ function construirJornadas(
     inicio = dentista.sab_ini;
     fim = dentista.sab_fim;
   } else {
+    if (!diaUtilAtivo(dentista, diaSemana)) return { tipo: 'sem_expediente_no_dia', motivo: 'profissional_nao_atende' };
     inicio = dentista.inicio;
     fim = dentista.fim;
   }

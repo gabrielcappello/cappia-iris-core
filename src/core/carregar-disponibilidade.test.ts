@@ -9,6 +9,8 @@ const PROCEDIMENTO_ID = 'cleaning';
 
 // 2026-08-03 = segunda, 2026-08-08 = sabado, 2026-08-09 = domingo (verificado).
 const SEGUNDA = '2026-08-03';
+const QUARTA = '2026-08-05';
+const SEXTA = '2026-08-07';
 const SABADO = '2026-08-08';
 const DOMINGO = '2026-08-09';
 
@@ -157,6 +159,126 @@ test('sabado com sabado=true: usa sab_ini/sab_fim, nunca inicio/fim de semana', 
   assert.deepEqual(resultado.entrada.jornadas, [
     { clinica_id: CLINICA_ID, dentista_id: DENTISTA_ID, data: SABADO, inicio_min: 540, fim_min: 780 },
   ]);
+});
+
+test('dias_semana ausente: comportamento identico ao atual em todo dia util (compat)', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  semearClinica(tabelas, [dentistaAuto()]);
+  const cliente = new ClienteFalso(tabelas);
+
+  for (const data of [SEGUNDA, QUARTA, SEXTA]) {
+    const resultado = await carregarEntradaDisponibilidade(cliente, {
+      clinica_id: CLINICA_ID,
+      dentista_id: DENTISTA_ID,
+      procedimento_id: PROCEDIMENTO_ID,
+      data,
+      instante_atual: INSTANTE_ATUAL,
+      modo: { tipo: 'grade' },
+    });
+
+    assert.equal(resultado.tipo, 'carregado');
+    if (resultado.tipo !== 'carregado') continue;
+    assert.deepEqual(resultado.entrada.jornadas, [
+      { clinica_id: CLINICA_ID, dentista_id: DENTISTA_ID, data, inicio_min: 480, fim_min: 720 },
+    ]);
+  }
+});
+
+test('dias_semana.qua=false: sem expediente so na quarta, terca e quinta continuam normais', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  semearClinica(tabelas, [dentistaAuto({ dias_semana: { qua: false } })]);
+  const cliente = new ClienteFalso(tabelas);
+
+  const resultadoQuarta = await carregarEntradaDisponibilidade(cliente, {
+    clinica_id: CLINICA_ID,
+    dentista_id: DENTISTA_ID,
+    procedimento_id: PROCEDIMENTO_ID,
+    data: QUARTA,
+    instante_atual: INSTANTE_ATUAL,
+    modo: { tipo: 'grade' },
+  });
+  assert.equal(resultadoQuarta.tipo, 'carregado');
+  if (resultadoQuarta.tipo !== 'carregado') return;
+  assert.deepEqual(resultadoQuarta.entrada.jornadas, []);
+  assert.equal(resultadoQuarta.entrada.sem_expediente_no_dia, 'profissional_nao_atende');
+  assert.deepEqual(resultadoQuarta.resultado, { tipo: 'sem_expediente_no_dia', motivo: 'profissional_nao_atende' });
+
+  // segunda nao esta em dias_semana (so qua foi setado) -- continua ativa.
+  const resultadoSegunda = await carregarEntradaDisponibilidade(cliente, {
+    clinica_id: CLINICA_ID,
+    dentista_id: DENTISTA_ID,
+    procedimento_id: PROCEDIMENTO_ID,
+    data: SEGUNDA,
+    instante_atual: INSTANTE_ATUAL,
+    modo: { tipo: 'grade' },
+  });
+  assert.equal(resultadoSegunda.tipo, 'carregado');
+  if (resultadoSegunda.tipo !== 'carregado') return;
+  assert.deepEqual(resultadoSegunda.entrada.jornadas, [
+    { clinica_id: CLINICA_ID, dentista_id: DENTISTA_ID, data: SEGUNDA, inicio_min: 480, fim_min: 720 },
+  ]);
+});
+
+test('dias_semana com todos os dias uteis false: zero dias ativos e estado valido, nunca configuracao_ilegivel', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  semearClinica(tabelas, [
+    dentistaAuto({ dias_semana: { seg: false, ter: false, qua: false, qui: false, sex: false } }),
+  ]);
+  const cliente = new ClienteFalso(tabelas);
+
+  for (const data of [SEGUNDA, QUARTA, SEXTA]) {
+    const resultado = await carregarEntradaDisponibilidade(cliente, {
+      clinica_id: CLINICA_ID,
+      dentista_id: DENTISTA_ID,
+      procedimento_id: PROCEDIMENTO_ID,
+      data,
+      instante_atual: INSTANTE_ATUAL,
+      modo: { tipo: 'grade' },
+    });
+
+    assert.equal(resultado.tipo, 'carregado');
+    if (resultado.tipo !== 'carregado') continue;
+    assert.deepEqual(resultado.resultado, { tipo: 'sem_expediente_no_dia', motivo: 'profissional_nao_atende' });
+  }
+});
+
+test('dias_semana nao interfere em sabado nem domingo', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  semearClinica(tabelas, [
+    dentistaAuto({
+      dias_semana: { seg: false, ter: false, qua: false, qui: false, sex: false },
+      sabado: true,
+      sab_ini: '09:00',
+      sab_fim: '13:00',
+    }),
+  ]);
+  const cliente = new ClienteFalso(tabelas);
+
+  const resultadoSabado = await carregarEntradaDisponibilidade(cliente, {
+    clinica_id: CLINICA_ID,
+    dentista_id: DENTISTA_ID,
+    procedimento_id: PROCEDIMENTO_ID,
+    data: SABADO,
+    instante_atual: INSTANTE_ATUAL,
+    modo: { tipo: 'grade' },
+  });
+  assert.equal(resultadoSabado.tipo, 'carregado');
+  if (resultadoSabado.tipo !== 'carregado') return;
+  assert.deepEqual(resultadoSabado.entrada.jornadas, [
+    { clinica_id: CLINICA_ID, dentista_id: DENTISTA_ID, data: SABADO, inicio_min: 540, fim_min: 780 },
+  ]);
+
+  const resultadoDomingo = await carregarEntradaDisponibilidade(cliente, {
+    clinica_id: CLINICA_ID,
+    dentista_id: DENTISTA_ID,
+    procedimento_id: PROCEDIMENTO_ID,
+    data: DOMINGO,
+    instante_atual: INSTANTE_ATUAL,
+    modo: { tipo: 'grade' },
+  });
+  assert.equal(resultadoDomingo.tipo, 'carregado');
+  if (resultadoDomingo.tipo !== 'carregado') return;
+  assert.deepEqual(resultadoDomingo.resultado, { tipo: 'sem_expediente_no_dia', motivo: 'domingo' });
 });
 
 test('agendamento confirmado ocupa horario; agendamento cancelado nao ocupa', async () => {
