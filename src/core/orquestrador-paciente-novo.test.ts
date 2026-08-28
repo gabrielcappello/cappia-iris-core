@@ -108,8 +108,8 @@ function entrada(mensagem: string) {
   };
 }
 
-// Cenario 1 (spec secao 6): sem nenhum concluido -> fato presente.
-test('1. paciente sem nenhum concluido nesta clinica: fato presente em saudacao', async () => {
+// Paciente ja cadastrado nao recebe recomendacao automatica de avaliacao.
+test('paciente cadastrado, mesmo sem agendamento: fato ausente em saudacao', async () => {
   const tabelas = criarTabelasFalsasVazias();
   const { clinicaId, pacienteId } = montarCenario(tabelas);
   semearConversa(tabelas, clinicaId, pacienteId);
@@ -121,12 +121,46 @@ test('1. paciente sem nenhum concluido nesta clinica: fato presente em saudacao'
     entrada('oi')
   );
 
-  assert.equal(resultado.paciente_novo_na_clinica, true);
+  assert.ok(!('paciente_novo_na_clinica' in resultado));
 });
 
-// Cenario 2: concluido em OUTRA clinica nao conta -- isolamento multiclinica
-// no nivel de turno completo, nao so na unidade verificarPacienteNovo.
-test('2. concluido em outra clinica nao torna o paciente conhecido aqui', async () => {
+test('primeiro turno: tratamento chega a redatora, mas nao a interpretadora, sem autorizar avaliacao', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const { clinicaId, pacienteId, procedimentoId } = montarCenario(tabelas);
+  semearConversa(tabelas, clinicaId, pacienteId);
+
+  const modelo = new ClienteModeloFalso([{ natureza_mensagem: 'saudacao', alteracoes: {} }]);
+  const rpc = new ClienteRpcFalso({
+    iris_nova_tratamentos_aprovados: {
+      data: [{ descricao: 'Limpeza', procedimento_id: procedimentoId, para_agendar: true }],
+      error: null,
+    },
+  });
+
+  const resultado = await processarMensagem(
+    modelo,
+    new ClienteFalso(tabelas),
+    rpc,
+    entrada('ola, bom dia')
+  );
+
+  assert.equal(resultado.decisao.tipo, 'saudacao');
+  assert.equal(resultado.tratamentos_aprovados?.length, 1);
+  assert.ok(
+    !('tratamentos_pendentes' in modelo.chamadas[0].payload),
+    'sem historico, a interpretadora nao pode correlacionar mensagem vaga ao tratamento'
+  );
+  assert.equal(
+    rpc.chamadas.filter((chamada) => chamada.nome === 'iris_nova_tratamentos_aprovados').length,
+    1,
+    'a redatora faz uma unica leitura no primeiro turno'
+  );
+  assert.ok(!('paciente_novo_na_clinica' in resultado));
+});
+
+// Cadastro nesta clinica e a unica referencia; historico em outra clinica
+// nao muda esse fato.
+test('paciente cadastrado nesta clinica continua conhecido mesmo com concluido apenas em outra', async () => {
   const tabelas = criarTabelasFalsasVazias();
   const { clinicaId, pacienteId } = montarCenario(tabelas);
   const outraClinicaId = crypto.randomUUID();
@@ -140,7 +174,7 @@ test('2. concluido em outra clinica nao torna o paciente conhecido aqui', async 
     entrada('oi')
   );
 
-  assert.equal(resultado.paciente_novo_na_clinica, true);
+  assert.ok(!('paciente_novo_na_clinica' in resultado));
 });
 
 // Cenario 3: paciente com concluido nesta clinica -> fato AUSENTE, nunca `false`.
@@ -162,7 +196,7 @@ test('3. paciente com concluido nesta clinica: fato ausente (nunca false)', asyn
 
 // Cenario 5: decisao `desistencia` -> fato ausente, mesmo criterio de exclusao
 // que `agendamentos_do_paciente` ja usa.
-test('5. desistencia: fato ausente mesmo com paciente novo', async () => {
+test('desistencia: fato ausente para paciente cadastrado', async () => {
   const tabelas = criarTabelasFalsasVazias();
   const { clinicaId, pacienteId } = montarCenario(tabelas);
   semearConversa(tabelas, clinicaId, pacienteId);
@@ -180,7 +214,7 @@ test('5. desistencia: fato ausente mesmo com paciente novo', async () => {
 
 // `aguardando_procedimento`: uma das 4 decisoes elegiveis (spec secao 3),
 // alem das 3 conversacionais ja cobertas acima.
-test('paciente novo, decisao aguardando_procedimento: fato presente', async () => {
+test('paciente cadastrado, decisao aguardando_procedimento: fato ausente', async () => {
   const tabelas = criarTabelasFalsasVazias();
   const { clinicaId, pacienteId } = montarCenario(tabelas);
   semearConversa(tabelas, clinicaId, pacienteId);
@@ -196,7 +230,7 @@ test('paciente novo, decisao aguardando_procedimento: fato presente', async () =
   );
 
   assert.equal(resultado.decisao.tipo, 'aguardando_procedimento');
-  assert.equal(resultado.paciente_novo_na_clinica, true);
+  assert.ok(!('paciente_novo_na_clinica' in resultado));
 });
 
 // Cenario 4 (spec secao 6): paciente novo, mas ja nomeou o procedimento --
@@ -222,14 +256,14 @@ test('4. paciente novo com procedimento ja resolvido: segue fluxo normal, sem in
   assert.ok(!('paciente_novo_na_clinica' in resultado));
 });
 
-// Paciente sem ficha (`paciente.id === null`): sem consulta ao banco, fato
-// ausente -- mesma guarda que `agendamentos_do_paciente` ja usa.
+// Paciente sem ficha (`paciente.id === null`): este e o unico paciente novo
+// elegivel para a recomendacao de avaliacao inicial.
 //
 // `identificacao.paciente.id` vem da tabela `pacientes` POR TELEFONE, nunca
 // de `estado_conversa.paciente_id` -- por isso o telefone usado aqui e um
 // que nao tem ficha nenhuma (mesmo padrao do teste 6 de
 // orquestrador-consulta-agendamento.test.ts).
-test('paciente nao identificado: fato ausente, sem consulta a agendamentos por este motivo', async () => {
+test('paciente sem cadastro: fato presente, sem consulta adicional a agendamentos', async () => {
   const tabelas = criarTabelasFalsasVazias();
   montarCenario(tabelas);
 
@@ -246,5 +280,5 @@ test('paciente nao identificado: fato ausente, sem consulta a agendamentos por e
     }
   );
 
-  assert.ok(!('paciente_novo_na_clinica' in resultado));
+  assert.equal(resultado.paciente_novo_na_clinica, true);
 });

@@ -404,15 +404,9 @@ test('8. a busca acontece DEPOIS da decisao -- inclui o agendamento criado no pr
   // UMA consulta de agendamento ATIVO por turno -- nunca uma por consumidor
   // (a busca da interpretadora e reaproveitada aqui, por `finalizar`).
   //
-  // A SEGUNDA chamada e de `verificarPacienteNovo`
-  // (specs/recomendacao-avaliacao-paciente-novo-v1.md), consulta DIFERENTE
-  // e deliberada: filtra `status='concluido'` (historico), nunca
-  // `'confirmado'` (agendamento ativo) -- escopos distintos que a busca de
-  // agendamento ativo nao cobre, entao nao ha o que reaproveitar. So roda
-  // nas 4 decisoes elegiveis (saudacao/duvida_livre/mensagem_nao_
-  // compreendida/aguardando_procedimento), nunca nos fluxos operacionais de
-  // reserva/remarcacao/cancelamento.
-  assert.equal(clienteBanco.estatisticas.chamadasSelect.agendamentos, 2);
+  // Paciente novo agora significa ficha inexistente nesta clinica; nenhuma
+  // segunda consulta de historico e necessaria.
+  assert.equal(clienteBanco.estatisticas.chamadasSelect.agendamentos, 1);
 });
 
 test('fato entregue a redatora e texto pronto, com dia da semana calculado pelo Core', () => {

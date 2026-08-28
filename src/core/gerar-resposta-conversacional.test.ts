@@ -149,6 +149,39 @@ test('a redatora recebe a mensagem crua do paciente e os fatos derivados da deci
   assert.equal(capturada[0].fatos.objetivo, 'cumprimentar_e_oferecer_ajuda');
 });
 
+test('primeira saudacao: redatora recebe nome e tratamento mesmo sem historico', async () => {
+  const { cliente, capturada } = clienteQueCaptura();
+  await gerarRespostaConversacional(cliente, {
+    decisao: DECISAO_SAUDACAO,
+    mensagemPaciente: 'ola, boa noite',
+    naturezaMensagem: 'saudacao',
+    historicoConversa: null,
+    dataHoje: HOJE,
+    cadastroConhecido: { nome: 'Gabriel Capello' },
+    tratamentosAprovados: [
+      {
+        procedimento: 'Restauracao / Carie (2+ faces)',
+        dente: '17',
+        procedimento_id: 'restoration_2',
+        dentista_nome: 'Dr. Diego Ramoz',
+        indicado_pelo_dentista: true,
+      },
+    ],
+  });
+
+  assert.equal('historicoRecente' in capturada[0], false);
+  assert.equal(capturada[0].fatos.cadastro_conhecido?.nome, 'Gabriel Capello');
+  assert.deepEqual(capturada[0].fatos.tratamentos_aprovados, [
+    {
+      procedimento: 'Restauracao / Carie (2+ faces)',
+      dente: '17',
+      procedimento_id: 'restoration_2',
+      dentista_nome: 'Dr. Diego Ramoz',
+      indicado_pelo_dentista: true,
+    },
+  ]);
+});
+
 test('a redatora recebe natureza_mensagem repassada sem alteracao', async () => {
   const { cliente, capturada } = clienteQueCaptura();
   await gerarRespostaConversacional(cliente, {

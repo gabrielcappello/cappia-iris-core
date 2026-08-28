@@ -8,7 +8,6 @@ import { carregarEntradaDisponibilidade } from './carregar-disponibilidade.ts';
 import { carregarCatalogo } from './carregar-catalogo.ts';
 import { reservarAgendamento } from './reservar-agendamento.ts';
 import { buscarAgendamentoAtivo } from './buscar-agendamento-ativo.ts';
-import { verificarPacienteNovo } from './verificar-paciente-novo.ts';
 import { remarcarAgendamento } from './remarcar-agendamento.ts';
 import { cancelarAgendamento } from './cancelar-agendamento.ts';
 import { persistirPaciente } from './persistir-paciente.ts';
@@ -450,18 +449,22 @@ export async function processarMensagem(
 
     // Tratamentos APROVADOS e ainda por agendar (2026-08-18).
     //
-    // Buscados SO nas decisoes conversacionais -- as mesmas em que os
-    // agendamentos do paciente ja sao contexto. Num turno que esta cancelando
-    // ou reservando, o paciente ja disse o que quer: oferecer outra coisa
-    // seria atropelar o pedido dele, e a consulta seria desperdicada.
+    // A interpretadora so recebe tratamentos quando ja existe historico: e o
+    // historico que autoriza correlacionar uma resposta vaga ("pode ser
+    // amanha") ao procedimento que a Iris anunciou antes. Essa trava fica
+    // intacta acima.
     //
-    // Essa restricao tambem preserva uma garantia que os testes cobrem: nos
-    // caminhos onde nenhuma RPC deve ser chamada, nenhuma e.
-    // REAPROVEITA a busca feita antes da interpretacao -- uma consulta por
-    // turno, nunca duas (o mesmo cuidado ja aplicado aos agendamentos).
-    const tratamentosParaRedatora = DECISOES_COM_CONTEXTO_DE_AGENDAMENTO.includes(decisao.tipo)
-      ? tratamentosParaInterpretacao
-      : undefined;
+    // A redatora tem outra necessidade: num primeiro "ola" ela deve poder
+    // INFORMAR o tratamento pendente, sem interpretar a mensagem como escolha
+    // daquele tratamento. Por isso, nas decisoes conversacionais, fazemos a
+    // leitura mesmo sem historico. Quando a interpretadora ja fez a leitura,
+    // reaproveitamos o resultado -- nunca duas consultas no mesmo turno.
+    let tratamentosParaRedatora: readonly TratamentoAprovado[] | undefined;
+    if (DECISOES_COM_CONTEXTO_DE_AGENDAMENTO.includes(decisao.tipo) && identificacao.paciente.id !== null) {
+      tratamentosParaRedatora =
+        tratamentosParaInterpretacao ??
+        (await buscarTratamentosAprovados(clienteRpc, identificacao.clinica_id, identificacao.paciente.id));
+    }
 
     // POLITICA DE FALHA, deliberadamente diferente por caminho:
     //
@@ -487,16 +490,12 @@ export async function processarMensagem(
     // conversacionais mais `aguardando_procedimento`, nunca nos passos
     // seguintes de agendamento, onde o fato deixaria de fazer sentido.
     //
-    // Consulta PROPRIA, separada de `buscarAgendamentosParaContexto`: aquela
-    // e sobre agendamento FUTURO (`confirmado`), esta e sobre HISTORICO
-    // (`concluido`) -- escopos diferentes, nao ha o que reaproveitar.
+    // A identificacao ja informa se existe ficha nesta clinica. Nao ha
+    // consulta adicional: paciente novo, para esta regra, e somente quem
+    // ainda nao possui cadastro.
     let pacienteNovoNaClinica: true | undefined;
-    if (DECISOES_PACIENTE_NOVO.includes(decisao.tipo) && identificacao.paciente.id !== null) {
-      const novo = await verificarPacienteNovo(clienteBanco, {
-        clinica_id: identificacao.clinica_id,
-        paciente_id: identificacao.paciente.id,
-      });
-      if (novo) pacienteNovoNaClinica = true;
+    if (DECISOES_PACIENTE_NOVO.includes(decisao.tipo) && identificacao.paciente.id === null) {
+      pacienteNovoNaClinica = true;
     }
 
     let atualizadoEmParaContexto = atualizadoEmDaDecisao;
