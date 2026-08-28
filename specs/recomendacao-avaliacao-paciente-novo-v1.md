@@ -139,7 +139,9 @@ v1.md`. Não bloqueia esta spec: as duas evoluem independentes, e o fato
 4. Paciente cadastrado com tratamento aprovado pendente → `tratamentos_aprovados`
    presente e `paciente_novo_na_clinica` ausente; a resposta trata somente
    do procedimento pendente e, no máximo, pergunta se o contato é sobre
-   outro assunto.
+   outro assunto. Se a mensagem for apenas uma saudação, esse tratamento
+   vira o objetivo principal da resposta, nunca contexto secundário de uma
+   oferta genérica de ajuda.
 5. Paciente sem cadastro, mas `procedimento_id` já resolvido no turno (paciente
    nomeou o procedimento) → fato pode estar presente, mas não altera
    `objetivo` nem decisão — segue fluxo normal de agendamento.

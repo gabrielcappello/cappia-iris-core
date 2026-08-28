@@ -48,6 +48,7 @@ export type CampoFaltante =
  */
 export type ObjetivoResposta =
   | 'cumprimentar_e_oferecer_ajuda'
+  | 'cumprimentar_e_mencionar_tratamento_pendente'
   | 'pedir_procedimento'
   | 'escolher_entre_procedimentos'
   | 'escolher_entre_dentistas'
@@ -495,7 +496,16 @@ export function derivarFatosAutorizados(
   }
 
   if (tratamentosAprovados !== undefined && tratamentosAprovados.length > 0) {
-    fatos = { ...fatos, tratamentos_aprovados: [...tratamentosAprovados] };
+    fatos = {
+      ...fatos,
+      // Numa saudacao pura, o tratamento nao e mero contexto: e o assunto
+      // mais provavel do contato. Torná-lo objetivo principal evita que a
+      // redatora priorize o objetivo generico de apenas oferecer ajuda.
+      ...(decisao.tipo === 'saudacao'
+        ? { objetivo: 'cumprimentar_e_mencionar_tratamento_pendente' as const }
+        : {}),
+      tratamentos_aprovados: [...tratamentosAprovados],
+    };
   }
 
   if (precos !== undefined) {

@@ -170,6 +170,7 @@ test('primeira saudacao: redatora recebe nome e tratamento mesmo sem historico',
   });
 
   assert.equal('historicoRecente' in capturada[0], false);
+  assert.equal(capturada[0].fatos.objetivo, 'cumprimentar_e_mencionar_tratamento_pendente');
   assert.equal(capturada[0].fatos.cadastro_conhecido?.nome, 'Gabriel Capello');
   assert.deepEqual(capturada[0].fatos.tratamentos_aprovados, [
     {
