@@ -85,6 +85,64 @@ test('payload: a chave e OMITIDA (nao `null`, nao `[]`) quando nao ha snapshot',
   assert.equal('horarios_oferecidos' in payload, false);
 });
 
+test('payload: tratamento pendente e dentista definido chegam intactos ate a interpretadora', async () => {
+  const { fetchFalso, corpos } = criarFetchCaptor();
+  const tratamentos = [
+    {
+      procedimento_id: 'restoration_2',
+      nome_pt: 'Restauracao / Carie (2+ faces)',
+      dente: '17',
+      dentista_id: 'dentista-diego',
+      assunto_atual: true as const,
+    },
+  ];
+
+  await extrairAlteracoes(
+    cliente(fetchFalso),
+    construirEntradaMinimizada(
+      ['qual dia pode me oferecer para fazer essa retaruação?'],
+      {},
+      undefined,
+      undefined,
+      undefined,
+      [
+        { procedimento_id: 'restoration_2', nome_pt: 'Restauracao / Carie (2+ faces)' },
+        { procedimento_id: 'canal_retreatment', nome_pt: 'Retratamento de canal' },
+      ],
+      [{ dentista_id: 'dentista-diego', nome_exibido: 'Dr. Diego' }],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      tratamentos
+    )
+  );
+
+  assert.deepEqual(payloadEnviado(corpos[0]).tratamentos_pendentes, tratamentos);
+});
+
+test('payload: tratamentos_pendentes e omitido quando nao ha tratamento em foco', async () => {
+  const { fetchFalso, corpos } = criarFetchCaptor();
+  await extrairAlteracoes(cliente(fetchFalso), construirEntradaMinimizada(['quero uma limpeza'], {}));
+  assert.equal('tratamentos_pendentes' in payloadEnviado(corpos[0]), false);
+});
+
+test('payload: tratamentos_pendentes invalido e rejeitado antes da chamada ao modelo', async () => {
+  const { fetchFalso, corpos } = criarFetchCaptor();
+  await assert.rejects(
+    () =>
+      extrairAlteracoes(cliente(fetchFalso), {
+        mensagens_atuais: ['amanha'],
+        dados_atuais: {},
+        campos_cadastrais_preenchidos: [],
+        tratamentos_pendentes: [{ procedimento_id: '', nome_pt: 'Restauracao' }],
+      }),
+    EntradaInvalidaError
+  );
+  assert.equal(corpos.length, 0);
+});
+
 test('payload: o snapshot nunca contamina dados_atuais nem campos_cadastrais_preenchidos', async () => {
   const { fetchFalso, corpos } = criarFetchCaptor();
   await extrairAlteracoes(

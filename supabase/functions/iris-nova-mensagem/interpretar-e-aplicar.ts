@@ -519,7 +519,8 @@ export async function interpretarEAplicar(
       entrada.cadastro_paciente,
       entrada.troca_telefone_pendente,
       entrada.agendamentos_ativos,
-      entrada.agendamentos_do_paciente
+      entrada.agendamentos_do_paciente,
+      entrada.tratamentos_pendentes
     )
   );
 

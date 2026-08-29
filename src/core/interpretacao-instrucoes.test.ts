@@ -94,6 +94,19 @@ test('instrucoes: tolerancia a erro de digitacao NUNCA se aplica a dados de iden
   assert.match(INSTRUCOES_EXTRATOR, /Se o paciente escreveu "Gabirel", o nome dele PODE ser exatamente esse/);
 });
 
+test('instrucoes: tratamento em foco vence grafia imperfeita; troca exige pedido semanticamente claro', () => {
+  assert.match(INSTRUCOES_EXTRATOR, /erro de digitacao ou grafia imperfeita NAO autoriza procurar outro item parecido/);
+  assert.match(INSTRUCOES_EXTRATOR, /preserve o id do assunto atual/);
+  assert.match(INSTRUCOES_EXTRATOR, /Outro procedimento so prevalece quando o paciente expressar semanticamente um pedido claro/);
+  assert.match(INSTRUCOES_EXTRATOR, /"qual dia pode fazer essa retaruação\?" continua sendo essa restauracao/);
+});
+
+test('instrucoes: dentista do tratamento e aplicado pelo Core, nao fingido como mencao do paciente', () => {
+  assert.match(INSTRUCOES_EXTRATOR, /Nao o copie para "dentistas_candidatos"/);
+  assert.match(INSTRUCOES_EXTRATOR, /esse campo continua respondendo somente a quem o PACIENTE mencionou/);
+  assert.match(INSTRUCOES_EXTRATOR, /o sistema preservara o dentista definido no tratamento/);
+});
+
 test('instrucoes: horario e normalizado para HH:MM em 24h quando inequivoco', () => {
   assert.match(INSTRUCOES_EXTRATOR, /Horarios sao normalizados para o formato HH:MM em 24 horas/);
   assert.match(INSTRUCOES_EXTRATOR, /"15h", "15 hrs", "15 horas", "as 15" e "quinze horas" tornam-se todos "15:00"/);

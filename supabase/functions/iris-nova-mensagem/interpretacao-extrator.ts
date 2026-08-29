@@ -69,6 +69,9 @@ export async function extrairAlteracoes(
     ...(entradaBruta.agendamentos_ativos !== undefined
       ? { agendamentos_ativos: [...entradaBruta.agendamentos_ativos] }
       : {}),
+    ...(entradaBruta.tratamentos_pendentes !== undefined
+      ? { tratamentos_pendentes: [...entradaBruta.tratamentos_pendentes] }
+      : {}),
     ...(entradaBruta.historico_recente !== undefined ? { historico_recente: [...entradaBruta.historico_recente] } : {}),
   };
 
@@ -121,6 +124,13 @@ export function construirEntradaMinimizada(
     procedimento_id?: string;
     data: string;
     horario: string;
+  }[],
+  tratamentosPendentes?: readonly {
+    procedimento_id: string;
+    nome_pt: string;
+    dente?: string;
+    dentista_id?: string;
+    assunto_atual?: true;
   }[]
 ): EntradaInterpretacao {
   return {
@@ -140,6 +150,9 @@ export function construirEntradaMinimizada(
     ...(agendamentosAtivos !== undefined ? { agendamentos_ativos: [...agendamentosAtivos] } : {}),
     ...(agendamentosDoPaciente !== undefined
       ? { agendamentos_do_paciente: [...agendamentosDoPaciente] }
+      : {}),
+    ...(tratamentosPendentes !== undefined
+      ? { tratamentos_pendentes: [...tratamentosPendentes] }
       : {}),
     ...(historicoRecente !== undefined ? { historico_recente: [...historicoRecente] } : {}),
   };
@@ -191,6 +204,7 @@ export const CHAVES_OPCIONAIS_INTERPRETACAO = [
   'oferta_procedimento_pendente',
   'troca_telefone_pendente',
   'agendamentos_ativos',
+  'tratamentos_pendentes',
   // CONTEXTO do que o paciente ja tem marcado (2026-08-17) -- distinto de
   // `agendamentos_ativos`, que significa "escolha qual destes".
   'agendamentos_do_paciente',
@@ -227,6 +241,7 @@ export function validarEntradaInterpretacao(entrada: unknown): asserts entrada i
     oferta_procedimento_pendente,
     troca_telefone_pendente,
     agendamentos_ativos,
+    tratamentos_pendentes,
     historico_recente,
   } = entrada as Record<string, unknown>;
   validarMensagensAtuais(mensagens_atuais);
@@ -239,7 +254,47 @@ export function validarEntradaInterpretacao(entrada: unknown): asserts entrada i
   if (oferta_procedimento_pendente !== undefined) validarOfertaProcedimentoPendente(oferta_procedimento_pendente);
   if (troca_telefone_pendente !== undefined) validarTrocaTelefonePendente(troca_telefone_pendente);
   if (agendamentos_ativos !== undefined) validarAgendamentosAtivos(agendamentos_ativos);
+  if (tratamentos_pendentes !== undefined) validarTratamentosPendentes(tratamentos_pendentes);
   if (historico_recente !== undefined) validarHistoricoRecente(historico_recente);
+}
+
+export function validarTratamentosPendentes(
+  valor: unknown
+): asserts valor is {
+  procedimento_id: string;
+  nome_pt: string;
+  dente?: string;
+  dentista_id?: string;
+  assunto_atual?: true;
+}[] {
+  if (!Array.isArray(valor) || valor.length === 0) {
+    throw new EntradaInvalidaError('tratamentos_pendentes', 'tratamentos_pendentes deve ser um array nao vazio');
+  }
+  for (const item of valor) {
+    if (item === null || typeof item !== 'object' || Array.isArray(item)) {
+      throw new EntradaInvalidaError('tratamentos_pendentes', 'tratamentos_pendentes contem item invalido');
+    }
+    const registro = item as Record<string, unknown>;
+    const permitidas = ['assunto_atual', 'dente', 'dentista_id', 'nome_pt', 'procedimento_id'];
+    if (!Object.keys(registro).every((chave) => permitidas.includes(chave))) {
+      throw new EntradaInvalidaError('tratamentos_pendentes', 'tratamentos_pendentes contem propriedade nao permitida');
+    }
+    if (typeof registro.procedimento_id !== 'string' || registro.procedimento_id.trim() === '') {
+      throw new EntradaInvalidaError('tratamentos_pendentes', 'tratamentos_pendentes contem procedimento_id invalido');
+    }
+    if (typeof registro.nome_pt !== 'string' || registro.nome_pt.trim() === '') {
+      throw new EntradaInvalidaError('tratamentos_pendentes', 'tratamentos_pendentes contem nome_pt invalido');
+    }
+    for (const opcional of ['dente', 'dentista_id'] as const) {
+      const campo = registro[opcional];
+      if (campo !== undefined && (typeof campo !== 'string' || campo.trim() === '')) {
+        throw new EntradaInvalidaError('tratamentos_pendentes', `tratamentos_pendentes contem ${opcional} invalido`);
+      }
+    }
+    if (registro.assunto_atual !== undefined && registro.assunto_atual !== true) {
+      throw new EntradaInvalidaError('tratamentos_pendentes', 'tratamentos_pendentes contem assunto_atual invalido');
+    }
+  }
 }
 
 /**
