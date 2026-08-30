@@ -24,7 +24,7 @@ import { CAMPOS_CADASTRAIS_INTERPRETACAO } from './interpretacao-tipos.ts';
 import type { CadastroPaciente, CampoDadosConversa, ClienteBancoDados, ContextoConversa, ContextoHorarios } from './tipos.ts';
 import type { ClienteModeloEstruturado, NaturezaMensagem, RespostaTrocaTelefone } from './interpretacao-tipos.ts';
 import type { ClienteRpc } from './mensagens-recebidas-tipos.ts';
-import type { InstanteAtual, ModoConsulta, OpcaoHorario } from './disponibilidade-tipos.ts';
+import type { InstanteAtual, ModoConsulta, MotivoSemExpediente, OpcaoHorario } from './disponibilidade-tipos.ts';
 import type { ResolucaoTemporalOficial } from './temporal-tipos.ts';
 import type { AgendamentoAtivo } from './buscar-agendamento-ativo.ts';
 import type {
@@ -1515,12 +1515,32 @@ async function decidir(
     // `dados.procedimento_id ?? ''` porque aqui o id pode estar ausente: a
     // primeira regra de `avaliacaoOferecivel` so precisa saber que o pedido nao
     // e a propria avaliacao, e string vazia nunca e.
+    // FECHAMENTO DA DATA JA PEDIDA (2026-08-30, caso real de producao v90).
+    //
+    // O paciente disse "quero um turno para hoje" num DOMINGO, sem dizer o
+    // procedimento. A Iris oferecia a avaliacao "para hoje" -- um dia em que a
+    // clinica nao atende. A regra de domingo existia, mas so era alcancada em
+    // `carregar-disponibilidade.ts`, depois de procedimento, dentista e
+    // duracao resolvidos; neste desfecho nenhum dos tres existe, entao o fato
+    // nunca chegava a redatora.
+    //
+    // Aqui a data e resolvida pela AUTORIDADE TEMPORAL ja existente
+    // (`resolverTemporal`), que nao precisa de procedimento nem de dentista, e
+    // o dia da semana sai do helper que este arquivo ja usa. Nenhuma leitura
+    // de agenda, nenhuma RPC, nenhuma reserva -- so calendario.
+    const fechamento = await fechamentoDaDataPedida(clienteBanco, clinicaId, dados, instanteAtual);
+
     return {
       decisao: {
         tipo: 'aguardando_procedimento',
         ...(avaliacaoOferecivel(clinicaId, dados.procedimento_id ?? '', catalogo)
           ? { procedimento_oferecido: CONSULTA_AVALIACAO_ID }
           : {}),
+        // Fato ADICIONAL: a decisao continua sendo `aguardando_procedimento`
+        // (o procedimento ainda falta), e a redatora recebe os dois -- "nao
+        // atendemos domingo" e "qual procedimento?" -- para combinar
+        // naturalmente numa unica mensagem.
+        ...(fechamento !== null ? { sem_expediente_na_data_pedida: fechamento } : {}),
       },
     };
   }
@@ -1946,6 +1966,86 @@ async function buscarFusoHorario(cliente: ClienteBancoDados, clinicaId: string):
   if (error) throw new Error(`falha ao buscar fuso da clinica: ${error.message}`);
   const fuso = (data as Record<string, unknown> | null)?.fuso_horario;
   return typeof fuso === 'string' && fuso.trim() !== '' ? fuso : null;
+}
+
+/**
+ * A data que o paciente pediu cai em dia sem expediente DA CLINICA?
+ * (2026-08-30, caso real de producao v90.)
+ *
+ * Existe para o desfecho `aguardando_procedimento` -- o unico ponto em que o
+ * paciente ja disse QUANDO mas ainda nao disse O QUE. Sem isto, a Iris oferece
+ * a avaliacao "para hoje" num domingo, porque a regra de domingo so e
+ * alcancada depois de procedimento, dentista e duracao resolvidos.
+ *
+ * O QUE ESTA FUNCAO NAO FAZ, por construcao:
+ *
+ * - nao le agenda, jornada, bloqueio nem ocupacao;
+ * - nao chama RPC de horarios nem cria reserva;
+ * - nao consulta `carregar-disponibilidade.ts` (que exige dentista);
+ * - nao le a mensagem crua nem aplica regex sobre linguagem natural.
+ *
+ * CUSTO REAL, medido (revisao do Codex, 2026-08-30): UMA leitura do fuso
+ * (`buscarFusoHorario`), e somente quando ha informacao temporal. Antes desta
+ * correcao o retorno de `aguardando_procedimento` acontecia ANTES dessa
+ * consulta, entao ela e de fato uma leitura NOVA neste caminho -- `clinicas`
+ * passa de 2 para 3 leituras no turno. Sem data/periodo/horario a funcao
+ * retorna antes de tocar no banco, e o custo e zero.
+ *
+ * Aceito como o menor caminho seguro: e a mesma consulta pequena que o fluxo
+ * normal ja faz adiante, e sem o fuso nao ha como resolver "hoje" em data
+ * civil. Declarado aqui em vez de omitido.
+ *
+ * REGRA REUTILIZADA, NUNCA DUPLICADA: quem resolve "hoje"/"domingo que vem"/
+ * "dia 30" em data civil e `resolverTemporal` (autoridade temporal ja
+ * publicada, que nao precisa de procedimento nem de dentista). O dia da semana
+ * sai de `diaDaSemanaCivil`, o helper que este arquivo JA usa para descrever
+ * agendamentos. Nenhuma aritmetica de calendario nova entra aqui.
+ *
+ * SO DOMINGO, e de proposito: domingo e regra da CLINICA (nenhuma atende --
+ * ver `carregar-disponibilidade.ts`, "sem campo de domingo"). Sabado e dia util
+ * dependem do DENTISTA (`sabado`, `dias_semana`), que ainda nao foi escolhido
+ * neste ponto -- afirmar fechamento sem saber o profissional seria inventar
+ * fato. Esses continuam sendo decididos onde sempre foram, com o dentista em
+ * maos.
+ *
+ * Devolve `null` -- e a redatora nao recebe fato nenhum -- quando a data e
+ * ausente, ambigua ou invalida. Nao afirmar fechamento e a unica saida honesta
+ * quando nao se sabe qual dia o paciente quis.
+ */
+async function fechamentoDaDataPedida(
+  clienteBanco: ClienteBancoDados,
+  clinicaId: string,
+  dados: Record<string, string | undefined>,
+  instanteAtual: InstanteAtual
+): Promise<{ data: string; motivo: MotivoSemExpediente } | null> {
+  // Sem nenhum atomo temporal o paciente nao pediu dia nenhum -- nada a
+  // afirmar. Evita tambem a leitura do fuso quando ela seria inutil.
+  if (dados.data_texto === undefined && dados.periodo === undefined && dados.horario_texto === undefined) {
+    return null;
+  }
+
+  const fuso = await buscarFusoHorario(clienteBanco, clinicaId);
+
+  const resultado = resolverTemporal({
+    clinica_id: clinicaId,
+    fuso: fuso ?? '',
+    instante_atual: instanteAtual,
+    fatos_temporais: montarFatosTemporais({
+      data_texto: dados.data_texto,
+      periodo: dados.periodo,
+      horario_texto: dados.horario_texto,
+    }),
+  });
+
+  // Incompleto, ambiguo, invalido, no passado, erro de configuracao: em todos,
+  // a data pedida nao esta estabelecida. Nunca afirmar fechamento.
+  if (resultado.tipo !== 'resolvido') return null;
+
+  // 0=segunda .. 6=domingo -- mesma convencao do projeto inteiro.
+  const diaSemana = diaDaSemanaCivil(resultado.data);
+  if (diaSemana !== 'domingo') return null;
+
+  return { data: resultado.data, motivo: 'domingo' };
 }
 
 // Traduz o resultado temporal resolvido pro modo que resolverDisponibilidade

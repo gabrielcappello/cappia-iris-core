@@ -485,6 +485,190 @@ ela, **não** foram adotadas.)*
 
 ---
 
+## Quarta causa — oferta de avaliação "para hoje" num domingo (v90)
+
+Caso real observado **depois** do deploy da v90. Domingo, 30/08/2026:
+
+> **Paciente:** "Quero um turno para hoje, tem algum horário disponível?"
+> **Iris:** "…posso começar agendando uma Consulta / Avaliação… Você gostaria
+> dessa consulta **hoje**?"
+
+A clínica não atende aos domingos.
+
+### Causa
+
+`dados.data_texto` já existia antes da resolução do procedimento, mas `decidir()`
+retorna `aguardando_procedimento` **antes** de chamar `resolverTemporal`. A regra
+canônica de domingo mora em `carregar-disponibilidade.ts`
+(`construirJornadas`: `diaSemana === 6 → sem_expediente_no_dia/domingo`), que só
+é alcançada quando procedimento, dentista e duração já estão resolvidos.
+
+Nesse desfecho **nenhum dos três existe** — então o fato nunca chegava à
+redatora, e ela oferecia a avaliação para um dia fechado.
+
+Não é defeito da Luna nem da redação: era ausência de fato.
+
+### Solução
+
+Uma função nova em `orquestrador.ts`, `fechamentoDaDataPedida`, chamada **apenas**
+no retorno de `aguardando_procedimento`:
+
+| Decisão | Escolha |
+|---|---|
+| Como resolver a data | `resolverTemporal` — a autoridade temporal já existente, que **não** precisa de procedimento nem de dentista |
+| Como obter o dia da semana | `diaDaSemanaCivil`, o helper que `orquestrador.ts` **já usa**; nenhuma aritmética nova |
+| Onde o fato entra | campo adicional `sem_expediente_na_data_pedida` na decisão |
+| Qual decisão o turno tem | **continua** `aguardando_procedimento` |
+
+**Só domingo, e de propósito.** Domingo é regra da *clínica* (nenhuma atende).
+Sábado e dia útil dependem do *dentista* (`sabado`, `dias_semana`), que ainda não
+foi escolhido neste ponto — afirmar fechamento sem saber o profissional seria
+inventar fato. Esses continuam decididos onde sempre foram.
+
+**Não faz:** leitura de agenda, jornada, bloqueio ou ocupação; RPC de horários;
+reserva; regex sobre a mensagem; segunda regra independente de domingo.
+
+**Custo real, medido** (correção pedida pelo Codex): acrescenta **uma leitura do
+fuso** (`buscarFusoHorario`), e somente quando há informação temporal. O retorno
+antigo de `aguardando_procedimento` acontecia **antes** dessa consulta, então ela
+é de fato nova neste caminho.
+
+| Cenário | `clinicas` no HEAD | com a correção |
+|---|---|---|
+| pedido **com** data (domingo) | 2 | **3** |
+| pedido **com** data (dia útil) | 2 | **3** |
+| pedido **sem** data | 2 | 2 |
+
+Aceito como o menor caminho seguro: é a mesma consulta pequena que o fluxo normal
+já faz adiante, e sem o fuso não há como resolver "hoje" em data civil.
+
+**Data ausente, ambígua ou inválida devolve `null`** e nenhum fato é enviado: não
+afirmar fechamento é a única saída honesta quando não se sabe qual dia o paciente
+quis.
+
+Em `fatos-autorizados.ts`, o objetivo **não muda** (`pedir_procedimento`); o
+fechamento entra como `motivo_sem_expediente` + `data_referencia` — mesmo
+estatuto de `preferencia_nao_localizada`, que já acrescenta nuance a um objetivo
+existente. A redatora recebe os três ingredientes e combina livremente:
+*não atendemos domingo* + *outro dia* + *qual procedimento / a avaliação*.
+Nenhuma frase fixa.
+
+### Testes — `orquestrador-domingo-sem-procedimento.test.ts` (10)
+
+| Caso | O que fixa |
+|---|---|
+| domingo sem procedimento | fato presente **e** decisão segue `aguardando_procedimento` |
+| domingo | a oferta de avaliação continua **persistida** no estado |
+| domingo | nenhuma RPC, nenhuma reserva, `bloqueios` nunca lido |
+| com data × sem data | o custo exato: **+1 leitura do fuso** com informação temporal, **zero** sem ela; nenhuma outra tabela a mais |
+| segunda-feira | nenhum fato de fechamento; comportamento atual intacto |
+| data explícita `06/09` (domingo) | mesmo comportamento de "hoje" |
+| sem data | nunca afirma fechamento |
+| `sexta` / `31/02/2026` / `qualquer dia desses` | nunca afirma fechamento |
+| fatos (domingo) | motivo + data + avaliação + `dados_faltantes: ['procedimento', 'data']`, objetivo inalterado, **sem frase pronta** |
+| fatos (dia útil) | `dados_faltantes: ['procedimento']` — a data informada continua valendo |
+
+**Verificação — cada correção tem quem a pegue:**
+
+| Revertendo | Testes que falham |
+|---|---|
+| o cálculo do fechamento (`fechamentoDaDataPedida`) | 2 (os dois de domingo) |
+| `dados_faltantes: ['procedimento', 'data']` | 2 (o de ponta a ponta e o de fatos) |
+
+Nos dois casos os demais seguem verdes — como esperado, já que fixam
+comportamentos que a correção não altera.
+
+### Duas asserções minhas estavam erradas
+
+**1.** Eu afirmava que `agendamentos` nunca seria lido. Medi: ele **é** lido — uma
+vez, tanto no domingo quanto no dia útil. É `buscarAgendamentoAtivo`, que já
+existia como contexto da redatora, sem relação com este caminho.
+
+**2.** Substituí aquilo por um teste "domingo × dia útil" e concluí que o caminho
+novo *"não custa uma leitura sequer"*. **Errado, e o Codex apontou.** Aquele teste
+comparava dois cenários que **já tinham a mudança** — media o custo do *domingo*,
+nunca o custo da *correção*. O eixo certo é **com data × sem data**, e aí o custo
+aparece: `fechamentoDaDataPedida` chama `buscarFusoHorario`, que o retorno antigo
+não alcançava.
+
+Medido contra o HEAD, o número está na tabela da seção "Solução". O teste foi
+reescrito para **declarar** esse custo (`CUSTO: com informação temporal há UMA
+leitura de fuso a mais; sem ela, nenhuma`) em vez de negá-lo.
+
+O padrão dos dois erros é o mesmo: afirmei ausência a partir de uma comparação que
+não tinha como revelá-la.
+
+---
+
+## A resposta final da Luna — avaliação real (12 × 2 execuções)
+
+O teste determinístico prova que os **ingredientes** chegam. Não prova que a Luna
+os **combina**. Medido contra a IA real, com os fatos derivados por
+`derivarFatosAutorizados` (nunca escritos à mão), `effort: none`, limite 300 —
+`src/eval/redatora-domingo-sem-procedimento.ts`.
+
+### A medição que eu havia reportado inflada
+
+Na rodada anterior reportei "conduziu para outra data: 12/12". **Aquele número não
+valia.** Eu havia afrouxado o critério — passando a aceitar condução *implícita*
+(oferecer a avaliação logo após informar o fechamento) — **depois** de ver o
+resultado ruim (6/12) da régua original. Isso torna a régua função do resultado,
+que é exatamente o vício que a medição deveria evitar.
+
+O Codex rejeitou, com razão: oferecer o procedimento **não** deixa explícito qual
+é o próximo passo temporal, e o paciente fica sem saber o que responder sobre a
+data.
+
+**O número honesto, com o critério estrito, era 16/24.**
+
+### A causa era estrutural, e estava no fato
+
+`dados_faltantes` continuava `['procedimento']`. Mas a data que o paciente
+informou **foi recusada operacionalmente** — a clínica não atende naquele dia.
+A partir desse turno faltam legitimamente **dois** dados.
+
+O contrato da redatora já manda pedir **todos** os campos faltantes na mesma
+mensagem. Declarando só o procedimento, o Core escondia dela o passo temporal —
+e algumas respostas simplesmente não o mencionavam. A lacuna era do fato, não da
+redação.
+
+Correção (uma linha em `fatos-autorizados.ts`): com `sem_expediente_na_data_pedida`
+presente, `dados_faltantes` passa a `['procedimento', 'data']`. Sem fechamento,
+segue `['procedimento']` — a data que o paciente deu continua valendo, e pedi-la
+de novo faria ele repetir o que já disse. Objetivo inalterado
+(`pedir_procedimento`), nenhuma frase fixa, nenhuma instrução de domingo.
+
+### Isolamento — uma variável de cada vez
+
+Critério estrito e fato mudaram juntos, então medi cada um separadamente. Mesmo
+modelo, mesmo critério estrito, mesmo payload; muda **só** `dados_faltantes`:
+
+| `dados_faltantes` | conduziu para outra data (critério estrito) |
+|---|---|
+| `['procedimento']` | **7/12** |
+| `['procedimento', 'data']` | **24/24** |
+
+O ganho vem do fato, não da régua.
+
+### Resultado final — critério estrito, 12 × 2 execuções
+
+| Critério | Amostra 1 | Amostra 2 |
+|---|---|---|
+| informou o fechamento no domingo | **12/12** | **12/12** |
+| **não** ofereceu avaliação "para hoje" | **12/12** | **12/12** |
+| conduziu para outra data (**só explícito**) | **12/12** | **12/12** |
+| seguiu com procedimento/avaliação | **12/12** | **12/12** |
+| não inventou horário, dentista ou vaga | **12/12** | **12/12** |
+| **todos os critérios na mesma resposta** | **12/12** | **12/12** |
+| respostas textualmente distintas | 12/12 | 12/12 |
+
+24 execuções, 24 respostas distintas — **nenhuma frase fixa**. ~65 tokens, ~1,7 s.
+
+**Nenhuma instrução foi alterada** em nenhum momento. A única mudança foi no fato,
+e o critério de aceitação ficou fixo antes da medição final.
+
+---
+
 ## Correções aplicadas — lista final
 
 | # | Onde | O quê |
@@ -495,6 +679,13 @@ ela, **não** foram adotadas.)*
 | 4 | `interpretacao-instrucoes.ts` | pergunta adicional não anula aceitação |
 | 5 | `cliente-modelo-openai.ts` | `reasoning: { effort: 'none' }` declarado; limite segue 512 |
 | 6 | `cliente-modelo-redator-openai.ts` | `reasoning: { effort: 'none' }` declarado; limite segue 300 |
+| 7 | `orquestrador.ts` | `fechamentoDaDataPedida` — resolve a data pedida antes de `aguardando_procedimento` |
+| 8 | `orquestrador-tipos.ts` | `aguardando_procedimento` ganha `sem_expediente_na_data_pedida?` |
+| 9 | `fatos-autorizados.ts` | o fechamento chega à redatora como fato adicional, objetivo inalterado |
+| 10 | `fatos-autorizados.ts` | com fechamento, `dados_faltantes` passa a `['procedimento', 'data']` — a data recusada voltou a faltar |
+
+Os itens 1–6 estão no commit `a83d723` (publicado, deploy v90). Os itens **7–9
+são desta rodada** e não estão commitados.
 
 Todas espelhadas na Edge Function. Nenhuma lista de palavras, alias, regex sobre
 linguagem natural ou patch para as frases desta conversa.
@@ -503,8 +694,9 @@ linguagem natural ou patch para as frases desta conversa.
 
 | Gate | Resultado |
 |---|---|
-| Testes específicos | **138/138** |
-| Suíte completa | **1585/1588** — as 3 falhas são os testes de integração que exigem `@supabase/supabase-js`, pré-existentes e não relacionados |
+| Testes específicos (effort/oferta) | **138/138** |
+| Testes do domingo | **10/10** |
+| Suíte completa | **1595/1598** — as 3 falhas são os testes de integração que exigem `@supabase/supabase-js`, pré-existentes e não relacionados |
 | `deno check` (Core + eval) | 4 erros, **todos** `@supabase/supabase-js` ausente — idênticos aos de antes da mudança |
 | `deno check` (Edge) | 4 erros `EdgeRuntime`, **idênticos antes e depois** (global existe no runtime Supabase, não no Deno CLI) |
 | Paridade Core/Edge | **restaurada** — única diferença é um comentário que já era exclusivo da cópia Edge |
@@ -512,6 +704,12 @@ linguagem natural ou patch para as frases desta conversa.
 
 ## Estado
 
-Nenhum commit, push, deploy, rollback ou alteração de banco. Produção segue na
-**v89**, ainda com `medium` por padrão — a mudança está apenas na árvore de
-trabalho da branch `iris-2`, aguardando revisão final do Codex.
+**Itens 1–6:** commit `a83d723`, publicado em `origin/iris-2`, deploy **v90**
+(ACTIVE, `verify_jwt: true`). Rollback registrado: v89.
+
+**Itens 7–9 (correção do domingo):** apenas na árvore de trabalho da branch
+`iris-2` — **sem commit, push ou deploy**, aguardando revisão do Codex. A
+produção v90 ainda apresenta o comportamento descrito na quarta causa.
+
+Nenhuma alteração de banco, migrations, secrets, workflow ou instância de
+WhatsApp em nenhum momento.

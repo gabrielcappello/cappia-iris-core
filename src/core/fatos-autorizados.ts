@@ -609,7 +609,49 @@ function derivarPorDecisao(decisao: DecisaoOrquestrador, dataHoje: string): Fato
       return { objetivo: 'encerrar_cordialmente' };
 
     case 'aguardando_procedimento':
-      return { objetivo: 'pedir_procedimento', dados_faltantes: ['procedimento'] };
+      // O OBJETIVO NAO MUDA (2026-08-30): o que esta resposta precisa alcancar
+      // continua sendo obter o procedimento. O fechamento da data pedida entra
+      // como fato adicional -- mesmo estatuto de `preferencia_nao_localizada`
+      // e `confirmacao_nao_compreendida`, que ja acrescentam nuance a um
+      // objetivo existente sem substitui-lo.
+      //
+      // Com os dois fatos na mesma mensagem (nao atende domingo + falta o
+      // procedimento), a redatora combina naturalmente: informa o fechamento,
+      // convida a escolher outro dia e segue pedindo o procedimento (ou
+      // oferecendo a avaliacao, via `procedimento_avaliacao_disponivel`).
+      // Nenhuma frase fixa e imposta.
+      //
+      // `data_referencia` acompanha o motivo para a redatora poder situar o
+      // paciente ("hoje, 30/08") em vez de falar de um domingo abstrato --
+      // mesma formatacao relativa de toda data que chega ate ela.
+      //
+      // `dados_faltantes` GANHA `data` quando ha fechamento (revisao do Codex,
+      // 2026-08-30). Nao e enfase: e o estado real do turno. O paciente
+      // informou uma data, e ela foi RECUSADA operacionalmente -- a clinica
+      // nao atende naquele dia. Entao, a partir deste turno, faltam de fato
+      // dois dados: o procedimento e uma data NOVA.
+      //
+      // Medido antes desta mudanca (24 execucoes reais): a redatora informava
+      // o fechamento em 24/24, mas so 16/24 diziam claramente qual era o
+      // proximo passo temporal. Com `dados_faltantes: ['procedimento']`, o
+      // unico dado declarado como pendente era o procedimento -- e o contrato
+      // dela ja manda pedir TODOS os campos faltantes na mesma mensagem. A
+      // lacuna estava no fato, nao na redacao.
+      //
+      // Por isso a correcao e aqui e nao na instrucao: nenhuma frase fixa,
+      // nenhuma regra de domingo no texto -- so o turno declarando com
+      // honestidade o que ainda falta.
+      return {
+        objetivo: 'pedir_procedimento',
+        dados_faltantes:
+          decisao.sem_expediente_na_data_pedida !== undefined ? ['procedimento', 'data'] : ['procedimento'],
+        ...(decisao.sem_expediente_na_data_pedida !== undefined
+          ? {
+              motivo_sem_expediente: decisao.sem_expediente_na_data_pedida.motivo,
+              data_referencia: formatarDataParaRedatora(decisao.sem_expediente_na_data_pedida.data, dataHoje),
+            }
+          : {}),
+      };
 
     case 'aguardando_escolha_dentista':
       return {

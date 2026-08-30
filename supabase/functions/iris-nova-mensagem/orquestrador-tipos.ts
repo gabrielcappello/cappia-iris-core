@@ -8,7 +8,12 @@ import type { CadastroPaciente } from './tipos.ts';
 import type { DentistaApto, DentistaOficial, ResultadoResolucaoDentista, VinculoDentistaProcedimento } from './dentista-tipos.ts';
 import type { ConfiguracaoDuracao, ResultadoResolucaoDuracao } from './duracao-tipos.ts';
 import type { CampoCadastralInterpretacao, Conflito, NaturezaMensagem } from './interpretacao-tipos.ts';
-import type { InstanteAtual, OpcaoHorario, ResultadoDisponibilidade } from './disponibilidade-tipos.ts';
+import type {
+  InstanteAtual,
+  MotivoSemExpediente,
+  OpcaoHorario,
+  ResultadoDisponibilidade,
+} from './disponibilidade-tipos.ts';
 import type { ResultadoResolucaoTemporal } from './temporal-tipos.ts';
 import type { MotivoErroReserva } from './reservar-agendamento.ts';
 import type { MotivoErroRemarcacao } from './remarcar-agendamento.ts';
@@ -118,7 +123,26 @@ export type DecisaoOrquestrador =
   // redatora (orquestrador: `procedimento_avaliacao_disponivel`) sem registrar
   // nada -- a pergunta existia na tela e nao no estado, e a resposta do turno
   // seguinte chegava a interpretadora sem pergunta pendente declarada.
-  | { tipo: 'aguardando_procedimento'; procedimento_oferecido?: string }
+  //
+  // `sem_expediente_na_data_pedida` (2026-08-30) e um FATO ADICIONAL do turno,
+  // nunca o desfecho dele: o paciente pediu um dia em que a clinica nao
+  // atende, mas o procedimento continua faltando -- entao a decisao segue
+  // sendo `aguardando_procedimento`, e este campo apenas atravessa o
+  // fechamento para a redatora poder dize-lo junto da pergunta.
+  //
+  // Presente SO quando a data pedida ja e resolvivel E cai em dia sem
+  // expediente da CLINICA (domingo). Data ausente, ambigua ou invalida nunca
+  // produz este fato -- nao afirmar fechamento e a unica saida honesta quando
+  // nao se sabe qual dia o paciente quis.
+  //
+  // Nao vira `sem_expediente_no_dia` (decisao de fluxo): aquela decisao
+  // pressupoe procedimento, dentista e duracao resolvidos, e aqui nao ha
+  // nenhum dos tres. Ver a nota em `decidir`.
+  | {
+      tipo: 'aguardando_procedimento';
+      procedimento_oferecido?: string;
+      sem_expediente_na_data_pedida?: { data: string; motivo: MotivoSemExpediente };
+    }
   // `dentistas` sao os candidatos a apresentar -- NAO necessariamente todos os
   // aptos (specs/dentista-semantico-v1.md secao 12):
   //
