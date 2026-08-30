@@ -17,29 +17,7 @@ import type {
 } from './interpretacao-tipos.ts';
 import type { AcaoAlteracaoDados, AlteracoesDados, CampoDadosConversa } from './tipos.ts';
 
-/**
- * Modelo ANTERIOR (historico): gpt-4.1-mini. Preservado com o literal, sem
- * apontar para o modelo novo -- medicoes e testes historicos que o importam
- * precisam continuar registrando o modelo com que foram feitos.
- *
- * Nao e "o modelo da Iris 1": a Iris 1 tambem passa a usar a Luna quando o
- * Passo 1 for promovido. Esta constante identifica uma epoca, nao um produto.
- */
 export const MODELO_GPT_4_1_MINI = 'gpt-4.1-mini-2025-04-14';
-
-/**
- * Modelo da Iris Nova: gpt-5.6-luna. Mais capaz e mais barato;
- * disponibilidade na conta confirmada na API.
- *
- * Decisao do Gabriel (2026-08-30): a Luna e ativada na Iris Nova ATUAL, que
- * ainda nao esta em operacao comercial -- nao apenas num ambiente separado.
- * A branch iris-2 segue existindo para os Passos 2 e 3 (redacao natural e
- * idioma/espanhol), que nao sao promovidos junto com este.
- *
- * Endpoint, Structured Outputs, schema, contrato, retry e timeouts seguem
- * EXATAMENTE como estavam -- so o identificador do modelo muda.
- */
-export const MODELO_IRIS_NOVA = 'gpt-5.6-luna';
 
 const URL_RESPONSES = 'https://api.openai.com/v1/responses';
 const MAX_OUTPUT_TOKENS = 512;
@@ -264,7 +242,7 @@ export function criarClienteModeloOpenAI(configuracao: ConfiguracaoClienteModelo
   validarConfiguracao(configuracao);
 
   const chaveApi = configuracao.chaveApi;
-  const modelo = MODELO_IRIS_NOVA; // sempre a constante -- validarConfiguracao ja garantiu que configuracao.modelo e igual a ela.
+  const modelo = MODELO_GPT_4_1_MINI; // sempre a constante -- validarConfiguracao ja garantiu que configuracao.modelo e igual a ela.
   const fetchInjetado = configuracao.fetch ?? fetch;
   const timeoutPorTentativaMs = configuracao.timeoutPorTentativaMs;
   const prazoTotalMs = configuracao.prazoTotalMs;
@@ -290,10 +268,10 @@ function validarConfiguracao(configuracao: ConfiguracaoClienteModeloOpenAI): voi
     throw new ErroConfiguracaoClienteModeloOpenAI('chaveApi', 'chaveApi deve ser uma string nao vazia');
   }
 
-  if (configuracao.modelo !== MODELO_IRIS_NOVA) {
+  if (configuracao.modelo !== MODELO_GPT_4_1_MINI) {
     throw new ErroConfiguracaoClienteModeloOpenAI(
       'modelo',
-      `modelo deve ser exatamente a constante aprovada MODELO_IRIS_NOVA (${MODELO_IRIS_NOVA})`
+      `modelo deve ser exatamente a constante aprovada MODELO_GPT_4_1_MINI (${MODELO_GPT_4_1_MINI})`
     );
   }
 

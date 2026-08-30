@@ -3,7 +3,6 @@
 // nenhuma credencial real e lida (chaveApi e sempre uma string sintetica
 // obviamente falsa, nunca process.env.IRIS_EVAL_OPENAI_API_KEY).
 import assert from 'node:assert/strict';
-import { MODELO_IRIS_NOVA } from '../core/cliente-modelo-openai.ts';
 import { test } from 'node:test';
 import {
   CAMPOS_ESPERADOS,
@@ -76,13 +75,6 @@ function corpoEnvelopeValido(): Record<string, unknown> {
           {
             type: 'output_text',
             text: JSON.stringify({
-              // A raiz do schema exige os quatro campos (natureza_mensagem,
-              // alteracoes, eventos_candidatos, dentistas_candidatos). As
-              // fixtures so tinham `alteracoes` e ficaram desatualizadas
-              // quando o contrato cresceu.
-              natureza_mensagem: 'pedido',
-              eventos_candidatos: [],
-              dentistas_candidatos: null,
               alteracoes: [
                 { campo: 'intencao', acao: 'informar', valor: 'novo_agendamento' },
                 { campo: 'procedimento_id', acao: 'informar', valor: 'Limpeza' },
@@ -130,7 +122,7 @@ function criarFetchQueNuncaDeveSerChamado(): typeof fetch {
 
 function corpoValidoSerializado(): string {
   return JSON.stringify({
-    model: MODELO_IRIS_NOVA,
+    model: 'gpt-4.1-mini-2025-04-14',
     store: false,
     text: { format: { type: 'json_schema', strict: true } },
     input: [
@@ -141,7 +133,6 @@ function corpoValidoSerializado(): string {
           mensagens_atuais: PAYLOAD_SINTETICO_AUTORIZADO.mensagens_atuais,
           dados_atuais: PAYLOAD_SINTETICO_AUTORIZADO.dados_atuais,
           campos_cadastrais_preenchidos: PAYLOAD_SINTETICO_AUTORIZADO.campos_cadastrais_preenchidos,
-          procedimentos_disponiveis: PAYLOAD_SINTETICO_AUTORIZADO.procedimentos_disponiveis,
         }),
       },
     ],
@@ -201,7 +192,6 @@ test('inspecionarCorpoRequisicao: payload com propriedade extra (ex.: clinica_id
     mensagens_atuais: PAYLOAD_SINTETICO_AUTORIZADO.mensagens_atuais,
     dados_atuais: PAYLOAD_SINTETICO_AUTORIZADO.dados_atuais,
     campos_cadastrais_preenchidos: PAYLOAD_SINTETICO_AUTORIZADO.campos_cadastrais_preenchidos,
-    procedimentos_disponiveis: PAYLOAD_SINTETICO_AUTORIZADO.procedimentos_disponiveis,
     clinica_id: 'x',
   });
   const inspecao = inspecionarCorpoRequisicao(JSON.stringify(corpo), INSTRUCAO_SYSTEM_ESPERADA_TESTE);
@@ -228,7 +218,6 @@ const CONTEUDO_USER_VALIDO = JSON.stringify({
   mensagens_atuais: [...PAYLOAD_SINTETICO_AUTORIZADO.mensagens_atuais],
   dados_atuais: {},
   campos_cadastrais_preenchidos: [],
-  procedimentos_disponiveis: PAYLOAD_SINTETICO_AUTORIZADO.procedimentos_disponiveis,
 });
 
 // Monta um conteudo user variando somente campos_cadastrais_preenchidos,
@@ -238,7 +227,6 @@ function conteudoUserComIndicadores(indicadores: unknown): string {
     mensagens_atuais: [...PAYLOAD_SINTETICO_AUTORIZADO.mensagens_atuais],
     dados_atuais: {},
     campos_cadastrais_preenchidos: indicadores,
-    procedimentos_disponiveis: PAYLOAD_SINTETICO_AUTORIZADO.procedimentos_disponiveis,
   });
 }
 const ITEM_SYSTEM_VALIDO = { role: 'system', content: INSTRUCAO_SYSTEM_ESPERADA_TESTE };
@@ -246,7 +234,7 @@ const ITEM_USER_VALIDO = { role: 'user', content: CONTEUDO_USER_VALIDO };
 
 function construirCorpoComInput(input: unknown): string {
   return JSON.stringify({
-    model: MODELO_IRIS_NOVA,
+    model: 'gpt-4.1-mini-2025-04-14',
     store: false,
     text: { format: { type: 'json_schema', strict: true } },
     input,
@@ -275,18 +263,18 @@ const CENARIOS_INPUT_INVALIDO: Array<{ nome: string; input: unknown }> = [
   { nome: '16: propriedade extra no objeto user', input: [ITEM_SYSTEM_VALIDO, { role: 'user', content: CONTEUDO_USER_VALIDO, extra: 'y' }] },
   {
     nome: '18: payload user com mensagens_atuais diferente',
-    input: [ITEM_SYSTEM_VALIDO, { role: 'user', content: JSON.stringify({ mensagens_atuais: ['outro texto qualquer'], dados_atuais: {}, campos_cadastrais_preenchidos: [], procedimentos_disponiveis: PAYLOAD_SINTETICO_AUTORIZADO.procedimentos_disponiveis }) }],
+    input: [ITEM_SYSTEM_VALIDO, { role: 'user', content: JSON.stringify({ mensagens_atuais: ['outro texto qualquer'], dados_atuais: {}, campos_cadastrais_preenchidos: [] }) }],
   },
   {
     nome: '19: payload user com mais de uma mensagem',
     input: [
       ITEM_SYSTEM_VALIDO,
-      { role: 'user', content: JSON.stringify({ mensagens_atuais: [...PAYLOAD_SINTETICO_AUTORIZADO.mensagens_atuais, 'outra mensagem'], dados_atuais: {}, campos_cadastrais_preenchidos: [], procedimentos_disponiveis: PAYLOAD_SINTETICO_AUTORIZADO.procedimentos_disponiveis }) },
+      { role: 'user', content: JSON.stringify({ mensagens_atuais: [...PAYLOAD_SINTETICO_AUTORIZADO.mensagens_atuais, 'outra mensagem'], dados_atuais: {}, campos_cadastrais_preenchidos: [] }) },
     ],
   },
   {
     nome: '20: payload user com dados_atuais nao vazio',
-    input: [ITEM_SYSTEM_VALIDO, { role: 'user', content: JSON.stringify({ mensagens_atuais: [...PAYLOAD_SINTETICO_AUTORIZADO.mensagens_atuais], dados_atuais: { nome: 'x' }, campos_cadastrais_preenchidos: [], procedimentos_disponiveis: PAYLOAD_SINTETICO_AUTORIZADO.procedimentos_disponiveis }) }],
+    input: [ITEM_SYSTEM_VALIDO, { role: 'user', content: JSON.stringify({ mensagens_atuais: [...PAYLOAD_SINTETICO_AUTORIZADO.mensagens_atuais], dados_atuais: { nome: 'x' }, campos_cadastrais_preenchidos: [] }) }],
   },
   { nome: '21: payload user que nao e JSON valido', input: [ITEM_SYSTEM_VALIDO, { role: 'user', content: 'isto nao e json {' }] },
   // A partir daqui: indicadores cadastrais (contrato de tres chaves).
@@ -633,13 +621,6 @@ test('executarUma: campo extra na saida do modelo reprova (aprovado=false, sem e
           {
             type: 'output_text',
             text: JSON.stringify({
-              // A raiz do schema exige os quatro campos (natureza_mensagem,
-              // alteracoes, eventos_candidatos, dentistas_candidatos). As
-              // fixtures so tinham `alteracoes` e ficaram desatualizadas
-              // quando o contrato cresceu.
-              natureza_mensagem: 'pedido',
-              eventos_candidatos: [],
-              dentistas_candidatos: null,
               alteracoes: [
                 { campo: 'intencao', acao: 'informar', valor: 'novo_agendamento' },
                 { campo: 'procedimento_id', acao: 'informar', valor: 'limpeza' },

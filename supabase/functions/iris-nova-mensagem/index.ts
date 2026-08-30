@@ -13,7 +13,7 @@ import {
   criarClienteModeloOpenAI,
   ErroClienteModeloOpenAI,
   ESPERA_ENTRE_TENTATIVAS_MS_APROVADO,
-  MODELO_IRIS_NOVA,
+  MODELO_GPT_4_1_MINI,
   PRAZO_TOTAL_MS_APROVADO,
   TIMEOUT_POR_TENTATIVA_MS_APROVADO,
 } from "./cliente-modelo-openai.ts";
@@ -205,18 +205,18 @@ async function handler(req: Request): Promise<Response> {
 
   const clienteModelo = criarClienteModeloOpenAI({
     chaveApi: openaiKey,
-    modelo: MODELO_IRIS_NOVA,
+    modelo: MODELO_GPT_4_1_MINI,
     timeoutPorTentativaMs: TIMEOUT_POR_TENTATIVA_MS_APROVADO,
     prazoTotalMs: PRAZO_TOTAL_MS_APROVADO,
     esperaEntreTentativasMs: ESPERA_ENTRE_TENTATIVAS_MS_APROVADO,
   });
 
-  // Redator: mesmo modelo da interpretadora, sem retry
-  // (cliente-modelo-redator-openai.ts explica o porque). `chaveApi` ja foi
-  // validada acima (openaiKey).
+  // Redator: mesmo modelo da interpretadora (nenhuma decisao de trocar de
+  // modelo foi tomada), sem retry (cliente-modelo-redator-openai.ts
+  // explica o porque). `chaveApi` ja foi validada acima (openaiKey).
   const clienteRedator = criarClienteModeloRedatorOpenAI({
     chaveApi: openaiKey,
-    modelo: MODELO_IRIS_NOVA,
+    modelo: MODELO_GPT_4_1_MINI,
     timeoutMs: TIMEOUT_REDATOR_MS_APROVADO,
   });
 
