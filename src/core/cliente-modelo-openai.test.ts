@@ -2209,6 +2209,19 @@ test('fronteira: GUARDA GERAL -- toda chave opcional do payload precisa aparecer
         horario: '14:00',
       },
     ],
+    // Procedimentos que o dentista ja planejou e a Iris anunciou. Entrou no
+    // contrato depois desta fixture, e a assercao logo abaixo -- que cobra
+    // toda chave opcional -- acusou a ausencia. A chave ja atravessava
+    // corretamente; faltava exercita-la aqui.
+    tratamentos_pendentes: [
+      {
+        procedimento_id: 'canal',
+        nome_pt: 'Canal',
+        dente: '26',
+        dentista_id: 'dent-ana',
+        assunto_atual: true as const,
+      },
+    ],
     historico_recente: HISTORICO_EXEMPLO,
   };
 
