@@ -401,6 +401,44 @@ test('oferta: sem_dentista_disponivel SEM alternativa real continua limpando, co
   assert.deepEqual(derivarAcaoContextoHorarios({ tipo: 'sem_dentista_disponivel' }), { tipo: 'limpar' });
 });
 
+// REGRESSAO (2026-08-30, conversa real com a Luna): a Iris oferecia a
+// Consulta/Avaliacao em `aguardando_procedimento` -- a redatora recebe
+// `procedimento_avaliacao_disponivel` e pergunta "pode ser?" -- mas este
+// desfecho caia em `limpar`, entao NADA era gravado. No turno seguinte
+// `contexto_horarios` estava null e "ok pode ser" chegava a interpretadora sem
+// pergunta pendente declarada: `aceitar_opcao` nunca era emitido e o fluxo
+// travava. A paciente respondia a uma oferta que so existia na tela.
+test('oferta: aguardando_procedimento COM oferta real grava a oferta (nao limpa)', () => {
+  const acao = derivarAcaoContextoHorarios({
+    tipo: 'aguardando_procedimento',
+    procedimento_oferecido: 'consultation_evaluation',
+  });
+
+  assert.deepEqual(acao, { tipo: 'oferecer', procedimento_id: 'consultation_evaluation' });
+});
+
+test('oferta: aguardando_procedimento SEM oferta real continua limpando, como antes', () => {
+  // Sem oferta nao ha o que registrar -- e o comportamento anterior fica
+  // preservado para todo caso em que a Iris nao oferece nada.
+  assert.deepEqual(derivarAcaoContextoHorarios({ tipo: 'aguardando_procedimento' }), { tipo: 'limpar' });
+});
+
+test('oferta: os DOIS desfechos que oferecem avaliacao gravam a mesma acao', () => {
+  // A oferta nasce em dois lugares (sem_dentista_disponivel e
+  // aguardando_procedimento). Se um gravar e o outro nao, volta o mesmo
+  // defeito -- por isso a equivalencia e assertada, nao presumida.
+  const porFaltaDeDentista = derivarAcaoContextoHorarios({
+    tipo: 'sem_dentista_disponivel',
+    procedimento_oferecido: 'consultation_evaluation',
+  });
+  const porProcedimentoIndefinido = derivarAcaoContextoHorarios({
+    tipo: 'aguardando_procedimento',
+    procedimento_oferecido: 'consultation_evaluation',
+  });
+
+  assert.deepEqual(porFaltaDeDentista, porProcedimentoIndefinido);
+});
+
 test('oferta: a acao oferecer grava SO a variante de oferta, nunca junto de horarios ou proposta', async () => {
   const { cliente, instrucoes } = criarClienteRegistrador(1);
 

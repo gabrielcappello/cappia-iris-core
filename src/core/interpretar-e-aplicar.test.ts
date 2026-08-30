@@ -44,6 +44,84 @@ function contexto(conversaId: string, mensagensAtuais: string[], overrides: Reco
   };
 }
 
+// =====================================================================
+// aceitar_opcao EXIGE OS DOIS LADOS -- o evento da IA E a oferta do Core
+//
+// Confirmacao pedida pelo Gabriel ao aprovar `reasoning.effort: none`
+// (2026-08-30). A medicao mostrou que `none` emitiu `aceitar_opcao` 1 vez em
+// 10 num caso SEM oferta pendente. A pergunta era: isso chega a virar dado?
+//
+// Nao chega -- e este teste prova onde a barreira esta. `interpretarEAplicar`
+// so aplica o procedimento quando o evento da IA E a oferta oficial do Core
+// coincidem (interpretar-e-aplicar.ts:175). O evento sozinho e ignorado.
+//
+// Por isso a decisao NAO exigiu correcao no interpretador: o erro do modelo
+// existe, mas morre na fronteira do Core, que nunca confiou no evento sozinho.
+// A cobertura no orquestrador ja existia (orquestrador-dentista.test.ts:564);
+// aqui a mesma regra e fixada na unidade que de fato a implementa.
+// =====================================================================
+
+const ID_AVALIACAO = 'consultation_evaluation';
+
+/** Dublê que emite SO o evento -- nenhum `procedimento_id` nas alteracoes. */
+function clienteQueSoAceita() {
+  return new ClienteModeloFalso([
+    {
+      natureza_mensagem: 'resposta',
+      alteracoes: {},
+      eventos_candidatos: [{ tipo: 'aceitar_opcao', referencia_textual: null }],
+    },
+  ]);
+}
+
+test('aceitar_opcao SEM oferta pendente NAO aplica procedimento -- o evento sozinho nao basta', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const conversa = semearEstado(tabelas, {});
+  const clienteBanco = new ClienteFalso(tabelas);
+
+  // O contexto NAO traz `oferta_procedimento_pendente`: nenhuma oferta foi
+  // feita. E exatamente o caso em que `none` errou na medicao.
+  const resultado = await interpretarEAplicar(
+    clienteQueSoAceita(),
+    clienteBanco,
+    contexto(conversa.id, ['ok pode ser'])
+  );
+
+  assert.equal(
+    resultado.aplicacao?.dados.procedimento_id,
+    undefined,
+    'sem oferta oficial, o evento da IA nao pode virar procedimento -- o Core nunca confia no evento sozinho'
+  );
+  assert.equal(
+    comoRegistro(tabelas.estado_conversa[0].dados).procedimento_id,
+    undefined,
+    'e nada pode ser persistido no estado'
+  );
+});
+
+test('aceitar_opcao COM oferta pendente aplica o id do CORE, nunca um id vindo da IA', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const conversa = semearEstado(tabelas, {});
+  const clienteBanco = new ClienteFalso(tabelas);
+
+  // Mesmo evento, mesma mensagem -- muda SO a existencia da oferta oficial.
+  // Sem esta metade positiva, o teste acima passaria mesmo se a aceitacao
+  // estivesse quebrada por completo.
+  const resultado = await interpretarEAplicar(
+    clienteQueSoAceita(),
+    clienteBanco,
+    contexto(conversa.id, ['ok pode ser'], {
+      oferta_procedimento_pendente: { procedimento_id: ID_AVALIACAO },
+    })
+  );
+
+  assert.equal(
+    resultado.aplicacao?.dados.procedimento_id,
+    ID_AVALIACAO,
+    'com a oferta oficial presente, o Core aplica o id que ELE guardou'
+  );
+});
+
 test('teste5: correcoes sucessivas resultam em uma unica alteracao final aplicada', async () => {
   const tabelas = criarTabelasFalsasVazias();
   const conversa = semearEstado(tabelas, {});

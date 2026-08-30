@@ -20,6 +20,33 @@ import type { ParConversa } from './tipos.ts';
 const URL_RESPONSES = 'https://api.openai.com/v1/responses';
 const MAX_OUTPUT_TOKENS = 300;
 
+/**
+ * Esforco de raciocinio DECLARADO EXPLICITAMENTE (decisao do Gabriel,
+ * 2026-08-30) -- mesma razao do adaptador da interpretadora: omitir a chave
+ * fazia a API aplicar `medium`, e a Luna gasta raciocinio dentro de
+ * `max_output_tokens`.
+ *
+ * Medido nos tres esforcos com seis cenarios representativos (dentista ja
+ * escolhido, domingo sem expediente, oferta de avaliacao, escolha de dentista,
+ * reserva criada, reformulacao) mais 10 repeticoes dos dois cenarios criticos,
+ * em duas amostras completas -- 156 chamadas
+ * (src/eval/matriz-esforco-redatora.ts):
+ *
+ *   effort   6 cenarios   truncamento   tokens de saida   raciocinio
+ *   none     6/6          0/156         38                 0
+ *   low      6/6          0/156         36                 0
+ *   medium   6/6          0/156         77                41
+ *
+ * Aqui NAO ha trade-off: a qualidade e a mesma nos tres e nenhum truncou --
+ * 300 tokens bastam com folga, porque a resposta visivel fica em 24-44 tokens.
+ * `none` e simplesmente o mais barato e o mais rapido.
+ *
+ * Os zeros de raciocinio sao reais, nao um parametro ignorado: num controle com
+ * tarefa que exige raciocinio, os tres esforcos se separam (`none` = 0 em 5/5,
+ * `low` = 48-60, `medium` = 0-63).
+ */
+const ESFORCO_RACIOCINIO = 'none';
+
 // Unica tentativa, sem retry (ver cabecalho do arquivo) -- valor de
 // referencia aprovado, nunca usado como default silencioso: o chamador
 // fornece timeoutMs explicitamente.
@@ -110,6 +137,7 @@ export function criarClienteModeloRedatorOpenAI(configuracao: ConfiguracaoClient
             },
           ],
           max_output_tokens: MAX_OUTPUT_TOKENS,
+          reasoning: { effort: ESFORCO_RACIOCINIO },
           store: false,
           stream: false,
           background: false,

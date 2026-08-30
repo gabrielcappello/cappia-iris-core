@@ -109,7 +109,16 @@ export type DecisaoOrquestrador =
   // internos ja eram equivalentes perante o paciente, entao nao ha nuance a
   // transportar. `erro_catalogo_procedimento` foi REMOVIDO junto: sem
   // aliases, nao existe alias ambiguo/orfao/de outra clinica a reportar.
-  | { tipo: 'aguardando_procedimento' }
+  // `procedimento_oferecido` presente = a Iris esta de fato oferecendo a
+  // Consulta/Avaliacao neste turno, e a oferta precisa existir no ESTADO
+  // (contexto-horarios grava `oferta_procedimento_pendente`). Mesmo campo e
+  // mesmo significado de `sem_dentista_disponivel`, abaixo.
+  //
+  // Ate 2026-08-30 este desfecho oferecia a avaliacao ao paciente pela
+  // redatora (orquestrador: `procedimento_avaliacao_disponivel`) sem registrar
+  // nada -- a pergunta existia na tela e nao no estado, e a resposta do turno
+  // seguinte chegava a interpretadora sem pergunta pendente declarada.
+  | { tipo: 'aguardando_procedimento'; procedimento_oferecido?: string }
   // `dentistas` sao os candidatos a apresentar -- NAO necessariamente todos os
   // aptos (specs/dentista-semantico-v1.md secao 12):
   //

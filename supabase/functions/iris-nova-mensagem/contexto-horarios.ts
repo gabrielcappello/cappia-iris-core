@@ -183,9 +183,26 @@ export function derivarAcaoContextoHorarios(decisao: DecisaoOrquestrador): AcaoC
     case 'cadastro_necessario':
       return { tipo: 'preservar' };
 
+    // AGUARDANDO_PROCEDIMENTO (2026-08-30): quando a Iris OFERECE a
+    // Consulta/Avaliacao aqui, a oferta precisa ser gravada -- mesma acao e
+    // mesmo motivo de `sem_dentista_disponivel` acima.
+    //
+    // Ate esta data este desfecho caia em `limpar`: a redatora recebia
+    // `procedimento_avaliacao_disponivel`, oferecia a avaliacao e perguntava
+    // "pode ser?", e nada era registrado. No turno seguinte `contexto_horarios`
+    // e `aguardando_resposta` estavam null, e "ok pode ser" chegava a
+    // interpretadora sem nenhuma pergunta pendente declarada -- entao
+    // `aceitar_opcao` nunca era emitido e o fluxo nao avancava.
+    //
+    // Sem `procedimento_oferecido` (nenhuma oferta real) o comportamento
+    // continua sendo `limpar`, exatamente como antes.
+    case 'aguardando_procedimento':
+      return decisao.procedimento_oferecido !== undefined
+        ? { tipo: 'oferecer', procedimento_id: decisao.procedimento_oferecido }
+        : { tipo: 'limpar' };
+
     case 'clinica_sem_catalogo':
     case 'desistencia':
-    case 'aguardando_procedimento':
     case 'aguardando_escolha_dentista':
     case 'combinacao_indisponivel':
     case 'erro_catalogo_dentista':

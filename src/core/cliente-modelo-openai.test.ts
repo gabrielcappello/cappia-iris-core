@@ -911,6 +911,27 @@ test('requisicao: usa modelo fixado, store false, strict true e nenhuma tool', a
   assert.ok(!('tools' in corpo));
 });
 
+// O esforco de raciocinio precisa ser DECLARADO, nunca deixado ao padrao da
+// API. Omitir a chave nao e neutro: a API aplica `medium`, e a Luna gasta esse
+// raciocinio DENTRO dos 512 tokens -- orcamento dimensionado para um modelo
+// que gastava 30 tokens fixos. Medido em 2026-08-30, variando so o esforco
+// (src/eval/matriz-esforco-interpretadora.ts): `medium` truncou 6 de 20
+// repeticoes do caso dificil; `none`, 0 de 20, com a mesma qualidade (11/12).
+test('requisicao: declara reasoning.effort explicitamente, e o limite de saida segue 512', async () => {
+  const { fetchFalso, chamadas } = criarFetchFalso([() => respostaSucesso([])]);
+  const cliente = criarCliente({ fetch: fetchFalso });
+
+  await cliente.executar(entradaValida());
+
+  const corpo = JSON.parse(chamadas[0].opcoes.body as string);
+  assert.deepEqual(
+    corpo.reasoning,
+    { effort: 'none' },
+    'sem esta chave a API aplica `medium` por padrao -- o esforco tem que ser uma escolha explicita, nunca um default herdado'
+  );
+  assert.equal(corpo.max_output_tokens, 512, 'a decisao foi baixar o consumo, nao elevar o teto');
+});
+
 test('requisicao: schema enviado inclui confirmacao no enum de campo', async () => {
   const { fetchFalso, chamadas } = criarFetchFalso([() => respostaSucesso([])]);
   const cliente = criarCliente({ fetch: fetchFalso });

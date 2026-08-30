@@ -168,6 +168,29 @@ test('o corpo NUNCA carrega tools nem schema de saida -- a redatora devolve text
   assert.equal(corpos[0].store, false, 'a conversa nunca fica armazenada no provedor');
 });
 
+// O esforco de raciocinio precisa ser DECLARADO, nunca deixado ao padrao da
+// API: omitir a chave nao e neutro -- a API aplica `medium`, e a Luna gasta
+// esse raciocinio DENTRO dos 300 tokens da resposta. Medido em 2026-08-30
+// (src/eval/matriz-esforco-redatora.ts): `medium` gastava 41 tokens de
+// raciocinio por chamada para produzir os MESMOS ~36 tokens visiveis.
+test('o corpo declara reasoning.effort explicitamente, e o limite de saida segue 300', async () => {
+  const { fn, corpos } = fetchFalso(() => respostaSucesso('texto'));
+  const cliente = criarClienteModeloRedatorOpenAI({ ...CONFIG_BASE, fetch: fn });
+  await cliente.redigir({
+    instrucoes: 'x',
+    mensagemPaciente: 'oi',
+    naturezaMensagem: 'saudacao',
+    fatos: FATOS_EXEMPLO,
+  });
+
+  assert.deepEqual(
+    corpos[0].reasoning,
+    { effort: 'none' },
+    'sem esta chave a API aplica `medium` por padrao -- o esforco tem que ser uma escolha explicita, nunca um default herdado'
+  );
+  assert.equal(corpos[0].max_output_tokens, 300, 'a decisao foi baixar o consumo, nao elevar o teto');
+});
+
 // ── Falhas viram erro proprio, nunca texto para o paciente ──────────────
 
 test('HTTP nao-ok vira erro proprio', async () => {

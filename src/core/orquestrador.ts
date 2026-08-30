@@ -1503,7 +1503,26 @@ async function decidir(
     (p) => p.procedimento_id === dados.procedimento_id && p.clinica_id === clinicaId && p.ativo
   );
   if (!procedimento) {
-    return { decisao: { tipo: 'aguardando_procedimento' } };
+    // A oferta da avaliacao (que a redatora recebe logo abaixo, via
+    // `procedimento_avaliacao_disponivel`) precisa existir tambem no ESTADO --
+    // senao a Iris pergunta "pode ser?" e a resposta do turno seguinte chega
+    // sem nenhuma pergunta pendente declarada.
+    //
+    // MESMA regra de `sem_dentista_disponivel`: `avaliacaoOferecivel` decide se
+    // a oferta e real (existe, ativa, com dentista apto). Sem ela, nenhum campo
+    // -- e nada e oferecido nem gravado.
+    //
+    // `dados.procedimento_id ?? ''` porque aqui o id pode estar ausente: a
+    // primeira regra de `avaliacaoOferecivel` so precisa saber que o pedido nao
+    // e a propria avaliacao, e string vazia nunca e.
+    return {
+      decisao: {
+        tipo: 'aguardando_procedimento',
+        ...(avaliacaoOferecivel(clinicaId, dados.procedimento_id ?? '', catalogo)
+          ? { procedimento_oferecido: CONSULTA_AVALIACAO_ID }
+          : {}),
+      },
+    };
   }
 
   // REGRA DE CONTAGEM DOS CANDIDATOS (specs/dentista-semantico-v1.md secao

@@ -44,6 +44,36 @@ export const MODELO_IRIS_NOVA = 'gpt-5.6-luna';
 const URL_RESPONSES = 'https://api.openai.com/v1/responses';
 const MAX_OUTPUT_TOKENS = 512;
 
+/**
+ * Esforco de raciocinio DECLARADO EXPLICITAMENTE (decisao do Gabriel,
+ * 2026-08-30).
+ *
+ * A Luna gasta tokens de raciocinio DENTRO de `max_output_tokens`. Omitir esta
+ * chave nao era neutro: a API aplicava o padrao `medium`, e o orcamento de 512
+ * -- dimensionado para um modelo que gastava 30 tokens fixos -- passava a ser
+ * disputado entre raciocinio e resposta.
+ *
+ * Medido nas tres configuracoes, variando SO o esforco (mesmo schema, mesmas
+ * instrucoes, mesmo payload, mesmo limite, mesmo modelo), 12 casos uma vez
+ * cada mais 20 repeticoes do caso que truncava
+ * (src/eval/matriz-esforco-interpretadora.ts):
+ *
+ *   effort   qualidade   truncamento   latencia   tokens de saida
+ *   none     11/12       0/20          985 ms     38
+ *   low       8/12       2/20         1903 ms    108
+ *   medium   11/12       6/20         2130 ms    136
+ *
+ * `low` e dominado: erra mais que os outros dois e ainda trunca. `none` iguala
+ * a qualidade de `medium` eliminando o truncamento, com ~2x menos latencia e
+ * ~1/3 dos tokens -- os tokens VISIVEIS sao praticamente iguais nos tres
+ * (38-42), ou seja, o esforco so aumentava raciocinio descartado antes da
+ * resposta.
+ *
+ * `MAX_OUTPUT_TOKENS` fica em 512 de proposito: a decisao foi baixar o
+ * consumo, nao elevar o teto.
+ */
+const ESFORCO_RACIOCINIO = 'none';
+
 // Valores de referencia aprovados -- nunca usados como default silencioso.
 // O chamador deve fornecer os tres tempos explicitamente em toda chamada.
 export const TIMEOUT_POR_TENTATIVA_MS_APROVADO = 8000;
@@ -54,7 +84,9 @@ export const ESPERA_ENTRE_TENTATIVAS_MS_APROVADO = 500;
 // avaliador semantico -- unica forma ja validada contra o Structured
 // Outputs estrito da OpenAI). Sempre usado no corpo real da requisicao,
 // independente do `schema` recebido em `executar()`. ---
-const SCHEMA_PORTATIL_APROVADO = {
+// Exportado (2026-08-30) para o runner A/B usar EXATAMENTE o schema que a
+// producao envia -- reconstrui-lo no runner mediria outro contrato.
+export const SCHEMA_PORTATIL_APROVADO = {
   type: 'object',
   properties: {
     natureza_mensagem: {
@@ -538,6 +570,7 @@ async function processarTentativa(
       },
     },
     max_output_tokens: MAX_OUTPUT_TOKENS,
+    reasoning: { effort: ESFORCO_RACIOCINIO },
     store: false,
     stream: false,
     background: false,
