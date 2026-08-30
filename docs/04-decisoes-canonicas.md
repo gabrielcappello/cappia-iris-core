@@ -15,10 +15,24 @@
 - Toda disponibilidade **depende primeiro do procedimento**.
 - A partir do procedimento, **identificar quais dentistas ativos realizam** esse
   procedimento.
-- A **duração** é configurada pela clínica para o procedimento (`clinica_id` +
-  `procedimento_id`), e é **a mesma para todos os dentistas aptos** daquela clínica.
-  Valor válido: inteiro, de 10 a 240 minutos, múltiplo de 10. Duração individual por
-  dentista ou por vínculo está **fora da v1** (ver `../specs/duracao-v1.md`).
+- A **duração pertence ao dentista escolhido** (revisado em 30/08/2026, decisão do
+  Gabriel). Chave canônica: **`clinica_id` + `dentista_id` + `procedimento_id`**.
+  - dentista em modo `auto` → usa a **duração padrão daquele dentista**;
+  - dentista em modo `procedimento` → usa o **tempo daquele procedimento naquele
+    dentista**.
+  - **Durações diferentes entre profissionais são configuração válida**, nunca
+    conflito: cada dentista usa exclusivamente a própria, e a de um colega jamais
+    altera a agenda ou invalida a resolução de outro.
+  - Conflito existe **somente** entre valores contraditórios do **mesmo** dentista
+    e **mesmo** procedimento.
+
+  Valor válido: inteiro, de 10 a 240 minutos, múltiplo de 10.
+
+  A regra anterior — duração por `clinica_id + procedimento_id`, igual para todos
+  os dentistas aptos — **foi substituída**. Ela derrubou uma clínica real em
+  produção (v91, 30/08/2026): três dentistas com durações legítimas para a mesma
+  avaliação (60, 30 e 30 min) colidiam na mesma chave e a clínica inteira caía em
+  `duracao_conflitante`. Ver `../specs/duracao-v1.md`.
 - Consultar **horários de trabalho, bloqueios e compromissos reais**.
 - **Apresentar somente horários realmente disponíveis.**
 

@@ -253,8 +253,10 @@ Consequência determinística:
 
 - `solicitar_nova_opcao` invalida a lista de opções vigente e a escolha vinculada;
 - `aceitar_qualquer_profissional` remove a preferência específica por dentista;
-- procedimento, duração e demais dados independentes **permanecem válidos** — nada além
-  do que depende de dentista e de opções é invalidado;
+- procedimento e demais dados independentes **permanecem válidos**; a **duração é
+  recalculada por profissional**, porque ela depende do dentista (`duracao-v1.md`
+  §0/§7, revisado em 30/08/2026) — nada além do que depende de dentista e de opções é
+  invalidado;
 - o controlador busca nova disponibilidade entre **todos os dentistas ativos e aptos** ao
   procedimento (`dentistas-vinculos-v1.md` §5, §10);
 - continua processando **um dentista por vez**, pela ordem canônica de
@@ -335,9 +337,10 @@ Não definem representação física nem persistência individual obrigatória.
 - procedimento oficial resolvido;
 - dentista oficial resolvido ou critério de qualquer profissional;
 - data resolvida no fuso da clínica;
-- duração oficial da clínica para o procedimento — inteira, de 10 a 240 minutos,
-  múltipla de 10, a mesma para todos os dentistas aptos (`duracao-v1.md`);
-  configuração ausente ou inconsistente falha fechado, sem fallback;
+- duração oficial **do dentista escolhido** para o procedimento — inteira, de 10 a
+  240 minutos, múltipla de 10; profissionais diferentes podem ter durações diferentes
+  (`duracao-v1.md` §0/§1, revisado em 30/08/2026); configuração ausente ou
+  inconsistente falha fechado, sem fallback;
 - snapshot da duração aplicada, distinto da configuração vigente;
 - demais critérios temporais calculados pelo Core.
 
@@ -419,9 +422,10 @@ Invalida dentista resolvido, opções, escolha, resumo e confirmação — porqu
 consultada passa a ser a de outro profissional. Preserva o procedimento que continuar
 válido.
 
-O **valor da duração permanece o mesmo** enquanto o procedimento não mudar: na v1 a
-duração é a configuração da clínica para o procedimento, igual para todos os dentistas
-aptos (`duracao-v1.md`). Mudança apenas superficial do texto de preferência, com a
+O **valor da duração depende do dentista** (`duracao-v1.md` §0/§1, revisado em
+30/08/2026): a chave é `clinica_id + dentista_id + procedimento_id`, e profissionais
+diferentes podem ter durações diferentes. Trocar de procedimento OU de dentista exige
+recalcular a duração. Mudança apenas superficial do texto de preferência, com a
 identidade oficial do dentista permanecendo igual, não invalida nada.
 
 ### Alteração de data, período ou horário
@@ -516,7 +520,7 @@ registrado como apresentado sem prova de entrega permanece o definido em
 |---|---|
 | Catálogo oficial, resolução de `procedimento_texto` sem expor catálogo à IA, ambiguidade, procedimentos inativos, identificação de Consulta/Avaliação | `procedimentos-v1.md` |
 | Vínculos dentista-procedimento, validade de profissional e preferência, representação de qualquer profissional | `dentistas-vinculos-v1.md` |
-| Duração oficial da clínica para o procedimento, snapshot aplicado, invalidação, revalidação, falha fechada | `duracao-v1.md` |
+| Duração oficial do dentista escolhido para o procedimento, snapshot aplicado, invalidação, revalidação, falha fechada | `duracao-v1.md` |
 | Geração e granularidade dos slots, ausência de horizonte artificial, jornada/bloqueios/agendamentos, passagem ao próximo dentista, períodos alternativos | `disponibilidade.md` |
 | Validade e versão lógica das opções, revalidação e coordenação com a criação, forma persistente mínima do estado, proteção concorrente das transições | `persistencia-v1.md` |
 | Redação das respostas ao paciente | `atendimento-v1.md` |

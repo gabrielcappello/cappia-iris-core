@@ -14,17 +14,28 @@ const CLINICA_A = 'clinica-sintetica-a';
 const CLINICA_B = 'clinica-sintetica-b';
 const LIMPEZA = 'proc-limpeza-a';
 const IMPLANTE = 'proc-implante-a';
+// A duracao passou a ser resolvida POR DENTISTA (2026-08-30). Os dois ids
+// abaixo representam profissionais distintos da MESMA clinica.
+const DENTISTA_1 = 'dent-sintetico-1';
+const DENTISTA_2 = 'dent-sintetico-2';
 
 function config(
   duracao_min: number,
   overrides: Partial<ConfiguracaoDuracao> = {}
 ): ConfiguracaoDuracao {
-  return { clinica_id: CLINICA_A, procedimento_id: LIMPEZA, duracao_min, ...overrides };
+  return {
+    clinica_id: CLINICA_A,
+    dentista_id: DENTISTA_1,
+    procedimento_id: LIMPEZA,
+    duracao_min,
+    ...overrides,
+  };
 }
 
 function entrada(overrides: Partial<EntradaResolucaoDuracao> = {}): EntradaResolucaoDuracao {
   return {
     clinica_id: CLINICA_A,
+    dentista_id: DENTISTA_1,
     procedimento_id: LIMPEZA,
     configuracoes: [config(50)],
     ...overrides,
@@ -74,21 +85,121 @@ test('duplicatas equivalentes nao geram ambiguidade', () => {
   if (r.tipo === 'resolvida') assert.equal(r.duracao_min, 50);
 });
 
-test('DUR-02/DUR-07: a duracao nao depende de dentista -- entrada nem aceita dentista', () => {
-  // A mesma entrada resolve o mesmo valor sempre; nao existe caminho que
-  // varie por profissional, porque `dentista_id` nao faz parte do contrato.
-  const primeira = resolverDuracao(entrada());
-  const segunda = resolverDuracao(entrada());
+// =====================================================================
+// DURACAO POR DENTISTA (2026-08-30, decisao do Gabriel)
+//
+// SUBSTITUI a regra anterior ("a duracao nao depende de dentista -- a entrada
+// nem aceita dentista"), que valia enquanto duracao por profissional estava
+// fora da v1. Um caso real de producao (v91) mostrou o custo dela: tres
+// dentistas com duracoes legitimamente diferentes para a mesma avaliacao
+// (Perez 60, Ramoz 30, Arruda 30) faziam TODA a clinica cair em
+// `duracao_conflitante` -- o paciente escolhia o Perez e recebia "instabilidade
+// tecnica".
+//
+// Regra nova: cada dentista usa exclusivamente a propria duracao.
+// =====================================================================
 
-  assert.deepEqual(primeira, segunda);
-  assert.throws(
-    () =>
-      resolverDuracao({
-        ...entrada(),
-        dentista_id: 'dent-ana-a',
-      } as unknown as EntradaResolucaoDuracao),
-    EntradaInvalidaError
+test('POR DENTISTA: cada profissional resolve a SUA duracao (Perez 60, Ramoz 30)', () => {
+  // O caso real: mesma clinica, mesmo procedimento, duracoes diferentes.
+  const configuracoes = [
+    config(60, { dentista_id: DENTISTA_1 }),
+    config(30, { dentista_id: DENTISTA_2 }),
+  ];
+
+  const perez = resolverDuracao(entrada({ dentista_id: DENTISTA_1, configuracoes }));
+  assert.equal(perez.tipo, 'resolvida', 'escolher o primeiro dentista precisa resolver, nunca conflitar');
+  if (perez.tipo === 'resolvida') assert.equal(perez.duracao_min, 60);
+
+  const ramoz = resolverDuracao(entrada({ dentista_id: DENTISTA_2, configuracoes }));
+  assert.equal(ramoz.tipo, 'resolvida');
+  if (ramoz.tipo === 'resolvida') assert.equal(ramoz.duracao_min, 30);
+});
+
+test('POR DENTISTA: alterar a duracao de um profissional nao muda a do outro', () => {
+  const antes = resolverDuracao(
+    entrada({
+      dentista_id: DENTISTA_1,
+      configuracoes: [config(60, { dentista_id: DENTISTA_1 }), config(30, { dentista_id: DENTISTA_2 })],
+    })
   );
+  // So o valor do OUTRO dentista muda -- 30 vira 45.
+  const depois = resolverDuracao(
+    entrada({
+      dentista_id: DENTISTA_1,
+      configuracoes: [config(60, { dentista_id: DENTISTA_1 }), config(45, { dentista_id: DENTISTA_2 })],
+    })
+  );
+
+  assert.deepEqual(antes, depois, 'a configuracao de outro profissional nunca pode influenciar esta resolucao');
+});
+
+test('POR DENTISTA: duracoes diferentes entre profissionais NUNCA geram conflito', () => {
+  // Tres dentistas, tres configuracoes, duas duracoes distintas -- exatamente
+  // a forma que derrubava a clinica inteira antes.
+  const configuracoes = [
+    config(60, { dentista_id: DENTISTA_1 }),
+    config(30, { dentista_id: DENTISTA_2 }),
+    config(30, { dentista_id: 'dent-sintetico-3' }),
+  ];
+
+  for (const [dentista, esperado] of [
+    [DENTISTA_1, 60],
+    [DENTISTA_2, 30],
+    ['dent-sintetico-3', 30],
+  ] as const) {
+    const r = resolverDuracao(entrada({ dentista_id: dentista, configuracoes }));
+    assert.equal(r.tipo, 'resolvida', `${dentista} deveria resolver`);
+    if (r.tipo === 'resolvida') assert.equal(r.duracao_min, esperado);
+  }
+});
+
+test('POR DENTISTA: contradicao DENTRO do mesmo dentista continua sendo conflito', () => {
+  // A protecao nao foi enfraquecida: duas configuracoes divergentes para o
+  // MESMO profissional e o MESMO procedimento seguem falhando fechado.
+  const r = resolverDuracao(
+    entrada({
+      dentista_id: DENTISTA_1,
+      configuracoes: [
+        config(30, { dentista_id: DENTISTA_1 }),
+        config(60, { dentista_id: DENTISTA_1 }),
+        // ruido de outro profissional -- nao entra na comparacao
+        config(90, { dentista_id: DENTISTA_2 }),
+      ],
+    })
+  );
+
+  assert.equal(r.tipo, 'erro_configuracao');
+  if (r.tipo !== 'erro_configuracao') return;
+  assert.equal(r.codigo, 'duracao_conflitante');
+  assert.deepEqual(r.duracoes_conflitantes, [30, 60], 'so as duracoes DESTE dentista entram no conflito');
+});
+
+test('POR DENTISTA: configuracao de outro profissional nunca vira fallback', () => {
+  // O dentista pedido nao tem configuracao; outro tem. Isso e
+  // `nao_configurada` -- nunca "usa a do colega".
+  const r = resolverDuracao(
+    entrada({ dentista_id: DENTISTA_1, configuracoes: [config(30, { dentista_id: DENTISTA_2 })] })
+  );
+
+  assert.equal(r.tipo, 'nao_configurada');
+});
+
+test('POR DENTISTA: dentista_id ausente ou vazio e rejeitado', () => {
+  const { dentista_id: _omitido, ...semDentista } = entrada();
+  assert.throws(
+    () => resolverDuracao(semDentista as unknown as EntradaResolucaoDuracao),
+    EntradaInvalidaError,
+    'sem dentista_id a resolucao voltaria a comparar profissionais diferentes -- tem que falhar alto'
+  );
+  assert.throws(() => resolverDuracao(entrada({ dentista_id: '   ' })), EntradaInvalidaError);
+});
+
+test('DUR-06: isolamento por clinica continua valendo mesmo com o mesmo dentista_id', () => {
+  const r = resolverDuracao(
+    entrada({ configuracoes: [config(30, { clinica_id: CLINICA_B, dentista_id: DENTISTA_1 })] })
+  );
+
+  assert.equal(r.tipo, 'nao_configurada', 'configuracao de outra clinica nunca e consultada');
 });
 
 // =====================================================================

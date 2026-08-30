@@ -157,9 +157,11 @@ definida em `atendimento-v1.md` §5.
 Não existe duração global do procedimento compartilhada entre clínicas, e o procedimento
 não armazena agendabilidade (`procedimento.agendavel` não existe).
 
-Na v1, a duração pertence à **configuração da clínica para o seu procedimento**
-(`clinica_id` + `procedimento_id`, ver `duracao-v1.md`) — nunca ao dentista, nunca ao
-vínculo dentista–procedimento, nunca a um catálogo global entre clínicas.
+A duração pertence ao **dentista escolhido, dentro da clínica**
+(`clinica_id` + `dentista_id` + `procedimento_id`, ver `duracao-v1.md` §0/§1, revisado
+em 30/08/2026) — nunca ao vínculo dentista–procedimento, nunca a um catálogo global
+entre clínicas. Profissionais diferentes da mesma clínica podem ter durações diferentes
+para o mesmo procedimento, e cada um resolve exclusivamente a própria.
 
 Agendabilidade é propriedade derivada, nunca armazenada no procedimento:
 
@@ -210,7 +212,7 @@ Não resolvidas por esta especificação, não decididas por inferência:
   conversacional apresentada ao paciente.
 - Unicidade de alias e de `eh_consulta_avaliacao` são por clínica.
 - Consulta/Avaliação nunca substitui procedimento solicitado sem aceitação explícita.
-- Não existe duração global do procedimento compartilhada entre clínicas; na v1 a
-  duração é configuração da clínica para o procedimento, nunca do dentista ou do
+- Não existe duração global do procedimento compartilhada entre clínicas; a duração é
+  do **dentista escolhido**, dentro da clínica (revisado em 30/08/2026), nunca do
   vínculo. Agendabilidade é propriedade derivada, nunca armazenada.
 - Esta especificação não cria código, tabela, coluna, RPC ou migration.

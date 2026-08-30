@@ -538,8 +538,9 @@ composição:
 2. invalida a escolha vigente;
 3. invalida o resumo vigente;
 4. remove a preferência específica de dentista;
-5. preserva procedimento e duração, quando ainda válidos (nenhum dos dois depende de
-   dentista);
+5. preserva o procedimento, quando ainda válido, e **recalcula a duração por
+   profissional** — ela depende do dentista (`duracao-v1.md` §0/§7, revisado em
+   30/08/2026), então remover a preferência invalida a duração daquele dentista;
 6. considera todos os dentistas ativos e aptos ao procedimento
    (`dentistas-vinculos-v1.md` §5, §10) — chamando `resolverDentista` sem
    `dentista_texto`, mesma chamada já usada na linha `preferencia_nao_encontrada` /
@@ -711,14 +712,14 @@ Matriz de invalidação, consolidando sem alterar as regras já aprovadas em
 | Fato alterado | Invalida |
 |---|---|
 | Procedimento | procedimento resolvido, dentista, duração, disponibilidade, opções, escolha e resumo |
-| Dentista ou preferência | dentista resolvido, disponibilidade, opções, escolha e resumo — **duração permanece** (`duracao-v1.md` §1: mesma duração para todos os dentistas aptos do mesmo procedimento) |
+| Dentista ou preferência | dentista resolvido, **duração**, disponibilidade, opções, escolha e resumo — a duração é do dentista, então trocar de profissional a invalida e exige recalcular (`duracao-v1.md` §0/§1, revisado 30/08/2026) |
 | Data | data resolvida, disponibilidade, opções, escolha e resumo |
 | Período, restrição ou horário | disponibilidade, opções, escolha e resumo |
 | Nova apresentação de opções | opções anteriores, escolha e resumo |
 | Nova escolha | resumo |
 | Cadastro (nome/CPF/nascimento/e-mail) | resumo — **escolha é preservada** |
 | Duração oficial (mudança na configuração da clínica) | disponibilidade, opções, escolha e resumo |
-| Sinal composto `solicitar_nova_opcao` + `aceitar_qualquer_profissional` | opções, escolha e resumo; preferência específica de dentista removida — **procedimento e duração preservados**; busca segue com todos os dentistas aptos, um por vez, em ordem determinística (descrição completa em §13.2, "Sinal composto") |
+| Sinal composto `solicitar_nova_opcao` + `aceitar_qualquer_profissional` | opções, escolha e resumo; preferência específica de dentista removida — **procedimento preservado, duração recalculada por profissional** (ela é do dentista, revisado 30/08/2026); busca segue com todos os dentistas aptos, um por vez, cada um com a duração dele, em ordem determinística (descrição completa em §13.2, "Sinal composto") |
 | Desistência | todos os dados operacionais da ação encerrada — **cadastro válido é preservado** |
 
 **Opção antiga nunca pode ser promovida** por texto, posição, horário coincidente ou
@@ -1019,7 +1020,7 @@ cobertos por specs de domínio são **referenciados**, nunca duplicados.
 | COMP-01 | Ordem dos 14 passos respeitada mesmo com múltiplos fatos já resolvidos | U | Passo já resolvido não é recalculado; passo pendente é processado na ordem fixa |
 | COMP-02 | Múltiplas alterações no mesmo turno (ex.: procedimento e data juntos) | U | Cascata de invalidação da seção 14 aplicada para ambos, sem ordem-dependência |
 | COMP-03 | Alteração de procedimento após opções apresentadas | U | Opções, escolha e resumo invalidados; dentista e duração recalculados |
-| COMP-04 | Alteração de dentista, mesmo procedimento | U | Duração preservada; disponibilidade recalculada |
+| COMP-04 | Alteração de dentista, mesmo procedimento | U | **Duração recalculada** para o novo profissional (é dele, revisado 30/08/2026); disponibilidade recalculada |
 | COMP-05 | Correção cadastral durante `aguardando_confirmacao` | U | Escolha preservada; resumo invalidado; nova confirmação exigida |
 | COMP-06 | `sem_disponibilidade` sob `data_especifica` | U | Pausa 12; nunca avança sozinho |
 | COMP-07 | `sem_disponibilidade` sob `proxima_disponibilidade` | U | Avança automaticamente; nunca é resposta final do turno isoladamente |
@@ -1034,7 +1035,7 @@ cobertos por specs de domínio são **referenciados**, nunca duplicados.
 | COMP-16 | Isolamento multiclínica em toda a composição | S | Nenhum dado de outra clínica influencia qualquer passo |
 | COMP-17 | PII restrita ao necessário | S | Nenhum dado cadastral em erro, falha estrutural, log ou telemetria; dado cadastral só aparece no `solicitar_confirmacao`, e só o conjunto estritamente exigido pelo resumo (seção 17) |
 | COMP-18 | Composição nunca produz comando além de `solicitar_confirmacao` | U | Nenhuma execução, nenhuma transição para `executando` |
-| COMP-19 | Sinal composto `solicitar_nova_opcao` + `aceitar_qualquer_profissional` | U | Ramo da seção 13.2: opções/escolha/resumo invalidados, preferência removida, procedimento e duração preservados, todos os aptos considerados um por vez, nenhuma escolha silenciosa (ver também CTR-11) |
+| COMP-19 | Sinal composto `solicitar_nova_opcao` + `aceitar_qualquer_profissional` | U | Ramo da seção 13.2: opções/escolha/resumo invalidados, preferência removida, procedimento preservado e duração recalculada por profissional, todos os aptos considerados um por vez, nenhuma escolha silenciosa (ver também CTR-11) |
 | COMP-20 | Queda entre interpretação persistida e composição ainda não concluída (nenhum resultado da composição registrado) | I | IA não é chamada novamente; `preAplicar` não é executado novamente; `eventos_candidatos`/`conflitos_de_valor` não são reconstruídos; esta composição **não é retomada**; nenhum comando anterior é inventado; resposta fixa emitida; aguarda nova mensagem — **não é replay** |
 
 ### Futuros — dependem de implementação ainda não feita (prefixo `TMP-`, resolvedor temporal)

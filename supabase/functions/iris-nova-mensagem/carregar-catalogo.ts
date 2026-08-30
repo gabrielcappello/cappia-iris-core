@@ -5,17 +5,29 @@
 // para o contrato ja aprovado. Mesmo espirito de carregar-disponibilidade.ts
 // -- nenhum dos resolvedores e alterado aqui, nenhum deles e reimplementado.
 //
-// Uma simplificacao deliberada, por causa do schema real (nao inventada
-// aqui, apenas o reflexo honesto do que existe hoje):
+// DURACAO POR DENTISTA (regra vigente desde 30/08/2026, decisao do Gabriel):
 //
-// 1. resolverDuracao (nao alterado) exige UMA duracao por clinica+
-//    procedimento; a duracao real hoje pode variar por dentista (visto na
-//    ClearDent). Este carregador nao escolhe qual delas vale -- projeta o
-//    valor efetivo de cada dentista ATIVO (nunca de um inativo, ver
-//    montarDentistas) como uma configuracao, e deixa o proprio
-//    resolverDuracao (que ja detecta conflito) decidir se e consistente ou
-//    nao. Divergencia real entre dentistas ativos vira `duracao_conflitante`,
-//    nunca escolhida em silencio.
+// 1. Este carregador produz a configuracao de duracao por
+//    `clinica_id + dentista_id + procedimento_id` -- uma entrada por dentista
+//    ATIVO (nunca de um inativo, ver montarDentistas), com o valor efetivo
+//    DAQUELE profissional: modo `auto` usa a duracao padrao dele; modo
+//    `procedimento` usa o tempo daquele procedimento nele.
+//
+//    Duracoes diferentes entre dentistas sao configuracao VALIDA (visto na
+//    ClearDent, e confirmado como intencional). Cada um resolve exclusivamente
+//    a propria; a de um colega nunca e consultada nem comparada.
+//
+//    Somente contradicoes DENTRO DA MESMA CHAVE -- mesmo dentista, mesmo
+//    procedimento, mesma clinica -- produzem `duracao_conflitante`, e nunca
+//    sao escolhidas em silencio.
+//
+//    [REGRA ANTERIOR, REVOGADA -- registro historico] Antes, a chave nao tinha
+//    `dentista_id`: os valores de todos os dentistas ativos caiam juntos em
+//    `clinica_id + procedimento_id`, e a divergencia legitima entre eles virava
+//    `duracao_conflitante`. Isso derrubou uma clinica real em producao (v91):
+//    tres profissionais com 60, 30 e 30 minutos para a mesma avaliacao
+//    bloqueavam o agendamento daquele procedimento para a clinica inteira.
+//    [FIM DO REGISTRO HISTORICO]
 
 import { EntradaInvalidaError } from './erros.ts';
 import type { ClienteBancoDados } from './tipos.ts';
@@ -340,8 +352,22 @@ function montarDentistas(
       const tempoPadrao = procedimentosCatalogo.find((c) => c.id === procedimentoId)?.tempo_padrao ?? null;
       const duracao = modo === 'procedimento' ? (tempoItem ?? tempoPadrao) : (duracaoAuto ?? tempoPadrao);
 
+      // `dentista_id` viaja junto desde 2026-08-30: sem ele, esta lista
+      // empilhava as duracoes de TODOS os profissionais sob a mesma chave
+      // `(clinica_id, procedimento_id)`, e duracoes legitimamente diferentes
+      // entre dentistas viravam `duracao_conflitante` -- caso real de
+      // producao (v91). Ver `ConfiguracaoDuracao` em duracao-tipos.ts.
+      //
+      // A regra de coalescencia acima NAO mudou: cada dentista continua
+      // produzindo exatamente a mesma duracao que produzia; o que muda e que
+      // agora ela fica identificada como DELE.
       if (duracao !== null) {
-        configuracoesDuracao.push({ clinica_id: clinicaId, procedimento_id: procedimentoId, duracao_min: duracao });
+        configuracoesDuracao.push({
+          clinica_id: clinicaId,
+          dentista_id: dentistaId,
+          procedimento_id: procedimentoId,
+          duracao_min: duracao,
+        });
       }
     }
   }

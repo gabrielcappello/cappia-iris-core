@@ -64,8 +64,9 @@ bloqueios, agendamentos ativos e eventos externos autorizados. Unir adjacentes.
 ## 4. Duração
 
 A duração oficial vem exclusivamente de `duracao-v1.md`: mínimo 10 minutos, máximo 240
-minutos, múltipla de 10, **a mesma para todos os dentistas aptos** ao procedimento
-naquela clínica.
+minutos, múltipla de 10, **a do dentista escolhido** para aquele procedimento naquela
+clínica (revisado em 30/08/2026 — profissionais diferentes podem ter durações
+diferentes, e cada agenda é calculada com a duração do respectivo dentista).
 
 O limite de 120 minutos usado nas seções 5 e 6 refere-se à **extensão do intervalo
 livre**, nunca à duração do procedimento, ao horizonte de busca, a TTL ou a validade da
@@ -266,8 +267,9 @@ a continuidade. O tratamento conversacional fica para `atendimento-v1.md`.
 mesmo profissional; considerar outro somente após autorização explícita do paciente
 (evento `aceitar_qualquer_profissional`).
 
-**Qualquer profissional**: calcular cada agenda separadamente; usar a mesma duração
-oficial; escolher primeiro o dentista com o horário mais próximo; desempatar por
+**Qualquer profissional**: calcular cada agenda separadamente; usar **a duração do
+respectivo dentista** (`duracao-v1.md` §7, revisado 30/08/2026 — elas podem diferir);
+escolher primeiro o dentista com o horário mais próximo; desempatar por
 `dentista_id` em ordem estável; apresentar somente os horários desse dentista; após
 rejeição, avançar para o próximo dentista apto.
 

@@ -1074,8 +1074,12 @@ async function decidirRemarcacao(
     return { decisao: { tipo: 'reserva_falhou', motivo: 'agendamento_nao_encontrado' } };
   }
 
+  // REMARCACAO: a duracao e a DO DENTISTA DO AGENDAMENTO (`dentistaId`, lido
+  // da propria linha logo acima) -- nunca a de outro profissional. A
+  // remarcacao preserva dentista e procedimento; so data e horario mudam.
   const resultadoDuracao = resolverDuracao({
     clinica_id: clinicaId,
+    dentista_id: dentistaId,
     procedimento_id: procedimentoId,
     configuracoes: catalogo.configuracoesDuracao,
   });
@@ -1575,8 +1579,14 @@ async function decidir(
     ...(substituicao !== undefined ? { substituicao } : {}),
   });
 
+  // NOVO AGENDAMENTO: a duracao e a do profissional JA RESOLVIDO neste turno
+  // (`resolucaoDentista.dentistaId`, vindo de resolver-dentista.ts) -- nunca a
+  // de outro dentista da clinica. Ate 2026-08-30 esta chamada nao informava o
+  // dentista, e a duracao de um profissional invalidava a de outro
+  // (`duracao_conflitante`), derrubando a agenda de quem o paciente escolheu.
   const resultadoDuracao = resolverDuracao({
     clinica_id: clinicaId,
+    dentista_id: resolucaoDentista.dentistaId,
     procedimento_id: procedimentoIdEfetivo,
     configuracoes: catalogo.configuracoesDuracao,
   });

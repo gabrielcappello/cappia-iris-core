@@ -63,9 +63,15 @@ export async function carregarEntradaDisponibilidade(
   const dentista = encontrarDentista(clinica.dentistas, entrada.dentista_id);
   if (!dentista) return { tipo: 'dentista_nao_encontrado' };
 
-  const configuracoes = configuracoesDuracao(entrada.clinica_id, entrada.procedimento_id, dentista);
+  const configuracoes = configuracoesDuracao(
+    entrada.clinica_id,
+    entrada.dentista_id,
+    entrada.procedimento_id,
+    dentista
+  );
   const resultadoDuracao = resolverDuracao({
     clinica_id: entrada.clinica_id,
+    dentista_id: entrada.dentista_id,
     procedimento_id: entrada.procedimento_id,
     configuracoes,
   });
@@ -207,12 +213,13 @@ function diaUtilAtivo(dentista: DentistaCarregado, diaSemana: number): boolean {
 
 function configuracoesDuracao(
   clinicaId: string,
+  dentistaId: string,
   procedimentoId: string,
   dentista: DentistaCarregado
 ): ConfiguracaoDuracao[] {
   if (dentista.modo === 'auto') {
     if (typeof dentista.dur !== 'number') return [];
-    return [{ clinica_id: clinicaId, procedimento_id: procedimentoId, duracao_min: dentista.dur }];
+    return [{ clinica_id: clinicaId, dentista_id: dentistaId, procedimento_id: procedimentoId, duracao_min: dentista.dur }];
   }
 
   if (dentista.modo === 'procedimento') {
@@ -225,7 +232,9 @@ function configuracoesDuracao(
         (p as Record<string, unknown>).ativo === true
     ) as Record<string, unknown> | undefined;
     if (!item || typeof item.tempo !== 'number') return [];
-    return [{ clinica_id: clinicaId, procedimento_id: procedimentoId, duracao_min: item.tempo }];
+    return [
+      { clinica_id: clinicaId, dentista_id: dentistaId, procedimento_id: procedimentoId, duracao_min: item.tempo },
+    ];
   }
 
   // modo 'manual' ou qualquer valor desconhecido: sem configuracao --

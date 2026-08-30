@@ -120,16 +120,19 @@ elementos da mesma clínica.
 
 ## 8. Relação com duração
 
-Dentista e vínculo comprovam **aptidão e isolamento**; não determinam o valor da
-duração.
+O **dentista** comprova aptidão e isolamento **e determina o valor da duração**
+(revisado em 30/08/2026). O **vínculo** comprova aptidão e isolamento e não determina
+o valor.
 
-A duração é resolvida na configuração da clínica para o procedimento (`clinica_id` +
-`procedimento_id`, ver `duracao-v1.md`), depois de dentista apto e procedimento oficial
-confirmados. A mesma duração é vinculada a cada dentista apto encaminhado à
-disponibilidade.
+A duração é resolvida na configuração **daquele dentista** para o procedimento
+(`clinica_id` + `dentista_id` + `procedimento_id`, ver `duracao-v1.md` §0/§1, revisado
+em 30/08/2026), depois de dentista apto e procedimento oficial confirmados. Cada
+dentista apto encaminhado à disponibilidade leva **a sua própria** duração — elas podem
+diferir entre si legitimamente.
 
-Trocar de dentista altera a agenda consultada, mas **não altera o valor da duração** do
-procedimento. Procedimento sem duração oficial válida na clínica não é agendável;
+Trocar de dentista altera a agenda consultada **e exige recalcular a duração**, que é
+do profissional (revisado em 30/08/2026). Procedimento sem duração oficial válida para
+aquele dentista não é agendável;
 nunca duração global do procedimento entre clínicas, nunca fallback.
 
 ## 9. Relação com disponibilidade
@@ -143,8 +146,8 @@ antes de aptidão confirmada.
 Esta spec define somente que:
 - `aceitar_qualquer_profissional` representa autorização validada pelo Core (evento já
   canônico);
-- todos os dentistas oficialmente aptos seguem para a disponibilidade com a mesma
-  duração oficial da clínica para o procedimento;
+- todos os dentistas oficialmente aptos seguem para a disponibilidade, cada um com
+  **a duração oficial dele** para aquele procedimento (podem diferir entre si);
 - ausência de preferência não equivale automaticamente a essa aceitação (seção 4).
 
 Explicitamente fora desta spec — pertencem a `duracao-v1.md` e a `disponibilidade.md`

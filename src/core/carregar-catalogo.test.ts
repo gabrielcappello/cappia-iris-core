@@ -88,8 +88,10 @@ test('dentista modo procedimento: duracao vem do item, nao do tempo_padrao', asy
   assert.deepEqual(resultado.catalogo.vinculos, [
     { clinica_id: CLINICA_ID, dentista_id: dentistaId, procedimento_id: 'teste_limpeza', ativo: true },
   ]);
+  // `dentista_id` acompanha a duracao desde 2026-08-30: sem ele, a duracao de
+  // um profissional invalidava a de outro (duracao_conflitante).
   assert.deepEqual(resultado.catalogo.configuracoesDuracao, [
-    { clinica_id: CLINICA_ID, procedimento_id: 'teste_limpeza', duracao_min: 45 },
+    { clinica_id: CLINICA_ID, dentista_id: dentistaId, procedimento_id: 'teste_limpeza', duracao_min: 45 },
   ]);
 });
 
@@ -117,7 +119,7 @@ test('dentista modo auto: duracao vem de dur, nao do item do procedimento', asyn
   assert.equal(resultado.tipo, 'carregado');
   if (resultado.tipo !== 'carregado') return;
   assert.deepEqual(resultado.catalogo.configuracoesDuracao, [
-    { clinica_id: CLINICA_ID, procedimento_id: 'teste_limpeza', duracao_min: 60 },
+    { clinica_id: CLINICA_ID, dentista_id: dentistaId, procedimento_id: 'teste_limpeza', duracao_min: 60 },
   ]);
 });
 
@@ -192,7 +194,7 @@ test('dentista inativo com duracao divergente: continua listado, mas nunca vira 
     { clinica_id: CLINICA_ID, dentista_id: dentistaAtivo, procedimento_id: 'teste_limpeza', ativo: true },
   ]);
   assert.deepEqual(resultado.catalogo.configuracoesDuracao, [
-    { clinica_id: CLINICA_ID, procedimento_id: 'teste_limpeza', duracao_min: 45 },
+    { clinica_id: CLINICA_ID, dentista_id: dentistaAtivo, procedimento_id: 'teste_limpeza', duracao_min: 45 },
   ]);
 });
 

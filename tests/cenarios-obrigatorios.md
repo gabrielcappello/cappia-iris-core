@@ -141,7 +141,7 @@ Fonte: `controlador-conversacional-v1.md` · `novo-agendamento.md` §19
 | CTR-04 | `confirmar_resumo` junto com alteração invalidante | U | Invalida contexto; nunca entra em `executando` |
 | CTR-05 | Correção cadastral em `aguardando_confirmacao` | U | Escolha preservada; resumo e confirmação invalidados |
 | CTR-06 | Alteração de procedimento | U | Invalida dentistas, duração, opções, escolha, resumo |
-| CTR-07 | Alteração de dentista | U | Invalida opções e escolha; **duração permanece** |
+| CTR-07 | Alteração de dentista | U | Invalida **duração**, opções e escolha — a duração é do dentista, então trocar de profissional a invalida (revisado 30/08/2026) |
 | CTR-08 | Alteração de data, período ou horário | U | Invalida derivados temporais; preserva procedimento |
 | CTR-09 | `desistir` explícito | U | Encerra ação; preserva cadastro; volta a `atendimento` |
 | CTR-10 | Candidatos incompatíveis na mesma mensagem | U | Esclarecimento; nunca escolha silenciosa |
@@ -191,12 +191,12 @@ Fonte: `duracao-v1.md` · `novo-agendamento.md` §7
 | ID | Cenário | Nível | Resultado esperado |
 |---|---|---|---|
 | DUR-01 | Duração configurada válida | U | Resolve normalmente |
-| DUR-02 | Dois dentistas aptos, mesmo procedimento | U | Mesma duração para ambos |
+| DUR-02 | Dois dentistas aptos, mesmo procedimento, durações diferentes | U | Cada um resolve a **própria** duração; a diferença é válida e nunca gera conflito |
 | DUR-03 | Duração ausente na clínica | U | Falha fechada |
 | DUR-04 | Zero, negativa, fracionada, não numérica, <10, >240, não múltipla de 10 | U | Falha fechada; nenhuma correção automática |
 | DUR-05 | Falha de duração | U | Não oferece Consulta/Avaliação, não reclassifica aptidão, não consulta disponibilidade |
 | DUR-06 | Configuração de outra clínica | S | Nunca consultada |
-| DUR-07 | Troca de dentista, mesmo procedimento | U | Duração preservada |
+| DUR-07 | Troca de dentista, mesmo procedimento | U | **Recalcula** a duração usando a do novo dentista — nunca preserva a do anterior |
 | DUR-08 | Alteração do valor oficial após opções apresentadas | I | Derivados invalidados |
 | DUR-09 | Snapshot histórico após mudança de configuração | I | Inalterado |
 

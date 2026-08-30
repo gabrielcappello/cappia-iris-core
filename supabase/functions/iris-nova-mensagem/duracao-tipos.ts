@@ -6,17 +6,20 @@
 // recebe as configuracoes prontas em vez de consultar banco.
 
 /**
- * Configuracao oficial de duracao de UMA clinica para UM procedimento.
+ * Configuracao oficial de duracao de UM DENTISTA, para UM procedimento, em UMA
+ * clinica.
  *
- * Fonte oficial (secao 1): `clinica_id + procedimento_id = duracao_min`.
+ * Fonte oficial (secao 1, revisada em 30/08/2026):
+ * `clinica_id + dentista_id + procedimento_id = duracao_min`.
  *
- * A duracao pertence a configuracao da clinica para o procedimento; e igual
- * para todos os dentistas aptos; NAO pertence ao dentista, NAO pertence ao
- * vinculo, e NAO e duracao global compartilhada entre clinicas.
+ * A duracao PERTENCE AO DENTISTA escolhido: profissionais diferentes da mesma
+ * clinica podem ter duracoes diferentes para o mesmo procedimento, e isso e
+ * configuracao valida -- nunca conflito. NAO pertence ao vinculo, e NAO e
+ * duracao global compartilhada entre clinicas.
  *
  * **Nenhum campo `ativo`**: a spec nao define estado ativo/inativo para a
- * configuracao de duracao -- so a existencia do par
- * `(clinica_id, procedimento_id)` e o valor. Criar esse campo aqui seria
+ * configuracao de duracao -- so a existencia da chave
+ * `(clinica_id, dentista_id, procedimento_id)` e o valor. Criar esse campo aqui seria
  * estrutura antecipada, o que a secao 4 proibe explicitamente ("nao deve
  * gerar estruturas antecipadas nesta versao").
  *
@@ -25,6 +28,26 @@
  */
 export interface ConfiguracaoDuracao {
   clinica_id: string;
+  /**
+   * De QUEM e esta duracao (2026-08-30, decisao do Gabriel).
+   *
+   * Ate aqui a configuracao guardava so `(clinica_id, procedimento_id)`, e
+   * `carregar-catalogo.ts` empilhava uma entrada POR DENTISTA nessa mesma
+   * chave. Dois profissionais com duracoes legitimamente diferentes para o
+   * mesmo procedimento viravam dois valores distintos na mesma chave, e
+   * `resolverDuracao` -- corretamente, pelo contrato antigo -- devolvia
+   * `duracao_conflitante`.
+   *
+   * Caso real de producao (v91, 2026-08-30, turno 21:40:06 UTC, confirmado nos
+   * logs): Diego Perez (auto, 60min) + Diego Ramoz e Pablo Arruda
+   * (procedimento, 30min) para a mesma Consulta/Avaliacao. O paciente escolheu
+   * o Perez e recebeu "instabilidade tecnica" -- a duracao dos OUTROS
+   * profissionais bloqueava a agenda dele.
+   *
+   * Cada dentista usa exclusivamente a propria duracao. Diferencas entre
+   * profissionais sao configuracao valida, nunca conflito.
+   */
+  dentista_id: string;
   procedimento_id: string;
   /**
    * Duracao em minutos. Tipado como `number`, mas SEMPRE validado em
@@ -46,12 +69,28 @@ export interface ConfiguracaoDuracao {
  * `nome_pt`, alias, especialidade ou texto do paciente (secao 5:
  * "resolucao por nome" e proibida sem excecao).
  *
- * **Nenhum `dentista_id` na entrada**: dentista e vinculo comprovam aptidao
- * e isolamento, mas nao alteram o valor da duracao (secao 1). Aceitar
- * dentista aqui abriria caminho para duracao por dentista, fora da v1.
+ * **`dentista_id` e OBRIGATORIO na entrada** (revisado em 30/08/2026, decisao
+ * do Gabriel): ele integra a chave da duracao
+ * (`clinica_id + dentista_id + procedimento_id`), porque a duracao PERTENCE ao
+ * dentista escolhido. E a identidade OFICIAL ja resolvida pelo resolvedor de
+ * dentista -- nunca nome, posicao no array ou fallback.
+ *
+ * Exigi-lo, em vez de aceita-lo opcionalmente, e deliberado: um chamador que o
+ * esqueca falha alto, na hora, em vez de voltar em silencio a comparar
+ * profissionais diferentes entre si.
+ *
+ * O vinculo dentista-procedimento continua comprovando aptidao e isolamento,
+ * e continua NAO alterando o valor da duracao (secao 1).
  */
 export interface EntradaResolucaoDuracao {
   clinica_id: string;
+  /**
+   * O profissional JA ESCOLHIDO para este atendimento (2026-08-30). A
+   * resolucao passa a ser por `clinica_id + dentista_id + procedimento_id`:
+   * so a configuracao DELE e considerada, e a de outro profissional nunca
+   * entra na comparacao.
+   */
+  dentista_id: string;
   procedimento_id: string;
   configuracoes: readonly ConfiguracaoDuracao[];
 }
@@ -81,12 +120,13 @@ export type MotivoDuracaoInvalida =
  * CODIGO, nunca por mensagem livre (mesmo padrao dos resolvedores de
  * procedimento e de dentista).
  *
- * Existe um unico codigo porque a configuracao tem apenas tres campos e
- * `(clinica_id, procedimento_id)` e a chave: a unica divergencia
- * estruturalmente possivel para a mesma chave e no proprio `duracao_min`.
+ * Existe um unico codigo porque `(clinica_id, dentista_id, procedimento_id)` e
+ * a chave: a unica divergencia estruturalmente possivel para a mesma chave e no
+ * proprio `duracao_min`. Duracoes diferentes entre DENTISTAS distintos nao sao
+ * divergencia -- sao chaves diferentes (revisado em 30/08/2026).
  */
 export type CodigoErroConfiguracaoDuracao =
-  /** Mesma chave `(clinica_id, procedimento_id)` com valores de duracao divergentes. */
+  /** Mesma chave `(clinica_id, dentista_id, procedimento_id)` com valores de duracao divergentes. */
   'duracao_conflitante';
 
 /**

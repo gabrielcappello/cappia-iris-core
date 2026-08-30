@@ -342,10 +342,12 @@ A combinação **simultânea** dos dois na mesma mensagem é interpretada pelo c
 como um **sinal composto**, não como dois eventos avaliados isoladamente. Essa
 compatibilidade — e a regra completa que ela produz — pertence ao contrato do
 controlador, definida em `controlador-conversacional-v1.md` §7: opções e escolha vigentes
-são invalidadas; a preferência específica por dentista é removida; procedimento e
-duração permanecem quando ainda válidos; a nova disponibilidade considera todos os
-dentistas ativos aptos, processados um por vez, sem misturar horários de profissionais
-diferentes e sem escolher nenhum definitivamente. Nenhum evento ou estado novo é criado
+são invalidadas; a preferência específica por dentista é removida; o procedimento
+permanece quando ainda válido, e a **duração é recalculada por profissional** — ela
+pertence ao dentista (`duracao-v1.md` §0/§7, revisado em 30/08/2026), então remover a
+preferência invalida a duração daquele dentista; a nova disponibilidade considera todos
+os dentistas ativos aptos, processados um por vez, **cada um com a duração dele**, sem
+misturar horários de profissionais diferentes e sem escolher nenhum definitivamente. Nenhum evento ou estado novo é criado
 por essa combinação.
 
 A execução determinística dessa regra dentro da ordem completa do fluxo — incluindo

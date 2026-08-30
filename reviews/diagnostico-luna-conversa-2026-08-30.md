@@ -669,6 +669,85 @@ e o critério de aceitação ficou fixo antes da medição final.
 
 ---
 
+## Quinta causa — duração de um dentista bloqueava a agenda de outro (v91)
+
+Caso real de produção, **confirmado nos logs da Edge Function** (turno
+2026-08-30 21:40:06 UTC):
+
+```
+21:40:07  sombra_v2  decisao_atual=erro_configuracao_duracao
+```
+
+O paciente pediu avaliação para segunda, escolheu "Diego Perez", e recebeu
+*"tivemos uma instabilidade técnica"* — que é a Luna redigindo fielmente
+`objetivo: informar_falha_tecnica`.
+
+### Causa
+
+`carregar-catalogo.ts` empilhava **uma entrada de duração por dentista**, mas
+todas sob a chave `(clinica_id, procedimento_id)` — sem `dentista_id`.
+`resolverDuracao` comparava profissionais diferentes entre si e, corretamente
+pelo contrato antigo, devolvia `duracao_conflitante`.
+
+Configuração real da clínica, toda ela válida:
+
+| Dentista | modo | duração da avaliação |
+|---|---|---|
+| Diego Perez | `auto` | **60** |
+| Diego Ramoz | `procedimento` | 30 |
+| Pablo Arruda | `procedimento` | 30 |
+
+Três valores, uma chave → `[20, 30, 60]` conflitantes → clínica inteira travada.
+
+### Solução
+
+`dentista_id` passa a integrar a configuração e a chave de resolução
+(`clinica_id + dentista_id + procedimento_id`). Cada dentista usa
+exclusivamente a própria duração.
+
+- `auto` → só `dentista.dur`; `procedimento` → só o tempo do item daquele
+  dentista (regra de coalescência **inalterada**, apenas identificada);
+- diferenças entre profissionais **nunca** geram conflito;
+- contradição para o **mesmo** dentista/procedimento continua falhando fechado;
+- `dentista_id` é **obrigatório** na entrada: um chamador que o esqueça falha
+  alto, em vez de voltar a comparar profissionais silenciosamente;
+- identificação sempre por id — nunca nome, posição no array ou fallback;
+- isolamento por clínica preservado.
+
+Três chamadores atualizados: novo agendamento (dentista resolvido no turno),
+**remarcação** (dentista do agendamento) e `carregar-disponibilidade`.
+
+### Testes
+
+`duracao-por-dentista.test.ts` (7, fluxo real) + `resolver-duracao.test.ts`
+(atualizado, 54): caso real Perez→60 / Ramoz→30; alterar a duração do Ramoz não
+muda nada no Perez; inativo ignorado; contradição no mesmo dentista ainda
+conflita; remarcação usa a duração do dentista do agendamento; a duração governa
+a grade.
+
+**Verificação:** revertendo só o filtro por dentista, **9 testes falham**.
+
+Substituí o teste `DUR-02/DUR-07: a duracao nao depende de dentista`, que
+codificava a regra antiga.
+
+Uma asserção minha estava errada e foi corrigida por medição: eu afirmara que
+duração maior produz menos opções. A grade é espaçada de hora em hora e
+limitada, então 30 e 60 produzem **10 opções** ambos — diferem no último encaixe
+(17:30 × 17:00). O teste agora assere isso, que é o que de fato acontece.
+
+### Lacuna registrada, não corrigida (frente separada)
+
+A guarda da redatora **aprova** um texto de falha técnica quando o objetivo era
+`apresentar_horarios` — medido: `{"aprovado": true}`. Ela só verifica horário/
+data não autorizados e alegação de execução, não a contradição entre objetivo e
+resposta.
+
+**Não causou este erro** (o Core de fato mandou `falha_tecnica: true`, e a Luna
+não inventou nada: 0/12 em medição com os horários presentes). Fica registrada
+para tratamento separado, conforme decisão do Gabriel.
+
+---
+
 ## Correções aplicadas — lista final
 
 | # | Onde | O quê |
@@ -683,6 +762,13 @@ e o critério de aceitação ficou fixo antes da medição final.
 | 8 | `orquestrador-tipos.ts` | `aguardando_procedimento` ganha `sem_expediente_na_data_pedida?` |
 | 9 | `fatos-autorizados.ts` | o fechamento chega à redatora como fato adicional, objetivo inalterado |
 | 10 | `fatos-autorizados.ts` | com fechamento, `dados_faltantes` passa a `['procedimento', 'data']` — a data recusada voltou a faltar |
+| 11 | `duracao-tipos.ts` | `ConfiguracaoDuracao` e `EntradaResolucaoDuracao` ganham `dentista_id` |
+| 12 | `resolver-duracao.ts` | resolve por `clinica_id + dentista_id + procedimento_id`; `dentista_id` obrigatório |
+| 13 | `carregar-catalogo.ts` | preserva `dentista_id` em cada configuração de duração |
+| 14 | `carregar-disponibilidade.ts` | idem, e passa o dentista na resolução |
+| 15 | `orquestrador.ts` | novo agendamento e remarcação informam o dentista |
+
+Os itens **11–15 são desta rodada** e não estão commitados.
 
 Os itens 1–6 estão no commit `a83d723` (publicado, deploy v90). Os itens **7–9
 são desta rodada** e não estão commitados.
@@ -696,7 +782,7 @@ linguagem natural ou patch para as frases desta conversa.
 |---|---|
 | Testes específicos (effort/oferta) | **138/138** |
 | Testes do domingo | **10/10** |
-| Suíte completa | **1595/1598** — as 3 falhas são os testes de integração que exigem `@supabase/supabase-js`, pré-existentes e não relacionados |
+| Suíte completa | **1608/1611** — as 3 falhas são os testes de integração que exigem `@supabase/supabase-js`, pré-existentes e não relacionados |
 | `deno check` (Core + eval) | 4 erros, **todos** `@supabase/supabase-js` ausente — idênticos aos de antes da mudança |
 | `deno check` (Edge) | 4 erros `EdgeRuntime`, **idênticos antes e depois** (global existe no runtime Supabase, não no Deno CLI) |
 | Paridade Core/Edge | **restaurada** — única diferença é um comentário que já era exclusivo da cópia Edge |

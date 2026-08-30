@@ -768,13 +768,13 @@ tabela de referência, sem obrigar consulta cruzada constante entre os dois docu
 | Alteração | Preserva | Invalida |
 |---|---|---|
 | Procedimento | cadastro | procedimento oficial, dentista, duração, critério temporal dependente, opções, escolha e resumo |
-| Dentista | procedimento, duração, cadastro e temporal | dentista oficial, opções, escolha e resumo |
+| Dentista | procedimento, cadastro e temporal | dentista oficial, **duração** (é do dentista — recalcular para o profissional escolhido, `duracao-v1.md` §0/§1, revisado 30/08/2026), opções, escolha e resumo |
 | Data | procedimento, dentista, duração e cadastro | critério temporal, opções, escolha e resumo |
 | Horário exato | procedimento, dentista, duração e cadastro | critério temporal, opções, escolha e resumo |
 | Período | procedimento, dentista, duração e cadastro | critério temporal, opções, escolha e resumo |
 | Restrição | procedimento, dentista, duração e cadastro | critério temporal, opções, escolha e resumo |
 | Intenção temporal | procedimento, dentista, duração e cadastro | critério temporal, opções, escolha e resumo |
-| Qualquer dentista (sinal composto, `composicao-novo-agendamento-v1.md` §13.2) | procedimento, duração, temporal e cadastro | dentista específico, opções, escolha e resumo |
+| Qualquer dentista (sinal composto, `composicao-novo-agendamento-v1.md` §13.2) | procedimento, temporal e cadastro | dentista específico, **duração** (recalculada por profissional — cada apto entra na disponibilidade com a duração dele), opções, escolha e resumo |
 | Outro horário (nova apresentação de opções) | procedimento, duração, dentistas aptos e cadastro | opções, escolha e resumo |
 | Correção cadastral | resoluções e escolha | resumo e confirmação pendente |
 | Desistência | identidade e cadastro permitido | todo estado operacional da ação |

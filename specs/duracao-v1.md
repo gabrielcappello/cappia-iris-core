@@ -11,24 +11,60 @@ Esta especificação complementa `novo-agendamento.md`, `procedimentos-v1.md`,
 somente a mensagem atual e nunca decide; o Core determinístico resolve;
 Supabase/Postgres é a fonte oficial.
 
+## 0. Revisão de 30/08/2026 — a duração passou a pertencer ao dentista
+
+Decisão do Gabriel, aprovada após um caso real de produção (v91, turno de
+30/08/2026 21:40:06 UTC, confirmado nos logs da Edge Function).
+
+**O que era:** a duração pertencia a `clinica_id + procedimento_id` e valia igual
+para todos os dentistas aptos.
+
+**O que motivou a revisão:** uma clínica real tinha três dentistas ativos com
+durações legítimas e diferentes para a **mesma** Consulta/Avaliação —
+
+| Dentista | modo | duração |
+|---|---|---|
+| Diego Perez | `auto` | 60 |
+| Diego Ramoz | `procedimento` | 30 |
+| Pablo Arruda | `procedimento` | 30 |
+
+Como as três caíam na mesma chave, o resolvedor — corretamente, pelo contrato
+antigo — devolvia `duracao_conflitante`. O paciente escolheu o Diego Perez, pediu
+avaliação para segunda-feira, e recebeu *"tivemos uma instabilidade técnica"*. A
+clínica inteira ficou impedida de agendar aquele procedimento.
+
+**O que passa a valer:** a duração pertence ao **dentista escolhido**. Diferenças
+entre profissionais são configuração válida, nunca defeito.
+
+As seções 1, 4 e 7 abaixo foram revisadas por esta decisão.
+
 ## 1. Fonte oficial
 
-Na Duração v1:
-
 ```
-clinica_id + procedimento_id = duracao_min
+clinica_id + dentista_id + procedimento_id = duracao_min
 ```
 
 A duração:
 
-- pertence à configuração da clínica para o procedimento;
-- é igual para todos os dentistas aptos daquela clínica;
-- não pertence ao dentista;
-- não pertence ao vínculo dentista–procedimento;
+- pertence ao **dentista escolhido**, para aquele procedimento, naquela clínica;
+- **pode legitimamente diferir entre dentistas** da mesma clínica;
+- é resolvida usando **exclusivamente** a configuração do dentista já escolhido —
+  a de outro profissional nunca é consultada, comparada nem usada como fallback;
 - não é uma duração global compartilhada entre clínicas.
 
+Como o valor é obtido, por modo de configuração do dentista:
+
+| Modo do dentista | Origem da duração |
+|---|---|
+| `auto` | a **duração padrão daquele dentista** |
+| `procedimento` | o **tempo daquele procedimento naquele dentista** |
+
 Dentista e vínculo continuam necessários para comprovar aptidão e isolamento
-(`dentistas-vinculos-v1.md`), mas não alteram o valor da duração.
+(`dentistas-vinculos-v1.md`) — e agora **também determinam o valor da duração**.
+
+O `dentista_id` é obrigatório na resolução: sem ele, a resolução voltaria a
+comparar profissionais diferentes entre si, e por isso ela falha alto em vez de
+adivinhar.
 
 ## 2. Validação
 
@@ -65,23 +101,26 @@ Esses valores:
 O catálogo-base e seus valores exatos permanecem como artefato pendente separado
 (seção 13).
 
-## 4. Ausência de modos por dentista
+## 4. Duração por dentista — o que existe e o que continua não existindo
 
-Não existem na Duração v1:
+**Revisado em 30/08/2026** (ver seção 0). A duração individual por dentista, que
+esta seção antes proibia, **é agora a regra canônica**: a chave é
+`clinica_id + dentista_id + procedimento_id`, e o valor sai do modo configurado
+para aquele dentista (`auto` → duração padrão dele; `procedimento` → tempo daquele
+procedimento nele).
 
-- `geral_dentista`;
-- `especifica_vinculo`;
-- duração geral do dentista;
-- duração por vínculo;
-- duração diferente entre dentistas;
-- precedência entre fontes;
-- fallback entre modos;
-- campo ou enum preventivo de modo.
+**Duração diferente entre dentistas é válida e esperada.**
 
-Uma futura duração individual por dentista ou vínculo
-(`clinica_id + dentista_id + procedimento_id`) é tecnicamente possível, mas exigirá
-nova especificação, decisão de produto, regra de migração e alterações próprias no
-painel e no Core. **Não deve gerar estruturas antecipadas nesta versão.**
+Continuam NÃO existindo:
+
+- `geral_dentista` e `especifica_vinculo` como enums de modo;
+- duração por **vínculo** dentista–procedimento (o vínculo comprova aptidão, não
+  carrega duração);
+- precedência entre fontes ou fallback entre modos — cada dentista tem uma origem
+  única de duração, definida pelo seu próprio modo;
+- fallback para a duração de **outro** profissional: se o dentista escolhido não
+  tem configuração, o resultado é `nao_configurada`, nunca "usa a do colega";
+- campo ou enum preventivo de modo além dos já existentes.
 
 ## 5. Resolução determinística
 
@@ -91,13 +130,15 @@ Fluxo:
 2. validar procedimento oficial, ativo e pertencente à clínica;
 3. validar dentista oficial, ativo e pertencente à clínica;
 4. validar vínculo oficial e ativo entre ambos;
-5. carregar a configuração exata da clínica para o procedimento;
+5. carregar a configuração exata **daquele dentista** para o procedimento, naquela
+   clínica (`clinica_id + dentista_id + procedimento_id`) — a configuração de
+   outro profissional nunca entra nesta etapa;
 6. validar formato, intervalo e múltiplo de 10 (seção 2);
 7. retornar `duracao_min` ou falha fechada.
 
 Proibido, sem exceção:
 
-- duração do dentista;
+- duração de **outro** dentista que não o escolhido (a do escolhido é a fonte);
 - duração do vínculo;
 - duração global compartilhada entre clínicas;
 - tempo legado;
@@ -140,19 +181,24 @@ Consulta/Avaliação, sem reclassificar aptidão) continua sendo exclusivamente 
 
 ## 7. Qualquer profissional
 
-Todos os dentistas aptos recebem a mesma duração oficial da clínica para o
-procedimento.
+**Revisado em 30/08/2026** (ver seção 0). Cada dentista apto recebe **a sua
+própria** duração — elas podem diferir entre si legitimamente.
 
-A disponibilidade futura receberá uma combinação por profissional:
+A disponibilidade recebe uma combinação por profissional:
 
 - `clinica_id`;
 - `procedimento_id`;
 - `dentista_id`;
 - vínculo oficial ativo;
-- a mesma `duracao_min`.
+- a `duracao_min` **daquele dentista**.
 
-A consulta permanece individual **porque cada dentista possui agenda própria**, não
-porque tenha duração diferente.
+Quando o paciente aceita qualquer profissional, cada agenda é calculada
+separadamente **com a duração do respectivo dentista** — nunca com um valor único
+aplicado a todos. Trocar de dentista exige recalcular a duração antes de qualquer
+consulta de disponibilidade.
+
+A consulta permanece individual porque cada dentista possui agenda própria **e**
+porque a duração é dele.
 
 Nenhuma disponibilidade pode ser consultada sem duração válida. A disponibilidade não
 pode inventar, alterar ou buscar a duração em outra fonte.
@@ -219,21 +265,25 @@ inventa fallback, não muda o procedimento e não tenta compensar a configuraç�
 
 ## 11. Isolamento multiclínica
 
-A configuração de duração pertence à clínica; procedimento, dentista e vínculo
-pertencem à mesma clínica; nenhuma duração cruza clínicas; ausência de configuração em
+A configuração de duração pertence ao dentista, dentro da clínica; procedimento,
+dentista e vínculo pertencem à mesma clínica; nenhuma duração cruza clínicas; ausência de configuração em
 uma clínica nunca consulta outra; IDs externos não são autoridade; nenhuma informação
 administrativa de outra clínica pode ser revelada.
 
 ## 12. Testes obrigatórios
 
-Duração válida configurada resolve normalmente; dois dentistas aptos recebem a mesma
-duração; duração ausente na clínica falha fechado; duração zero, negativa, fracionada,
+Duração válida configurada resolve normalmente; dois dentistas aptos podem ter
+durações **diferentes** para o mesmo procedimento, e cada um resolve exclusivamente a
+própria — a diferença entre profissionais nunca gera conflito (revisado em 30/08/2026);
+duas configurações contraditórias para o **mesmo** dentista e o mesmo procedimento
+continuam falhando como `duracao_conflitante`; duração ausente para o dentista escolhido
+falha fechado, sem usar a de outro profissional; duração zero, negativa, fracionada,
 não numérica, abaixo de 10, acima de 240 ou não múltipla de 10 falham fechado sem
 correção automática; falha de duração não oferece Consulta/Avaliação; falha de duração
 não reclassifica dentistas aptos como não aptos; falha de duração não consulta
-disponibilidade; nenhuma configuração de outra clínica é consultada; troca de dentista
-com o mesmo procedimento preserva o valor da duração; troca de procedimento invalida a
-duração; alteração do valor oficial após opções apresentadas invalida derivados;
+disponibilidade; nenhuma configuração de outra clínica nem de outro profissional é
+consultada; troca de dentista com o mesmo procedimento **invalida e recalcula** o valor
+da duração (ela é do dentista); troca de procedimento invalida a duração; alteração do valor oficial após opções apresentadas invalida derivados;
 revalidação antes da criação detecta mudança e impede a criação; snapshot histórico
 permanece inalterado após mudança de configuração; mudança superficial de texto com
 identidade oficial idêntica não invalida.
@@ -255,11 +305,16 @@ Não resolvidas por esta especificação, não decididas por inferência:
 
 ## 14. Invariantes
 
-- Duração é sempre `clinica_id + procedimento_id`; nunca por dentista, nunca por
-  vínculo, nunca global entre clínicas.
-- Todos os dentistas aptos do mesmo procedimento na mesma clínica recebem a mesma
-  duração.
-- Dentista e vínculo comprovam aptidão e isolamento; não alteram o valor da duração.
+- Duração é sempre `clinica_id + dentista_id + procedimento_id` (revisado em
+  30/08/2026); nunca por vínculo, nunca global entre clínicas.
+- Dentistas aptos do mesmo procedimento na mesma clínica **podem ter durações
+  diferentes** — isso é configuração válida, nunca defeito.
+- A resolução usa exclusivamente a configuração do dentista escolhido; a de outro
+  profissional nunca é consultada nem serve de fallback.
+- **Conflito existe somente entre valores contraditórios do mesmo dentista e do
+  mesmo procedimento** — nunca entre profissionais diferentes.
+- Dentista comprova aptidão e isolamento **e determina o valor da duração**; o
+  vínculo comprova aptidão e isolamento, e não altera o valor.
 - Duração válida é inteira, em minutos, de 10 a 240, múltipla de 10.
 - Nenhum arredondamento, truncamento ou correção automática, em nenhuma camada.
 - Nenhum fallback de qualquer natureza — nem 60 minutos, nem legado, nem outra
