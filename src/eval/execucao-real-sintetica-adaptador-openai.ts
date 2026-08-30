@@ -5,7 +5,7 @@
 // fora de qualquer pipeline.
 //
 // Reaproveita diretamente (nunca duplica) do Core:
-//   - criarClienteModeloOpenAI, MODELO_GPT_4_1_MINI e os tres tempos
+//   - criarClienteModeloOpenAI, MODELO_IRIS_NOVA e os tres tempos
 //     aprovados (TIMEOUT_POR_TENTATIVA_MS_APROVADO, PRAZO_TOTAL_MS_APROVADO,
 //     ESPERA_ENTRE_TENTATIVAS_MS_APROVADO) de ./cliente-modelo-openai.ts;
 //   - INSTRUCOES_EXTRATOR e SCHEMA_SAIDA_INTERPRETACAO de
@@ -53,7 +53,7 @@ import {
   criarClienteModeloOpenAI,
   ErroClienteModeloOpenAI,
   ESPERA_ENTRE_TENTATIVAS_MS_APROVADO,
-  MODELO_GPT_4_1_MINI,
+  MODELO_IRIS_NOVA,
   PRAZO_TOTAL_MS_APROVADO,
   TIMEOUT_POR_TENTATIVA_MS_APROVADO,
 } from '../core/cliente-modelo-openai.ts';
@@ -64,6 +64,14 @@ export const PAYLOAD_SINTETICO_AUTORIZADO = Object.freeze({
   mensagens_atuais: Object.freeze(['Quero agendar uma limpeza amanhã à tarde.']) as readonly string[],
   dados_atuais: Object.freeze({}) as Readonly<Record<string, string>>,
   campos_cadastrais_preenchidos: Object.freeze([]) as readonly string[],
+  // Catalogo SINTETICO -- nenhum dado de clinica real. Sem esta lista a
+  // instrucao proibe emitir `procedimento_id` ("Quando procedimentos_disponiveis
+  // nao estiver presente, nunca emita procedimento_id"), entao o campo nunca
+  // poderia vir e a expectativa do runner era inalcancavel. Observado ao trocar
+  // o modelo: a Luna respeita essa proibicao a risca.
+  procedimentos_disponiveis: Object.freeze([
+    Object.freeze({ procedimento_id: 'limpeza', nome_pt: 'Limpeza dental' }),
+  ]) as readonly { procedimento_id: string; nome_pt: string }[],
 });
 
 // Nomes canonicos aceitos em campos_cadastrais_preenchidos. Somente o
@@ -157,11 +165,20 @@ function inspecaoEstruturalValida(inspecao: InspecaoEstrutural): boolean {
 // criarFetchComLimiteExterno -> inspecionarCorpoRequisicao) -- nunca
 // guardado em variavel global, nunca recalculado silenciosamente em cada
 // funcao da cadeia.
+// Frase estrutural EXATA de interpretacao-instrucoes.ts. Atualizada
+// (2026-08-30) para o contrato atual: a raiz do schema passou a ter
+// "natureza_mensagem" ao lado de "alteracoes", e a frase aqui ficara
+// desatualizada -- o runner abortava com
+// `instrucao_system_esperada_invalida` sem sequer chamar a API.
+//
+// Se as instrucoes mudarem de novo, este literal precisa acompanhar: a
+// checagem "exatamente uma ocorrencia" existe justamente para falhar alto
+// em vez de comparar contra um texto que nao existe mais.
 export const FRASE_ESTRUTURAL_FORMATO_INTERNO_ANTIGO =
-  'Responda estritamente no formato do schema fornecido — nenhuma propriedade alem de "alteracoes" no nivel principal, nenhuma propriedade alem de "acao"/"valor" (ou somente "acao" para remover) dentro de cada alteracao.';
+  'Responda estritamente no formato do schema fornecido — nenhuma propriedade alem de "natureza_mensagem" e "alteracoes" no nivel principal, nenhuma propriedade alem de "acao"/"valor" (ou somente "acao" para remover) dentro de cada alteracao.';
 
 export const FRASE_ESTRUTURAL_TRANSPORTE_PORTATIL =
-  'Responda estritamente no formato do schema fornecido — a raiz contem somente "alteracoes"; "alteracoes" e uma lista; cada item da lista contem exatamente "campo", "acao" e "valor"; informar e corrigir usam "valor" como string; remover usa "valor": null; nenhuma propriedade adicional e permitida.';
+  'Responda estritamente no formato do schema fornecido — a raiz contem somente "natureza_mensagem" e "alteracoes"; "alteracoes" e uma lista; cada item da lista contem exatamente "campo", "acao" e "valor"; informar e corrigir usam "valor" como string; remover usa "valor": null; nenhuma propriedade adicional e permitida.';
 
 export function calcularInstrucaoSystemEsperada(instrucoesBase: string): string {
   const ocorrencias = instrucoesBase.split(FRASE_ESTRUTURAL_FORMATO_INTERNO_ANTIGO).length - 1;
@@ -230,7 +247,7 @@ function ehPayloadDeUsuarioAutorizado(conteudoTexto: string): boolean {
   const chaves = Object.keys(conteudo as Record<string, unknown>).sort();
   if (
     JSON.stringify(chaves) !==
-    JSON.stringify(['campos_cadastrais_preenchidos', 'dados_atuais', 'mensagens_atuais'])
+    JSON.stringify(['campos_cadastrais_preenchidos', 'dados_atuais', 'mensagens_atuais', 'procedimentos_disponiveis'])
   ) {
     return false;
   }
@@ -239,7 +256,14 @@ function ehPayloadDeUsuarioAutorizado(conteudoTexto: string): boolean {
     mensagens_atuais: unknown;
     dados_atuais: unknown;
     campos_cadastrais_preenchidos: unknown;
+    procedimentos_disponiveis: unknown;
   };
+  if (
+    JSON.stringify(objeto.procedimentos_disponiveis) !==
+    JSON.stringify([...PAYLOAD_SINTETICO_AUTORIZADO.procedimentos_disponiveis])
+  ) {
+    return false;
+  }
   if (JSON.stringify(objeto.mensagens_atuais) !== JSON.stringify([...PAYLOAD_SINTETICO_AUTORIZADO.mensagens_atuais])) {
     return false;
   }
@@ -307,7 +331,7 @@ export function inspecionarCorpoRequisicao(corpoBruto: string, instrucaoSystemEs
   if (corpo === null || typeof corpo !== 'object' || Array.isArray(corpo)) return invalida;
   const envelope = corpo as Record<string, unknown>;
 
-  const modeloOk = envelope.model === MODELO_GPT_4_1_MINI;
+  const modeloOk = envelope.model === MODELO_IRIS_NOVA;
   const storeFalse = envelope.store === false;
   const text = envelope.text as { format?: { type?: unknown; strict?: unknown } } | undefined;
   const formatoJsonSchema = text?.format?.type === 'json_schema';
@@ -418,7 +442,7 @@ export async function executarUma(fetchSubjacente: typeof fetch, chaveApi: strin
 
   const cliente = criarClienteModeloOpenAI({
     chaveApi,
-    modelo: MODELO_GPT_4_1_MINI,
+    modelo: MODELO_IRIS_NOVA,
     fetch: fetchWrapper,
     timeoutPorTentativaMs: TIMEOUT_POR_TENTATIVA_MS_APROVADO,
     prazoTotalMs: PRAZO_TOTAL_MS_APROVADO,

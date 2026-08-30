@@ -44,24 +44,28 @@ variável por vez.
 6. **Solução mínima.** Não criar banco, repositório, camada, fallback, gate
    ou documentação adicional sem bloqueio técnico comprovado.
 
-### TUDO acontece na Iris 2 — inclusive o passo 1
+### Onde cada passo acontece — decisão revista em 2026-08-30
 
-**Decisão explícita do Gabriel (2026-08-29), em resposta à sugestão de
-fazer os passos 1 e 2 direto em produção:**
+**Decisão anterior (2026-08-29), agora SUPERADA para o passo 1:**
 
 > *"não quero trocar o modelo com a que está em produção. quero fazer isso
 > fora da Iris. só depois de passar todos os testes reais feitos no
 > WhatsApp vou considerar atualizar a Iris 1."*
 
-Ou seja: a Iris 1 **não é tocada em nenhum dos três passos**. A troca de
-modelo é feita na Iris 2, testada no WhatsApp com clínica real de teste, e
-só então o Gabriel decide se promove.
+**Decisão vigente (2026-08-30):** a Luna é ativada **na Iris Nova atual**,
+não apenas num ambiente separado. O que mudou foi o entendimento do risco: a
+Iris Nova ainda **não está em operação comercial**, então trocar o modelo
+nela não expõe atendimento pago de clínica cliente — e testar o modelo onde
+ele vai de fato rodar vale mais do que testá-lo numa cópia.
 
-O risco registrado da cópia (divergência entre cópia e produção,
-proporcional ao tempo — ver Riscos) continua valendo e **cresce** com três
-passos em sequência. É um custo aceito conscientemente, não um descuido:
-trocar o modelo da IA que atende pacientes reais sem validação prévia é um
-risco maior do que manter a cópia sincronizada.
+**O que muda na Iris Nova atual:** exclusivamente o Passo 1 — ela passa a
+usar a Luna. Nada mais é promovido junto.
+
+**Os Passos 2 e 3 continuam na `iris-2`:** remover as palavras fixas
+(redação natural) e adicionar idioma/espanhol seguem sendo desenvolvidos e
+validados na branch separada, antes de qualquer promoção. A branch não
+deixou de ter função — mudou de escopo: deixa de hospedar a troca de modelo
+e passa a hospedar os dois passos seguintes.
 
 ### Passo 1 em detalhe — qual modelo, e por quê
 

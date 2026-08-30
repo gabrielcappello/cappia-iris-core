@@ -10,7 +10,7 @@
 // nenhum secret e nenhum conteudo de .env aparece neste arquivo.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { criarClienteModeloOpenAI, MODELO_GPT_4_1_MINI } from './cliente-modelo-openai.ts';
+import { criarClienteModeloOpenAI, MODELO_IRIS_NOVA } from './cliente-modelo-openai.ts';
 import { EntradaInvalidaError } from './erros.ts';
 import {
   construirEntradaMinimizada,
@@ -381,7 +381,7 @@ async function corpoHttpAposFluxoCompleto(dadosDoEstado: Record<string, unknown>
   // tempo em vez de conteudo.
   const clienteModelo = criarClienteModeloOpenAI({
     chaveApi: 'chave-sintetica-de-teste',
-    modelo: MODELO_GPT_4_1_MINI,
+    modelo: MODELO_IRIS_NOVA,
     timeoutPorTentativaMs: 30000,
     prazoTotalMs: 60000,
     esperaEntreTentativasMs: 5,

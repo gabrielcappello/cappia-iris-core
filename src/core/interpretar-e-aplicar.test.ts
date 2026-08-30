@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { EntradaInvalidaError, InterpretacaoInvalidaError } from './erros.ts';
 import { interpretarEAplicar } from './interpretar-e-aplicar.ts';
-import { criarClienteModeloOpenAI, ErroClienteModeloOpenAI, MODELO_GPT_4_1_MINI } from './cliente-modelo-openai.ts';
+import { criarClienteModeloOpenAI, ErroClienteModeloOpenAI, MODELO_IRIS_NOVA } from './cliente-modelo-openai.ts';
 import type { ClienteModeloEstruturado } from './interpretacao-tipos.ts';
 import { ClienteFalso, criarTabelasFalsasVazias, type TabelasFalsas } from './teste-cliente-falso.ts';
 import { ClienteModeloFalso, ClienteModeloNuncaDeveSerChamado } from './teste-cliente-modelo-falso.ts';
@@ -342,7 +342,7 @@ function clienteModeloEsgotadoPorTruncamento(): ClienteModeloEstruturado {
         'resposta_incompleta',
         2,
         120,
-        MODELO_GPT_4_1_MINI,
+        MODELO_IRIS_NOVA,
         200
       );
     },
@@ -444,7 +444,7 @@ test('INT-23: 1a tentativa truncada e 2a completa, DENTRO DE UM UNICO TURNO, usa
   // chamada a interpretarEAplicar, nunca em um segundo turno/reenvio.
   const clienteModeloReal = criarClienteModeloOpenAI({
     chaveApi: 'chave-de-teste',
-    modelo: MODELO_GPT_4_1_MINI,
+    modelo: MODELO_IRIS_NOVA,
     fetch: fetchFalso,
     timeoutPorTentativaMs: 2000,
     prazoTotalMs: 5000,

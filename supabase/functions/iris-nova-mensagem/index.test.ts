@@ -6,7 +6,7 @@
 // handler de erro em si, que e onde o desfecho seguro (INT-21) e decidido.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { ErroClienteModeloOpenAI, MODELO_GPT_4_1_MINI } from './cliente-modelo-openai.ts';
+import { ErroClienteModeloOpenAI, MODELO_IRIS_NOVA } from './cliente-modelo-openai.ts';
 import { ClinicaNaoEncontradaError, EntradaInvalidaError } from './erros.ts';
 import { tratarErroDoTurno } from './index.ts';
 
@@ -14,7 +14,7 @@ const MENSAGEM_FIXA_DETERMINISTICA =
   'Tive uma dificuldade para entender sua mensagem agora. Você pode repeti-la, por favor?';
 
 test('INT-21 (HTTP): duas tentativas truncadas -- handler real devolve HTTP 200 com a mensagem fixa', async () => {
-  const erro = new ErroClienteModeloOpenAI('resposta_truncada', 'resposta_incompleta', 2, 250, MODELO_GPT_4_1_MINI, 200);
+  const erro = new ErroClienteModeloOpenAI('resposta_truncada', 'resposta_incompleta', 2, 250, MODELO_IRIS_NOVA, 200);
 
   const resposta = tratarErroDoTurno(erro);
 
@@ -35,7 +35,7 @@ test('INT-21 (HTTP): 1a tentativa truncada, 2a falha por timeout -- handler real
     'tempo_esgotado_na_tentativa',
     2,
     8000,
-    MODELO_GPT_4_1_MINI,
+    MODELO_IRIS_NOVA,
     null,
     null,
     'resposta_truncada'
@@ -49,7 +49,7 @@ test('INT-21 (HTTP): 1a tentativa truncada, 2a falha por timeout -- handler real
 });
 
 test('INT-21 (HTTP): erro de resposta_truncada isolado (1a tentativa, sem retry por orcamento insuficiente) tambem devolve HTTP 200', async () => {
-  const erro = new ErroClienteModeloOpenAI('resposta_truncada', 'resposta_incompleta', 1, 90, MODELO_GPT_4_1_MINI, 200);
+  const erro = new ErroClienteModeloOpenAI('resposta_truncada', 'resposta_incompleta', 1, 90, MODELO_IRIS_NOVA, 200);
 
   const resposta = tratarErroDoTurno(erro);
 
@@ -59,7 +59,7 @@ test('INT-21 (HTTP): erro de resposta_truncada isolado (1a tentativa, sem retry 
 });
 
 test('HTTP: categoria diferente de resposta_truncada, sem sinalizacao de 1a tentativa truncada, continua caindo no erro_interno 500 (comportamento anterior preservado)', async () => {
-  const erro = new ErroClienteModeloOpenAI('timeout', 'tempo_esgotado_na_tentativa', 2, 8000, MODELO_GPT_4_1_MINI);
+  const erro = new ErroClienteModeloOpenAI('timeout', 'tempo_esgotado_na_tentativa', 2, 8000, MODELO_IRIS_NOVA);
 
   const resposta = tratarErroDoTurno(erro);
 
@@ -79,7 +79,7 @@ test('HTTP: EntradaInvalidaError continua devolvendo 400 (nao afetado pela nova 
 });
 
 test('INT-21 (HTTP): resposta de desfecho seguro nunca contem a categoria, o codigo ou qualquer campo interno do erro -- so a mensagem fixa', async () => {
-  const erro = new ErroClienteModeloOpenAI('resposta_truncada', 'resposta_incompleta', 2, 250, MODELO_GPT_4_1_MINI, 200);
+  const erro = new ErroClienteModeloOpenAI('resposta_truncada', 'resposta_incompleta', 2, 250, MODELO_IRIS_NOVA, 200);
 
   const resposta = tratarErroDoTurno(erro);
   const textoCru = await resposta.text();

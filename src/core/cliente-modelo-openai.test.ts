@@ -7,7 +7,7 @@ import {
   criarClienteModeloOpenAI,
   ErroClienteModeloOpenAI,
   ErroConfiguracaoClienteModeloOpenAI,
-  MODELO_GPT_4_1_MINI,
+  MODELO_IRIS_NOVA,
 } from './cliente-modelo-openai.ts';
 import { INSTRUCOES_EXTRATOR } from './interpretacao-instrucoes.ts';
 import { CHAVES_OPCIONAIS_INTERPRETACAO } from './interpretacao-extrator.ts';
@@ -285,7 +285,7 @@ const TEMPOS_RAPIDOS = {
 function criarCliente(overrides: Record<string, unknown> = {}) {
   return criarClienteModeloOpenAI({
     chaveApi: 'chave-de-teste',
-    modelo: MODELO_GPT_4_1_MINI,
+    modelo: MODELO_IRIS_NOVA,
     ...TEMPOS_RAPIDOS,
     ...overrides,
   } as never);
@@ -322,7 +322,7 @@ test('1: modelo diferente da constante rejeita antes de fetch', async () => {
 
 test('2: tempos ausentes rejeitam', () => {
   for (const campoAusente of ['timeoutPorTentativaMs', 'prazoTotalMs', 'esperaEntreTentativasMs']) {
-    const config: Record<string, unknown> = { chaveApi: 'x', modelo: MODELO_GPT_4_1_MINI, ...TEMPOS_RAPIDOS };
+    const config: Record<string, unknown> = { chaveApi: 'x', modelo: MODELO_IRIS_NOVA, ...TEMPOS_RAPIDOS };
     delete config[campoAusente];
     assert.throws(
       () => criarClienteModeloOpenAI(config as never),
@@ -339,7 +339,7 @@ test('3: tempos invalidos (negativo, zero proibido, NaN, Infinity, decimal, tipo
       () =>
         criarClienteModeloOpenAI({
           chaveApi: 'x',
-          modelo: MODELO_GPT_4_1_MINI,
+          modelo: MODELO_IRIS_NOVA,
           timeoutPorTentativaMs: valor,
           prazoTotalMs: 5000,
           esperaEntreTentativasMs: 5,
@@ -355,7 +355,7 @@ test('3: tempos invalidos (negativo, zero proibido, NaN, Infinity, decimal, tipo
       () =>
         criarClienteModeloOpenAI({
           chaveApi: 'x',
-          modelo: MODELO_GPT_4_1_MINI,
+          modelo: MODELO_IRIS_NOVA,
           timeoutPorTentativaMs: 60,
           prazoTotalMs: 5000,
           esperaEntreTentativasMs: valor,
@@ -367,7 +367,7 @@ test('3: tempos invalidos (negativo, zero proibido, NaN, Infinity, decimal, tipo
 
   // esperaEntreTentativasMs = 0 e permitido (zero nao e proibido aqui).
   assert.doesNotThrow(() =>
-    criarClienteModeloOpenAI({ chaveApi: 'x', modelo: MODELO_GPT_4_1_MINI, timeoutPorTentativaMs: 60, prazoTotalMs: 5000, esperaEntreTentativasMs: 0 })
+    criarClienteModeloOpenAI({ chaveApi: 'x', modelo: MODELO_IRIS_NOVA, timeoutPorTentativaMs: 60, prazoTotalMs: 5000, esperaEntreTentativasMs: 0 })
   );
 });
 
@@ -376,7 +376,7 @@ test('4: prazo total menor que uma tentativa completa rejeita', () => {
     () =>
       criarClienteModeloOpenAI({
         chaveApi: 'x',
-        modelo: MODELO_GPT_4_1_MINI,
+        modelo: MODELO_IRIS_NOVA,
         timeoutPorTentativaMs: 8000,
         prazoTotalMs: 100,
         esperaEntreTentativasMs: 5,
@@ -902,7 +902,7 @@ test('requisicao: usa modelo fixado, store false, strict true e nenhuma tool', a
 
   assert.equal(chamadas.length, 1);
   const corpo = JSON.parse(chamadas[0].opcoes.body as string);
-  assert.equal(corpo.model, MODELO_GPT_4_1_MINI);
+  assert.equal(corpo.model, MODELO_IRIS_NOVA);
   assert.equal(corpo.store, false);
   assert.equal(corpo.stream, false);
   assert.equal(corpo.background, false);

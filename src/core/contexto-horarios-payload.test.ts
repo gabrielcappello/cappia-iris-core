@@ -7,7 +7,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { criarClienteModeloOpenAI, MODELO_GPT_4_1_MINI } from './cliente-modelo-openai.ts';
+import { criarClienteModeloOpenAI, MODELO_IRIS_NOVA } from './cliente-modelo-openai.ts';
 import { EntradaInvalidaError } from './erros.ts';
 import { construirEntradaMinimizada, extrairAlteracoes } from './interpretacao-extrator.ts';
 import { INSTRUCOES_EXTRATOR } from './interpretacao-instrucoes.ts';
@@ -45,7 +45,7 @@ function criarFetchCaptor() {
 function cliente(fetchFalso: typeof fetch) {
   return criarClienteModeloOpenAI({
     chaveApi: 'chave-sintetica-de-teste',
-    modelo: MODELO_GPT_4_1_MINI,
+    modelo: MODELO_IRIS_NOVA,
     fetch: fetchFalso,
     timeoutPorTentativaMs: 2000,
     prazoTotalMs: 5000,
