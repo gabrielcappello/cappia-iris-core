@@ -1,28 +1,53 @@
 # Arquitetura V2 — a Iris é a autoridade semântica; o Core é a autoridade factual
 
-> **Status: APROVADO pelo Gabriel em 2026-08-12.** Este documento passa a ser o canônico
-> de arquitetura e **substitui `docs/02-arquitetura.md`**, que fica preservado como
-> registro histórico.
+> ## Status — arquitetura canônica ALVO, ainda não é o runtime ativo
 >
-> **Etapas 0 e 1** concluídas e aprovadas (registros dentro da seção 10) — ambas somente
-> em `src/eval/`, zero linha de produção alterada **por elas**. (Produção mudou por outras
-> frentes no mesmo período — ver seção 11.2.)
+> **Esta é a arquitetura canônica alvo do projeto, aprovada pelo Gabriel em 2026-08-12 e
+> aprovada para orientar evolução nova.** Ela **substitui `docs/02-arquitetura.md`**, que
+> fica preservado como registro histórico. Mudanças na divisão de responsabilidades entre
+> Iris e Core, e avanços arquiteturais da V2, seguem este documento; a manutenção do
+> runtime atual continua seguindo as specs vigentes até o corte autorizado.
 >
-> **Etapa 2 — o despachante-sombra CONTINUA ATIVO em produção.** Ele decide em paralelo,
-> só para medição: nunca executa capacidade, nunca altera estado, nunca muda a resposta.
-> Evidência: linhas `sombra_v2` nos logs, a mais recente em 2026-08-14T12:26 UTC.
+> **Alvo aprovado não é o mesmo que comportamento em produção.** Leia este documento como
+> o destino aprovado, não como descrição do que decide o atendimento hoje:
 >
-> **Revertida foi apenas a AMPLIAÇÃO do contexto estruturado** (`9b58666` → `053a40b`,
-> v24 → v25): `agendamentos_futuros` no plural, `confirmacao_pendente.operacao` e o
-> marcador `ultimo_desfecho`, que trazia um CAS estrito comparando `atualizado_em` como
-> texto e quebrou a limpeza de estado pós-reserva. A sombra segue medindo com o contexto
-> **sobrevivente** de `84109ca`: `dados_conhecidos`, `horarios_oferecidos` e
-> `agendamento_futuro` (singular). Detalhe e evidência na seção 10.
+> - **O corte comportamental da Etapa 3 ainda NÃO ocorreu**, e não está autorizado. O
+>   atendimento real continua sendo decidido pelo **roteamento determinístico anterior**
+>   (`decidirPorNatureza` + roteamento por estado persistido), descrito em
+>   `docs/02-arquitetura.md` — que permanece como registro histórico, sem autoridade
+>   normativa, mas ainda corresponde ao caminho que executa hoje.
+> - **As implementações V2 existentes operam apenas em shadow mode.** Elas medem em
+>   paralelo e registram o resultado em log: **nunca decidem, nunca executam capacidade,
+>   nunca alteram estado e nunca mudam a resposta enviada ao paciente.**
+> - Enquanto a Etapa 3 não for autorizada e executada, **o fluxo e o roteamento V2
+>   completos ainda não descrevem o runtime ativo**. Componentes preservados, instrumentos
+>   de sombra e snapshots podem corresponder ao código atual.
 >
-> **A Etapa 3 (corte real de comportamento) não está autorizada.**
+> ### Snapshots históricos datados (não são o estado atual)
 >
-> **As mudanças de comportamento que entraram em produção hoje (v27) NÃO vêm desta
-> arquitetura** — são correções do roteamento atual, registradas na seção 11.2.
+> Os registros a seguir valiam na data indicada e são preservados como evidência. **Não os
+> leia como estado corrente** — para o estado atual por frente, ver
+> `../cappia-estado/HANDOFF-iris-nova.md`.
+>
+> - **Snapshot de 2026-08-12** — **Etapas 0 e 1** concluídas e aprovadas (registros dentro
+>   da seção 10): ambas somente em `src/eval/`, zero linha de produção alterada **por
+>   elas**. (Produção mudou por outras frentes no mesmo período — ver seção 11.2.)
+> - **Snapshot de 2026-08-14** — Etapa 2, despachante-sombra ativo em produção, decidindo
+>   em paralelo só para medição. Evidência da época: linhas `sombra_v2` nos logs, a mais
+>   recente em 2026-08-14T12:26 UTC.
+> - **Snapshot de 2026-08-12/14** — revertida foi apenas a AMPLIAÇÃO do contexto
+>   estruturado (`9b58666` → `053a40b`): `agendamentos_futuros` no plural,
+>   `confirmacao_pendente.operacao` e o marcador `ultimo_desfecho`, que trazia um CAS
+>   estrito comparando `atualizado_em` como texto e quebrou a limpeza de estado
+>   pós-reserva. A sombra seguia medindo com o contexto **sobrevivente** de `84109ca`:
+>   `dados_conhecidos`, `horarios_oferecidos` e `agendamento_futuro` (singular). Detalhe e
+>   evidência na seção 10.
+> - **Snapshot de 2026-08-12** — as mudanças de comportamento que entraram em produção
+>   *naquela data* NÃO vinham desta arquitetura: eram correções do roteamento atual,
+>   registradas na seção 11.2.
+>
+> Números de versão da Edge Function citados neste documento pertencem ao snapshot em que
+> foram escritos e **não indicam a versão publicada hoje**.
 >
 > Escrito em 2026-08-12, a partir da auditoria arquitetural e da auditoria de medições
 > feitas na mesma data.
@@ -367,9 +392,10 @@ comportamento visível ao paciente. É o par A/B exigido pelo princípio do test
 > funcionar como esperado em produção é log-sombra incompleto, nunca efeito no paciente.
 > Só um ambiente real resolve essa dúvida — ver próximos passos.
 
-> ℹ️ **A v23 registrada abaixo NÃO foi revertida — é o código que roda em produção hoje**
-> (redeployado como v25 e mantido nas versões seguintes). O que foi revertido é a etapa
-> posterior, a ampliação do contexto (v24). Ver o bloco de reversão parcial adiante.
+> ℹ️ **Snapshot de 2026-08-14: a v23 registrada abaixo NÃO foi revertida — era o código
+> em produção naquela data** (redeployado como v25 e mantido nas versões seguintes). O que
+> foi revertido é a etapa posterior, a ampliação do contexto (v24). Ver o bloco de
+> reversão parcial adiante.
 >
 > **DEPLOYADO e VALIDADO em produção em 2026-08-13**, projeto operacional
 > `udizowyfjnhuhgxkeayk` (clínica de teste "cleardent", instância WhatsApp real
@@ -541,7 +567,11 @@ foi marcado como devendo ser `nenhuma_apenas_conversar` e o modelo escolheu
 ir buscá-los é defensável, provavelmente melhor. Registrado como definição de caso
 imprecisa, nunca como falha do contrato.
 
-## 11.2 O que está em produção hoje (v27) — e não vem desta arquitetura
+## 11.2 O que entrou em produção até 2026-08-14 — e não vem desta arquitetura
+
+> **Snapshot histórico datado (2026-08-14).** Descreve o que havia entrado em produção
+> até aquela data, não o estado publicado hoje. Para o estado atual, ver
+> `../cappia-estado/HANDOFF-iris-nova.md`.
 
 Registrado aqui porque o documento descrevia uma Etapa 2 ativa enquanto ela estava
 revertida, e nada dizia sobre o que de fato entrou. Todas as mudanças abaixo são
