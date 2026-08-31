@@ -1,20 +1,24 @@
-# Arquitetura
+# Arquitetura (registro histórico — SEM AUTORIDADE VIGENTE)
 
-> **SUPERADO em 2026-08-12 por `docs/07-arquitetura-v2.md`**, aprovado pelo Gabriel na
-> mesma data. Especificamente, o princípio *"um controlador determinístico decide o próximo
-> passo a partir do estado; a IA somente interpreta e redige"* foi substituído por *"a Iris
-> é a autoridade semântica; o Core é a autoridade factual e operacional"*.
+> ## ⚠️ Este documento é registro histórico. Não é fonte normativa.
 >
-> Este arquivo é preservado como **registro histórico**, sem edição do conteúdo original —
-> ele descreve a arquitetura que o código ainda implementa hoje, e continua sendo a
-> referência correta para entender o código atual enquanto a migração da V2 não avança.
+> - **Não possui autoridade normativa vigente.** Nada aqui vale como regra a ser
+>   seguida ou citada como decisão em vigor.
+> - **Foi substituído por `docs/07-arquitetura-v2.md`** (aprovado pelo Gabriel em
+>   2026-08-12), que é a **arquitetura canônica vigente** e a única fonte normativa de
+>   arquitetura deste projeto.
+> - **Não deve orientar implementação nova.** Ao implementar, revisar ou especificar
+>   qualquer coisa, use `docs/07-arquitetura-v2.md`. Este arquivo saiu da ordem de
+>   leitura obrigatória (ver `AGENTS.md`).
+> - **O conteúdo abaixo permanece intacto apenas para explicar a arquitetura anterior** —
+>   por que ela foi adotada e o que a V2 substituiu. É contexto histórico, não instrução.
 >
-> Duas decisões deste documento **permanecem integralmente válidas** na V2: a IA nunca
-> acessa banco, calendário, credenciais ou ferramentas; e não se usa Agent autônomo com
-> tools.
-
-> Decisões já aprovadas por Gabriel. Este documento não adiciona nada além do que foi
-> decidido — mudanças aqui exigem aprovação nova.
+> Em caso de divergência entre este documento e `docs/07-arquitetura-v2.md`, prevalece
+> `docs/07-arquitetura-v2.md`, sempre — inclusive onde este texto parecer mais específico
+> ou mais detalhado.
+>
+> O que a V2 preservou ou substituiu do que está abaixo está registrado na própria
+> `docs/07-arquitetura-v2.md`; não o deduza deste arquivo.
 
 ## Decisões aprovadas
 
