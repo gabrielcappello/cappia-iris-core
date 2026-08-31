@@ -4,7 +4,8 @@
 > conversa antiga, memória), este arquivo prevalece. Mudanças aqui exigem aprovação nova
 > do Gabriel — não editar por inferência.
 >
-> Arquitetura técnica: ver `02-arquitetura.md`. Escopo e ordem de implementação: ver
+> Arquitetura técnica: ver `07-arquitetura-v2.md` (canônica vigente; `02-arquitetura.md`
+> permanece apenas como registro histórico). Escopo e ordem de implementação: ver
 > `06-roadmap.md`. Processo de trabalho: ver `AGENTS.md`.
 
 ## Agenda

@@ -8,11 +8,20 @@ para histórico, não como fonte técnica deste repositório).
 
 1. `00-INICIO.md`
 2. `README.md`
-3. **`docs/00-principios.md`** — princípios fundamentais, canônicos. Vêm antes de
+3. Este arquivo (`AGENTS.md`)
+4. **`docs/00-principios.md`** — princípios fundamentais, canônicos. Vêm antes de
    qualquer regra específica e orientam toda decisão de arquitetura.
-4. `docs/01-visao-geral.md` → `docs/06-roadmap.md`, nesta ordem
-5. A spec relevante em `specs/`, quando existir
-6. `tests/cenarios-obrigatorios.md`, quando existir
+5. `docs/01-visao-geral.md`
+6. **`docs/07-arquitetura-v2.md`** — arquitetura canônica vigente.
+7. `docs/03-seguranca.md`
+8. `docs/04-decisoes-canonicas.md`
+9. `docs/05-componentes-reutilizaveis.md`
+10. `docs/06-roadmap.md`
+11. A spec relevante em `specs/`, quando existir
+12. `tests/cenarios-obrigatorios.md`, quando existir
+
+`docs/02-arquitetura.md` **saiu da leitura obrigatória**: permanece no repositório apenas
+como registro histórico, substituído por `docs/07-arquitetura-v2.md`.
 
 ## Processo obrigatório (não pular etapas)
 
@@ -48,13 +57,14 @@ Regras obrigatórias:
 - Se uma regra já existe em fonte canônica, **referenciá-la; não reescrevê-la** em outro
   documento.
 - **Não interromper a implementação por lacunas que possam ser resolvidas de forma
-  aditiva** antes da ativação do fluxo.
+  aditiva** sem risco para o fluxo já em produção.
 - Revisões de Code e Codex devem **distinguir explicitamente**: bloqueador real; risco
   não bloqueante; melhoria opcional. **Melhoria opcional nunca vira bloqueador.**
-- **Prioridade atual — demonstrar o fluxo mínimo:** mensagem recebida → interpretação →
-  decisão determinística → resposta → persistência do estado.
-- Nenhuma ampliação de escopo precede esse fluxo mínimo sem aprovação explícita do
+- **O fluxo mínimo já está em produção** (mensagem recebida → interpretação → decisão
+  determinística → resposta → persistência do estado). A prioridade passou a ser
+  preservá-lo funcionando: mudança que o coloque em risco exige aprovação explícita do
   Gabriel.
+- Nenhuma ampliação de escopo entra sem aprovação explícita do Gabriel.
 - Ao perceber excesso de burocracia ou complexidade, Code e Codex devem **parar e
   alertar antes de criar novos artefatos** — inclusive quando a instrução anterior
   apontar nessa direção.
@@ -91,7 +101,10 @@ perguntar ao Gabriel em uma linha, e seguir.
 - `tests/` — cenários obrigatórios de validação.
 - `reviews/` — revisões (Codex ou outras) sobre este projeto.
 - `handoffs/` — registros de encerramento de etapa desta frente.
-- `src/` — código. Contém base parcial já escrita (identificação e interpretação), com
-  testes e migrations de etapas anteriores. **Não presumir que esse código está correto ou
-  alinhado às specs atuais** — auditar contra a spec vigente antes de reutilizar ou
-  estender. A implementação end-to-end ainda não está autorizada.
+- `src/` — código do Core, implementado e publicado em produção. A Edge Function
+  `supabase/functions/iris-nova-mensagem/` contém um subconjunto desses arquivos, não
+  todos: **cada arquivo da Edge que possui correspondente no Core deve permanecer em
+  paridade com ele.** **Não presumir que esse código está alinhado às specs atuais** —
+  auditar contra a spec vigente antes de reutilizar ou estender. Estar em produção não
+  dispensa essa auditoria, e cada deploy continua exigindo autorização explícita do
+  Gabriel.

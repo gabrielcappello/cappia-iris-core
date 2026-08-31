@@ -16,26 +16,26 @@ ferramentas livres rodando inteiramente dentro do n8n), encerrada para evoluçã
 28/07/2026 após acúmulo de correções e patches ao longo de dois meses. Ver
 `docs/01-visao-geral.md` para o raciocínio completo.
 
-## Arquitetura, em uma frase
+## Arquitetura
 
-Supabase/Postgres como fonte de estado → controlador determinístico decide o próximo
-passo → serviços de domínio auditados executam a ação → IA só interpreta e redige.
-Detalhe completo: `docs/02-arquitetura.md`.
+Fonte canônica: `docs/07-arquitetura-v2.md`. Ela substitui `docs/02-arquitetura.md`, que
+permanece no repositório apenas como registro histórico.
 
 ## Estado atual
 
-Fase documental avançada, implementação parcial.
+**Implementada e publicada em produção, para testes controlados.** Ainda não atende
+pacientes reais.
 
-- As especificações canônicas do novo agendamento estão avançadas — incluindo
-  Persistência v1 e Disponibilidade v1, ambas publicadas.
-- Já existe base TypeScript parcial em `src/` (identificação e interpretação), com testes
-  e migrations aplicadas em etapas anteriores.
-- **A implementação end-to-end da Iris Nova ainda não está autorizada.**
-- O código existente **não deve ser presumido correto**: precisa ser auditado contra as
-  specs vigentes antes de ser reutilizado. Há uma divergência conhecida de PII no contrato
-  de interpretação, registrada em `specs/interpretacao-ia.md`, que precisa ser corrigida
-  antes de qualquer tráfego real.
-- A próxima fase depende do fechamento documental e de nova revisão.
+- O fluxo end-to-end está publicado na Edge Function `iris-nova-mensagem`.
+- `src/` contém o Core. A Edge Function tem um subconjunto desses arquivos, não todos:
+  **cada arquivo da Edge que possui correspondente no Core deve permanecer em paridade
+  com ele.**
+- As specs em `specs/` são a fonte do comportamento aprovado; parte delas ainda descreve
+  etapas não implementadas. Spec aprovada não é prova de que algo está em produção.
+- Estar em produção não dispensa auditoria contra a spec vigente antes de reutilizar ou
+  estender código existente.
+
+O estado corrente por frente vive em `../cappia-estado/HANDOFF-iris-nova.md`.
 
 ## Por onde começar
 

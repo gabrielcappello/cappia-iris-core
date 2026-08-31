@@ -13,9 +13,18 @@ arquivos.
 1. Este arquivo (`00-INICIO.md`).
 2. `README.md` — o que é a Iris Nova, em uma página.
 3. `AGENTS.md` — regras de processo para quem (humano ou IA) for trabalhar aqui.
-4. `docs/01-visao-geral.md` até `docs/06-roadmap.md`, nesta ordem.
-5. `specs/` — especificações de comportamento do novo agendamento, já canônicas.
-6. `tests/cenarios-obrigatorios.md` — índice oficial de aceite dos cenários obrigatórios.
+4. `docs/00-principios.md` — princípios fundamentais, canônicos.
+5. `docs/01-visao-geral.md`
+6. `docs/07-arquitetura-v2.md` — **arquitetura canônica vigente**.
+7. `docs/03-seguranca.md`
+8. `docs/04-decisoes-canonicas.md`
+9. `docs/05-componentes-reutilizaveis.md`
+10. `docs/06-roadmap.md`
+11. A spec relevante em `specs/`, quando existir.
+12. `tests/cenarios-obrigatorios.md` — índice oficial de aceite dos cenários obrigatórios.
+
+`docs/02-arquitetura.md` **não faz parte da leitura obrigatória**: permanece no
+repositório apenas como registro histórico, substituído por `docs/07-arquitetura-v2.md`.
 
 ## O que este repositório NÃO é
 
@@ -28,31 +37,33 @@ arquivos.
 
 ## Estado desta etapa
 
-Fase documental avançada, com implementação parcial.
+**A Iris Nova está implementada e publicada em produção, para testes controlados. Ainda
+não atende pacientes reais.**
 
-- As especificações canônicas do novo agendamento estão avançadas; Persistência v1 e
-  Disponibilidade v1 estão publicadas.
-- `src/` **contém** base TypeScript parcial (identificação e interpretação), testes e
-  migrations aplicadas em etapas anteriores.
-- A implementação end-to-end da Iris Nova **ainda não está autorizada**.
-- Não presumir que o código atual está correto: ele precisa ser auditado contra as specs
-  vigentes antes de ser reutilizado. Existe uma divergência conhecida de PII no contrato
-  de interpretação (`specs/interpretacao-ia.md`) que precisa ser corrigida antes de
-  qualquer tráfego real.
-- A próxima fase depende do fechamento documental e de nova revisão.
+- O fluxo end-to-end (mensagem recebida → interpretação → decisão determinística →
+  resposta → persistência do estado) está implementado e publicado na Edge Function
+  `iris-nova-mensagem`.
+- `src/` contém o Core em TypeScript. A Edge Function tem um subconjunto desses arquivos,
+  não todos: **cada arquivo da Edge que possui correspondente no Core deve permanecer em
+  paridade com ele.** Nem todo arquivo do Core existe na Edge.
+- As especificações em `specs/` continuam sendo a fonte do comportamento aprovado, e
+  parte delas descreve etapas ainda não implementadas — a spec é canônica sobre o que foi
+  **decidido**, não prova do que está **em produção**.
+- Estar em produção não dispensa auditoria: ao reutilizar ou estender código existente,
+  conferir contra a spec vigente em vez de presumir aderência.
 
-Precisão sobre o que já foi alterado e por quê:
+Precisão sobre o alcance das mudanças feitas a partir daqui:
 
-- o **projeto Supabase próprio da Iris Nova** já recebeu as migrations aplicadas em
-  etapas anteriores (ver acima) — isso é trabalho autorizado deste projeto, não uma
-  exceção à regra;
-- a **rodada documental atual** (esta canonicalização) não alterou nenhum sistema
-  externo — só editou os arquivos Markdown listados no commit correspondente;
-- a Iris antiga, os workflows de produção, a Evolution API, o painel, credenciais e
-  calendários **nunca foram alterados a partir deste repositório**, em nenhuma etapa;
-- nenhum código existente aqui deve ser presumido correto ou pronto para reutilização
-  sem auditoria contra a spec vigente;
-- a implementação end-to-end da Iris Nova continua sem autorização.
+- o **projeto Supabase da Iris Nova** e a Edge Function `iris-nova-mensagem` são alvos
+  legítimos deste repositório — trabalho autorizado do projeto, etapa por etapa;
+- a Iris antiga, os workflows de produção não pertencentes a esta frente, a Evolution
+  API, o painel, credenciais e calendários **não são alterados a partir deste
+  repositório** sem autorização explícita e específica, por ação;
+- qualquer deploy, publicação ou alteração de tráfego continua dependendo da aprovação
+  explícita do Gabriel (ver `AGENTS.md`).
+
+O estado corrente por frente (o que está publicado, o que aguarda revisão) vive em
+`../cappia-estado/HANDOFF-iris-nova.md`, não neste arquivo.
 
 ## Contexto histórico (referência, não fonte técnica)
 
