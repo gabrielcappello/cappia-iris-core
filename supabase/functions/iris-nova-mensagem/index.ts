@@ -256,12 +256,10 @@ async function handler(req: Request): Promise<Response> {
       ...(resultado.agendamentos_do_paciente !== undefined
         ? { agendamentosDoPaciente: resultado.agendamentos_do_paciente }
         : {}),
-      // Paciente novo nesta clinica (specs/recomendacao-avaliacao-paciente-
-      // novo-v1.md). So vem preenchido nas quatro decisoes que o
-      // orquestrador autoriza -- o orquestrador e quem filtra.
-      ...(resultado.paciente_novo_na_clinica !== undefined
-        ? { pacienteNovoNaClinica: resultado.paciente_novo_na_clinica }
-        : {}),
+      // REMOVIDO em 2026-08-31 (specs/recomendacao-avaliacao-paciente-novo-
+      // v1.md secao 8): aqui o fato `paciente_novo_na_clinica` era repassado
+      // do resultado do orquestrador para a redatora. O fato deixou de
+      // existir -- cadastro local ausente nao prova primeira visita.
       // Catalogo real -- corrige a Iris inventando exemplos genericos
       // (2026-08-22). Dois fatos mutuamente exclusivos: nome unico da
       // avaliacao em aguardando_procedimento, lista completa em

@@ -346,10 +346,14 @@ test('CPF invalido nao entra em dados -- o campo continua faltante', async () =>
   // INFORMADO e REJEITADO neste turno. Sem essa distincao a Iris repetia o
   // pedido inteiro e o paciente reenviava o mesmo dado errado, sem saber qual
   // campo tinha problema -- medido em conversa real.
+  // `cpf_rejeitado` (2026-08-31) carrega o VALOR lido, para a Iris repeti-lo
+  // ao paciente. Sem ver o numero que o sistema entendeu, ele reenvia o mesmo
+  // erro. Proibido em log tecnico; confirmacao verbal nunca o valida.
   assert.deepEqual(resultado.decisao, {
     tipo: 'cadastro_necessario',
     campos_faltantes: ['cpf'],
     campos_invalidos: ['cpf'],
+    cpf_rejeitado: '12345678900',
   });
   assert.equal(rpc.chamadas.length, 0);
   // E o valor invalido nunca chegou ao estado da conversa.
@@ -470,3 +474,59 @@ test('motivo estrutural da RPC falha FECHADO, nunca vira decisao conversacional'
     'nunca segue para a reserva com estado inconsistente'
   );
 });
+
+// --- CPF rejeitado chega a redatora (2026-08-31) -------------------------
+// specs/cadastro-conversacional-v1.md secao 4, decisao do Gabriel.
+
+// CPF VALIDO: aceito, e NADA de rejeicao aparece. Par A/B com o teste de CPF
+// invalido acima -- a unica variavel e a validade do documento.
+test('CPF valido: aceito sem cpf_rejeitado e sem dados invalidos', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const { procedimentoId, dentistaId } = montarCenario(tabelas);
+  // Com CPF valido o cadastro fica completo e o fluxo SEGUE ate persistir e
+  // reservar -- por isso os dois dubles precisam responder. Um CPF invalido
+  // pararia antes, em `cadastro_necessario` (teste acima).
+  const pacienteId = crypto.randomUUID();
+  const rpc = new ClienteRpcFalso({
+    cappia_persistir_paciente: { data: { sucesso: true, paciente_id: pacienteId }, error: null },
+    cappia_reservar_agendamento: respostaReservaOk(dentistaId, crypto.randomUUID()),
+  });
+
+  const resultado = await processar(
+    tabelas,
+    clienteModelo(procedimentoId, {
+      nome: NOME_SINTETICO,
+      cpf: CPF_SINTETICO_VALIDO, // digitos verificadores corretos
+      data_nascimento: NASCIMENTO_SINTETICO,
+    }),
+    rpc,
+    'sou Gabriel Cappello, 529.982.247-25, nasci em 10/05/1985'
+  );
+
+  // Nao ha rejeicao: nem o nome do campo, nem o valor. E o fluxo nao parou
+  // para pedir cadastro -- seguiu ate a reserva, sem repetir nem confirmar
+  // o CPF.
+  assert.ok(!('cpf_rejeitado' in resultado.decisao));
+  assert.ok(!('campos_invalidos' in resultado.decisao));
+  assert.equal(resultado.decisao.tipo, 'reserva_criada');
+  // E o valor entrou no estado da conversa, normalizado.
+  const dados = tabelas.estado_conversa[0].dados as Record<string, unknown>;
+  assert.equal(dados.cpf, CPF_SINTETICO_VALIDO);
+});
+
+// INSISTENCIA no CPF invalido -- a prova REAL nao mora aqui.
+//
+// Uma versao deterministica deste cenario foi escrita e REMOVIDA em
+// 2026-08-31, apos revisao do Codex: ela escrevia a resposta da Iris no
+// historico a mao e usava um modelo falso que reenviava o CPF no turno 2,
+// mesmo quando a mensagem do paciente era apenas "sim, e esse mesmo". Isso
+// media o dublê, nunca a Luna -- nao provava que o modelo real recupera o
+// numero do historico, nem que a resposta final evita o ciclo.
+//
+// A prova de ponta a ponta (interpretadora real + Core + redatora real, dois
+// turnos, historico produzido pelo proprio fluxo) vive em
+// `src/eval/teste-real-cpf-e-primeira-consulta.ts`, fluxo A.
+//
+// O que ESTE arquivo continua provando deterministicamente, acima: um CPF
+// invalido nao entra em `dados`, produz `campos_invalidos: ['cpf']` e devolve
+// `cpf_rejeitado` com o valor lido.

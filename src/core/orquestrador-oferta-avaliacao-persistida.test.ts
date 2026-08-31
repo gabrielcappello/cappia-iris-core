@@ -75,7 +75,25 @@ function montarCenario(tabelas: TabelasFalsas) {
     ativo: true,
   });
 
-  return { clinicaId, pacienteId, dentistaId };
+  // Procedimento REAL do catalogo para o qual NENHUM dentista desta clinica e
+  // apto (o unico dentista acima so faz a avaliacao). E o cenario em que a
+  // oferta de avaliacao continua legitima -- ver o teste do turno 2.
+  const procedimentoSemDentistaId = crypto.randomUUID();
+  tabelas.procedimentos_catalogo.push({
+    id: procedimentoSemDentistaId,
+    nome_pt: 'Clareamento',
+    nome_es: null,
+    nome_en: null,
+    nome_fr: null,
+    nome_de: null,
+    nome_it: null,
+    nome_ru: null,
+    nome_ar: null,
+    tempo_padrao: 60,
+    ativo: true,
+  });
+
+  return { clinicaId, pacienteId, dentistaId, procedimentoSemDentistaId };
 }
 
 function semearConversa(tabelas: TabelasFalsas, clinicaId: string, pacienteId: string) {
@@ -109,7 +127,24 @@ function linhaConversa(tabelas: TabelasFalsas) {
 
 // --- Turno 1: a Iris oferece a avaliacao E registra a oferta ---------------
 
-test('INTEGRACAO: "quero um turno para hoje" sem procedimento -> oferta feita E gravada no estado', async () => {
+// REVOGADO E INVERTIDO em 2026-08-31 (decisao do Gabriel, que revoga a de
+// 30/08 SOMENTE neste cenario).
+//
+// Ate 30/08 este teste exigia que "quero um turno para hoje" SEM procedimento
+// produzisse uma oferta de avaliacao, gravada no estado. A decisao nova diz o
+// contrario: pedir horario sem dizer o procedimento NAO e sinal de que o
+// paciente esta em duvida -- quase sempre ele sabe e so nao mencionou. O certo
+// e PERGUNTAR qual atendimento ele deseja.
+//
+// A duvida REAL continua coberta, e por quem sempre a cobriu: a interpretadora
+// preenche `procedimento_id` com a avaliacao quando o paciente demonstra que
+// nao sabe (interpretacao-instrucoes.ts, "procedimentos_disponiveis") -- nesse
+// caso o fluxo nem chega em `aguardando_procedimento`.
+//
+// O mecanismo `procedimento_oferecido`/`oferta_procedimento_pendente` NAO foi
+// removido: ele continua valendo onde a oferta e legitima, e o teste do turno 2
+// abaixo prova isso.
+test('REVOGADO 31/08: "quero um turno para hoje" sem procedimento -> PERGUNTA, nunca oferece avaliacao', async () => {
   const tabelas = criarTabelasFalsasVazias();
   const { clinicaId, pacienteId } = montarCenario(tabelas);
   semearConversa(tabelas, clinicaId, pacienteId);
@@ -129,51 +164,69 @@ test('INTEGRACAO: "quero um turno para hoje" sem procedimento -> oferta feita E 
     entrada('quero um turno para hoje. tem algum horario disponivel?')
   );
 
-  // 1. a decisao carrega a oferta -- este e o campo que `orquestrador.ts`
-  //    passou a preencher; sem ele o teste falha.
+  // 1. a decisao continua sendo "falta o procedimento" -- isso nao mudou.
   assert.equal(resultado.decisao.tipo, 'aguardando_procedimento');
-  assert.equal(
-    (resultado.decisao as { procedimento_oferecido?: string }).procedimento_oferecido,
-    ID_AVALIACAO,
-    'a decisao precisa declarar QUE a avaliacao esta sendo oferecida'
+
+  // 2. mas NENHUMA oferta e declarada: nao ha o que oferecer, so o que
+  //    perguntar.
+  assert.ok(
+    !('procedimento_oferecido' in resultado.decisao),
+    'procedimento ausente nao autoriza oferta de avaliacao'
   );
 
-  // 2. a redatora recebe o nome -- e o que o paciente ve.
-  assert.equal(resultado.procedimento_avaliacao_disponivel, 'Consulta / Avaliação');
+  // 3. e a redatora NAO recebe o nome da avaliacao -- garantia estrutural:
+  //    sem o fato, ela fisicamente nao tem o que oferecer.
+  assert.ok(
+    !('procedimento_avaliacao_disponivel' in resultado),
+    'a redatora nao pode receber a avaliacao quando o paciente apenas nao disse o procedimento'
+  );
 
-  // 3. e a oferta existe no ESTADO OFICIAL. Este e o elo que faltava: a
-  //    pergunta que o paciente ve tem que existir tambem aqui.
+  // 4. nada de oferta no estado, porque oferta nenhuma foi feita.
   const contexto = linhaConversa(tabelas).contexto_horarios;
-  assert.ok(contexto !== null, 'contexto_horarios NAO pode ficar null depois de uma oferta');
-  assert.deepEqual(
-    contexto?.oferta_procedimento_pendente,
-    { procedimento_id: ID_AVALIACAO },
-    'a oferta precisa estar gravada, senao o turno seguinte chega sem pergunta pendente'
+  assert.ok(
+    contexto === null || contexto.oferta_procedimento_pendente === undefined,
+    'nenhuma oferta pode ser gravada quando nenhuma foi feita'
   );
 });
 
 // --- Turno 2: "ok pode ser" aceita UMA vez e a oferta e consumida ----------
 
+// PRESERVADO (item 3 da decisao de 31/08): o mecanismo de oferta continua
+// necessario onde a oferta e LEGITIMA. Mudou apenas o cenario que a origina.
+//
+// Antes o turno 1 era "pedi horario sem dizer o procedimento" -- cenario
+// revogado acima. Agora e `sem_dentista_disponivel`: o paciente pediu um
+// procedimento REAL para o qual a clinica nao tem nenhum dentista apto. Ali a
+// avaliacao continua sendo uma oferta de verdade, e o "pode ser" precisa
+// continuar funcionando exatamente como antes.
 test('INTEGRACAO: "ok pode ser" aplica a avaliacao uma unica vez e consome a oferta', async () => {
   const tabelas = criarTabelasFalsasVazias();
-  const { clinicaId, pacienteId } = montarCenario(tabelas);
+  const { clinicaId, pacienteId, procedimentoSemDentistaId } = montarCenario(tabelas);
   semearConversa(tabelas, clinicaId, pacienteId);
   const clienteBanco = new ClienteFalso(tabelas);
 
-  // Turno 1: gera a oferta de verdade (nao fabricada a mao).
-  await processarMensagem(
+  // Turno 1: gera a oferta de verdade (nao fabricada a mao) -- o paciente pede
+  // um procedimento sem nenhum dentista apto, e a Iris oferece a avaliacao.
+  const turno1 = await processarMensagem(
     new ClienteModeloFalso([
       {
         natureza_mensagem: 'pedido',
         alteracoes: {
           intencao: { acao: 'informar', valor: 'novo_agendamento' },
-          data_texto: { acao: 'informar', valor: 'hoje' },
+          procedimento_id: { acao: 'informar', valor: procedimentoSemDentistaId },
         },
       },
     ]),
     clienteBanco,
     new ClienteRpcFalso({}),
-    entrada('quero um turno para hoje. tem algum horario disponivel?')
+    entrada('queria fazer um clareamento')
+  );
+
+  assert.equal(turno1.decisao.tipo, 'sem_dentista_disponivel');
+  assert.equal(
+    (turno1.decisao as { procedimento_oferecido?: string }).procedimento_oferecido,
+    ID_AVALIACAO,
+    'oferta legitima: sem dentista apto, a avaliacao E oferecida'
   );
 
   assert.ok(

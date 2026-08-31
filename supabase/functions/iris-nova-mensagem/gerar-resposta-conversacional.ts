@@ -86,16 +86,8 @@ export interface GerarRespostaConversacionalEntrada {
    * e o orquestrador.
    */
   agendamentosDoPaciente?: readonly AgendamentoAtivo[];
-  /**
-   * `ResultadoOrquestrador.paciente_novo_na_clinica`, quando presente
-   * (specs/recomendacao-avaliacao-paciente-novo-v1.md): o paciente
-   * identificado nao tem nenhum atendimento `concluido` nesta clinica.
-   *
-   * Mesmo papel de `agendamentosDoPaciente` acima -- fato do turno, nunca
-   * estado nem decisao. So chega aqui nas quatro decisoes que o orquestrador
-   * autoriza; quem filtra e o orquestrador.
-   */
-  pacienteNovoNaClinica?: true;
+  // REMOVIDO em 2026-08-31 (specs/recomendacao-avaliacao-paciente-novo-v1.md
+  // secao 8): `pacienteNovoNaClinica` nao existe mais como fato do turno.
   /**
    * `ResultadoOrquestrador.procedimento_avaliacao_disponivel`, quando
    * presente: nome UNICO da avaliacao, SO em `aguardando_procedimento`.
@@ -147,7 +139,9 @@ export async function gerarRespostaConversacional(
     entrada.precos,
     entrada.dentistasDaClinica,
     entrada.tratamentosAprovados,
-    entrada.pacienteNovoNaClinica,
+    // Posicao preservada do fato removido em 2026-08-31 -- ver
+    // `_pacienteNovoNaClinicaRemovido` em fatos-autorizados.ts.
+    undefined,
     entrada.procedimentosAtivosDaClinica,
     entrada.procedimentoAvaliacaoDisponivel
   );

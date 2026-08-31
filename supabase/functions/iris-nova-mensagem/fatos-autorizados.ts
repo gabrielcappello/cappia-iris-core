@@ -188,10 +188,22 @@ export interface FatosAutorizados {
    * "nome, CPF e data" de novo como se ele nao tivesse respondido, e ele
    * reenviou o mesmo dado errado.
    *
-   * SO O NOME DO CAMPO -- nunca o valor rejeitado, que e PII. A redatora
-   * formula o texto; nao ha frase fixa por campo.
+   * SO O NOME DO CAMPO. O valor rejeitado viaja em `cpf_rejeitado`, e
+   * somente para o CPF. A redatora formula o texto; nao ha frase fixa por
+   * campo.
    */
   dados_invalidos?: CampoFaltante[];
+  /**
+   * Valor cru do CPF que o paciente informou NESTE turno e o Core rejeitou
+   * (2026-08-31, decisao do Gabriel).
+   *
+   * REVOGA, so para o CPF, a regra de que o valor rejeitado nunca chega a
+   * redatora. Serve para a Iris dizer QUAL numero leu -- sem isso o paciente
+   * nao sabe o que o sistema entendeu e reenvia o mesmo erro.
+   *
+   * PROIBIDO em log tecnico. Confirmacao verbal nunca o torna valido.
+   */
+  cpf_rejeitado?: string;
   falha_tecnica?: true;
   /**
    * Data e horario do agendamento ATUAL do paciente, na remarcacao
@@ -248,27 +260,10 @@ export interface FatosAutorizados {
    * por suposicao.
    */
   agendamentos_do_paciente?: string[];
-  /**
-   * Paciente identificado sem NENHUM atendimento `concluido` nesta clinica
-   * (specs/recomendacao-avaliacao-paciente-novo-v1.md). Fato do turno, mesmo
-   * estatuto de `agendamentos_do_paciente` acima -- CONTEXTO DISPONIVEL,
-   * nunca assunto obrigatorio; o `objetivo` da resposta nao muda por causa
-   * dele.
-   *
-   * Nao forca `informar_sem_avaliacao` nem nenhum objetivo dedicado: a
-   * redatora so usa este fato quando o assunto for "o paciente ainda nao
-   * sabe o que precisa" -- a mesma decisao de dúvida real que ja resolve
-   * `consultation_evaluation` no procedimento (`procedimento-semantico-
-   * v1.md` secao 3). O fato aqui so da CONTEXTO para explicar o porque,
-   * quando for o caso.
-   *
-   * PRESENTE SOMENTE quando o orquestrador autorizou -- nas quatro decisoes
-   * de `DECISOES_PACIENTE_NOVO` em orquestrador.ts (`saudacao`,
-   * `duvida_livre`, `mensagem_nao_compreendida`, `aguardando_procedimento`).
-   * AUSENTE (nunca `false`) quando o paciente nao e novo, mesma disciplina
-   * das demais chaves opcionais.
-   */
-  paciente_novo_na_clinica?: true;
+  // REMOVIDO em 2026-08-31 (specs/recomendacao-avaliacao-paciente-novo-v1.md
+  // secao 8): `paciente_novo_na_clinica` nao chega mais a redatora, porque
+  // deixou de ser derivado. Cadastro local ausente nao e mais convertido em
+  // "primeira visita" -- sao fatos diferentes, e um nunca vira o outro.
   /**
    * Nome UNICO da Avaliacao/Consulta, SO quando `objetivo` e
    * `pedir_procedimento` E o catalogo tem esse item ativo. DELIBERADAMENTE
@@ -422,12 +417,20 @@ export function derivarFatosAutorizados(
   /** Tratamentos aprovados e por agendar -- ortogonal a decisao. */
   tratamentosAprovados?: readonly TratamentoAprovado[],
   /**
-   * `ResultadoOrquestrador.paciente_novo_na_clinica`, quando presente
-   * (specs/recomendacao-avaliacao-paciente-novo-v1.md). Quem restringe a
-   * quais decisoes ele chega e o orquestrador (`DECISOES_PACIENTE_NOVO`),
-   * nunca esta funcao -- aqui, se veio `true`, e porque ja foi autorizado.
+   * DESATIVADO em 2026-08-31
+   * (specs/recomendacao-avaliacao-paciente-novo-v1.md secao 8).
+   *
+   * Era `ResultadoOrquestrador.paciente_novo_na_clinica`. O orquestrador nao
+   * deriva mais esse fato, entao este parametro nunca recebe valor e NADA e
+   * anexado aos fatos a partir dele.
+   *
+   * A POSICAO e preservada de proposito: os parametros sao posicionais, e
+   * remove-la deslocaria silenciosamente os tres seguintes
+   * (`procedimentosAtivosDaClinica`, `procedimentoAvaliacaoDisponivel` e o
+   * que vier depois) em todo chamador. Trocar o tipo por `never` faz o
+   * compilador recusar qualquer tentativa de voltar a passar o fato.
    */
-  pacienteNovoNaClinica?: true,
+  _pacienteNovoNaClinicaRemovido?: never,
   /**
    * `ResultadoOrquestrador.procedimentos_ativos_da_clinica`, quando
    * presente. Quem restringe a `duvida_livre` e o orquestrador, nunca esta
@@ -512,11 +515,8 @@ export function derivarFatosAutorizados(
     fatos = { ...fatos, precos };
   }
 
-  // Mesmo padrao de agendamentosDoPaciente/substituicaoPorAvaliacao acima:
-  // fato do turno, anexado fora do switch, sem tocar no `objetivo`.
-  if (pacienteNovoNaClinica !== undefined) {
-    fatos = { ...fatos, paciente_novo_na_clinica: pacienteNovoNaClinica };
-  }
+  // REMOVIDO em 2026-08-31: aqui `paciente_novo_na_clinica` era anexado aos
+  // fatos. Nao ha mais nada a anexar -- o fato deixou de existir.
 
   if (procedimentosAtivosDaClinica !== undefined && procedimentosAtivosDaClinica.length > 0) {
     fatos = { ...fatos, procedimentos_ativos_da_clinica: [...procedimentosAtivosDaClinica] };
@@ -711,10 +711,12 @@ function derivarPorDecisao(decisao: DecisaoOrquestrador, dataHoje: string): Fato
       // errado sem saber qual campo tinha problema -- medido em conversa
       // real.
       //
-      // So o NOME do campo, nunca o valor rejeitado (PII).
+      // O NOME do campo para todos; o VALOR so para o CPF, autorizado em
+      // 2026-08-31 para a Iris poder repetir ao paciente o numero lido.
       return {
         objetivo: 'pedir_cadastro',
         dados_faltantes: [...decisao.campos_faltantes],
+        ...(decisao.cpf_rejeitado !== undefined ? { cpf_rejeitado: decisao.cpf_rejeitado } : {}),
         ...(decisao.campos_invalidos !== undefined && decisao.campos_invalidos.length > 0
           ? { dados_invalidos: [...decisao.campos_invalidos] }
           : {}),

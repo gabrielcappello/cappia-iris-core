@@ -263,7 +263,16 @@ test('4. paciente novo com procedimento ja resolvido: segue fluxo normal, sem in
 // de `estado_conversa.paciente_id` -- por isso o telefone usado aqui e um
 // que nao tem ficha nenhuma (mesmo padrao do teste 6 de
 // orquestrador-consulta-agendamento.test.ts).
-test('paciente sem cadastro: fato presente, sem consulta adicional a agendamentos', async () => {
+// INVERTIDO em 2026-08-31 (specs/recomendacao-avaliacao-paciente-novo-v1.md
+// secao 8). Ate 30/08 este teste EXIGIA `paciente_novo_na_clinica === true`
+// para um telefone sem ficha. Essa era exatamente a inferencia revogada:
+// cadastro local ausente NAO prova primeira visita -- o caso mais comum e o
+// paciente que ja e cliente da clinica, com ficha no sistema anterior ainda
+// nao sincronizado.
+//
+// Agora o teste guarda a regra nova: o fato nao pode existir em NENHUMA
+// hipotese. Se alguem reintroduzir a derivacao, este teste falha.
+test('telefone sem cadastro: NAO produz fato de paciente novo (inferencia revogada)', async () => {
   const tabelas = criarTabelasFalsasVazias();
   montarCenario(tabelas);
 
@@ -280,5 +289,68 @@ test('paciente sem cadastro: fato presente, sem consulta adicional a agendamento
     }
   );
 
-  assert.equal(resultado.paciente_novo_na_clinica, true);
+  assert.ok(!('paciente_novo_na_clinica' in resultado));
+});
+
+// --- Regra vigente desde 2026-08-31 -------------------------------------
+// specs/recomendacao-avaliacao-paciente-novo-v1.md secao 8.
+//
+// Guardas contra o retorno da inferencia revogada. Cada teste varia UMA
+// variavel e assere a coexistencia dos dois lados, para nao repetir o
+// defeito de teste de controle que varia duas coisas ao mesmo tempo.
+
+// PAR A/B DA SAUDACAO -- a lacuna que nao existia antes. O fato de cadastro
+// ausente nao pode aparecer numa saudacao simples, com ou sem ficha. Aqui a
+// UNICA variavel e a existencia de cadastro.
+test('saudacao A/B: com ou sem cadastro, nenhum fato de paciente novo e produzido', async () => {
+  async function saudar(telefone: string) {
+    const tabelas = criarTabelasFalsasVazias();
+    montarCenario(tabelas);
+    return await processarMensagem(
+      new ClienteModeloFalso([{ natureza_mensagem: 'saudacao', alteracoes: {} }]),
+      new ClienteFalso(tabelas),
+      clienteRpcNuncaChamado(),
+      {
+        provider: PROVIDER,
+        instancia_whatsapp: INSTANCIA,
+        telefone_normalizado: telefone,
+        mensagens_atuais: ['bom dia'],
+        instante_atual: INSTANTE_ATUAL,
+      }
+    );
+  }
+
+  // A: telefone SEM ficha. B: o telefone do cenario, COM ficha.
+  const semCadastro = await saudar('5511900000009');
+  const comCadastro = await saudar(TELEFONE);
+
+  // Os dois lados coexistem e concordam: o fato nao existe em nenhum deles.
+  assert.ok(!('paciente_novo_na_clinica' in semCadastro));
+  assert.ok(!('paciente_novo_na_clinica' in comCadastro));
+  // E a saudacao continua sendo uma saudacao nos dois casos.
+  assert.equal(semCadastro.decisao.tipo, 'saudacao');
+  assert.equal(comCadastro.decisao.tipo, 'saudacao');
+});
+
+// "Procedimento ainda nao informado" NAO equivale a "nao sabe o
+// procedimento": mesmo em aguardando_procedimento, cadastro ausente nao
+// pode virar fato de primeira visita.
+test('aguardando_procedimento sem cadastro: nenhum fato de paciente novo', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  montarCenario(tabelas);
+
+  const resultado = await processarMensagem(
+    new ClienteModeloFalso([{ natureza_mensagem: 'pedido', alteracoes: {} }]),
+    new ClienteFalso(tabelas),
+    clienteRpcNuncaChamado(),
+    {
+      provider: PROVIDER,
+      instancia_whatsapp: INSTANCIA,
+      telefone_normalizado: '5511900000009',
+      mensagens_atuais: ['queria marcar uma consulta'],
+      instante_atual: INSTANTE_ATUAL,
+    }
+  );
+
+  assert.ok(!('paciente_novo_na_clinica' in resultado));
 });

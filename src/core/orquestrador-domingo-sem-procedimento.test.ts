@@ -163,9 +163,18 @@ test('DOMINGO sem procedimento: informa o fechamento E continua pedindo o proced
     'o domingo pedido precisa atravessar como fato, senao a redatora oferece avaliacao "para hoje" num dia fechado'
   );
 
-  // A oferta da avaliacao continua acontecendo normalmente.
-  assert.equal(decisao.procedimento_oferecido, ID_AVALIACAO);
-  assert.equal(resultado.procedimento_avaliacao_disponivel, 'Consulta / Avaliação');
+  // REVOGADO em 2026-08-31: ate 30/08 este teste exigia a oferta da avaliacao
+  // aqui (`procedimento_oferecido` + `procedimento_avaliacao_disponivel`).
+  // A decisao nova proibe: procedimento ausente nao autoriza oferta. O turno
+  // informa o fechamento, conduz para outra data e PERGUNTA qual atendimento.
+  assert.ok(
+    !('procedimento_oferecido' in decisao),
+    'domingo sem procedimento nao pode declarar oferta de avaliacao'
+  );
+  assert.ok(
+    !('procedimento_avaliacao_disponivel' in resultado),
+    'a redatora nao recebe a avaliacao: nao ha oferta, ha pergunta'
+  );
 
   // E os fatos que a redatora recebe DE FATO neste turno -- derivados do
   // resultado real do orquestrador, nao de uma decisao montada a mao --
@@ -182,14 +191,19 @@ test('DOMINGO sem procedimento: informa o fechamento E continua pedindo o proced
     undefined,
     undefined,
     undefined,
-    resultado.procedimento_avaliacao_disponivel
+    // Sem avaliacao a oferecer -- ver a revogacao acima.
+    undefined
   );
   assert.deepEqual(fatos.dados_faltantes, ['procedimento', 'data']);
   assert.equal(fatos.objetivo, 'pedir_procedimento', 'o objetivo do turno nao muda');
   assert.equal(fatos.motivo_sem_expediente, 'domingo');
 });
 
-test('DOMINGO: a oferta de avaliacao continua PERSISTIDA no estado', async () => {
+// REVOGADO E INVERTIDO em 2026-08-31: ate 30/08 este teste exigia que a oferta
+// de avaliacao ficasse GRAVADA no estado tambem no domingo. Sem oferta, nao ha
+// o que gravar. O mecanismo de persistencia da oferta segue coberto, no cenario
+// legitimo, por orquestrador-oferta-avaliacao-persistida.test.ts.
+test('REVOGADO 31/08: DOMINGO sem procedimento nao grava oferta nenhuma no estado', async () => {
   const tabelas = criarTabelasFalsasVazias();
   montarCenario(tabelas);
 
@@ -203,10 +217,10 @@ test('DOMINGO: a oferta de avaliacao continua PERSISTIDA no estado', async () =>
   const linha = tabelas.estado_conversa.find((c) => c.telefone_normalizado === TELEFONE) as unknown as {
     contexto_horarios: Record<string, unknown> | null;
   };
-  assert.deepEqual(
-    linha.contexto_horarios?.oferta_procedimento_pendente,
-    { procedimento_id: ID_AVALIACAO },
-    'o fato novo do domingo nao pode atrapalhar a gravacao da oferta -- ela precisa continuar existindo no estado'
+  assert.ok(
+    linha.contexto_horarios === null ||
+      linha.contexto_horarios.oferta_procedimento_pendente === undefined,
+    'nenhuma oferta foi feita, entao nenhuma pode ser gravada'
   );
 });
 
@@ -306,8 +320,12 @@ test('SEGUNDA-FEIRA sem procedimento: nenhum fato de fechamento, comportamento i
     undefined,
     'dia util nunca pode carregar fato de fechamento'
   );
-  // A oferta segue como sempre foi.
-  assert.equal(decisao.procedimento_oferecido, ID_AVALIACAO);
+  // REVOGADO em 2026-08-31: tambem em dia util, procedimento ausente deixou de
+  // autorizar oferta -- a Iris pergunta qual atendimento.
+  assert.ok(
+    !('procedimento_oferecido' in decisao),
+    'em nenhum dia da semana o procedimento ausente autoriza oferta'
+  );
 });
 
 // --- 3. Data explicita que cai em domingo -------------------------------

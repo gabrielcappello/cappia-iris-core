@@ -138,11 +138,17 @@ test('REAL: "quero um turno pra terça feira" (data sem procedimento) -> so proc
     entrada('quero um turno pra terça feira')
   );
 
+  // REVOGADO em 2026-08-31: ate 30/08 exigia-se
+  // `procedimento_avaliacao_disponivel` aqui. Pedir horario/data sem dizer o
+  // procedimento NAO e duvida -- a Iris deve PERGUNTAR qual atendimento.
   assert.equal(resultado.decisao.tipo, 'aguardando_procedimento');
-  assert.equal(resultado.procedimento_avaliacao_disponivel, 'Consulta / Avaliação');
+  assert.ok(
+    !('procedimento_avaliacao_disponivel' in resultado),
+    'procedimento ausente nao autoriza oferta de avaliacao'
+  );
   assert.ok(
     !('procedimentos_ativos_da_clinica' in resultado),
-    'a lista completa NUNCA deve acompanhar procedimento_avaliacao_disponivel no mesmo turno'
+    'a lista completa tambem nao acompanha este turno'
   );
 });
 
@@ -160,8 +166,9 @@ test('paciente pede agendamento generico, sem data nem procedimento: mesma regra
     entrada('quero agendar uma consulta')
   );
 
+  // REVOGADO em 2026-08-31, mesma regra do teste acima.
   assert.equal(resultado.decisao.tipo, 'aguardando_procedimento');
-  assert.equal(resultado.procedimento_avaliacao_disponivel, 'Consulta / Avaliação');
+  assert.ok(!('procedimento_avaliacao_disponivel' in resultado));
   assert.ok(!('procedimentos_ativos_da_clinica' in resultado));
 });
 

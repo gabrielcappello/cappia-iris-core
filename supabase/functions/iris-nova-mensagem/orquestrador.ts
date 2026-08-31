@@ -399,7 +399,16 @@ export async function processarMensagem(
     const invalidos = interpretacao.campos_cadastrais_invalidos;
     const decisao: DecisaoOrquestrador =
       decisaoRecebida.tipo === 'cadastro_necessario' && invalidos !== undefined && invalidos.length > 0
-        ? { ...decisaoRecebida, campos_invalidos: invalidos }
+        ? {
+            ...decisaoRecebida,
+            campos_invalidos: invalidos,
+            // Valor cru do CPF rejeitado (2026-08-31), quando houver. Segue
+            // o mesmo caminho e o mesmo escopo do nome do campo: so
+            // `cadastro_necessario`, so este turno.
+            ...(interpretacao.cpf_rejeitado !== undefined
+              ? { cpf_rejeitado: interpretacao.cpf_rejeitado }
+              : {}),
+          }
         : decisaoRecebida;
     // PONTO UNICO DE BUSCA, EM TODO TURNO (2026-08-14). Ate aqui os
     // agendamentos do paciente so eram buscados dentro do ramo conversacional,
@@ -484,20 +493,15 @@ export async function processarMensagem(
     // justamente quando ele quis fechar.
     const agendamentosParaRedatora = decisao.tipo === 'desistencia' ? undefined : agendamentosDoPaciente;
 
-    // Fato "paciente novo nesta clinica" (specs/recomendacao-avaliacao-
-    // paciente-novo-v1.md secao 3). Relevante SOMENTE enquanto o
-    // procedimento ainda nao esta resolvido -- as tres decisoes
-    // conversacionais mais `aguardando_procedimento`, nunca nos passos
-    // seguintes de agendamento, onde o fato deixaria de fazer sentido.
+    // REMOVIDO em 2026-08-31 (specs/recomendacao-avaliacao-paciente-novo-v1.md
+    // secao 8): aqui era derivado o fato `paciente_novo_na_clinica` a partir
+    // de `identificacao.paciente.id === null`.
     //
-    // A identificacao ja informa se existe ficha nesta clinica. Nao ha
-    // consulta adicional: paciente novo, para esta regra, e somente quem
-    // ainda nao possui cadastro.
-    let pacienteNovoNaClinica: true | undefined;
-    if (DECISOES_PACIENTE_NOVO.includes(decisao.tipo) && identificacao.paciente.id === null) {
-      pacienteNovoNaClinica = true;
-    }
-
+    // Nao existe mais inferencia de "paciente novo" a partir de cadastro
+    // ausente, em nenhum ponto do fluxo. Nao achar cadastro pelo telefone
+    // significa SOMENTE que nao ha cadastro local associado aquele numero --
+    // o paciente pode ser cliente antigo da clinica, com ficha no sistema
+    // anterior ainda nao sincronizado.
     let atualizadoEmParaContexto = atualizadoEmDaDecisao;
 
     // LIMPEZA DE ESTADO OPERACIONAL AO CONCLUIR (specs/remarcacao-conversacional-v1.md,
@@ -570,7 +574,6 @@ export async function processarMensagem(
       ...(agendamentosParaRedatora !== undefined && agendamentosParaRedatora.length > 0
         ? { agendamentos_do_paciente: agendamentosParaRedatora }
         : {}),
-      ...(pacienteNovoNaClinica !== undefined ? { paciente_novo_na_clinica: pacienteNovoNaClinica } : {}),
       // Catalogo real, para a redatora nunca inventar exemplo generico
       // ("limpeza, restauracao, extracao") -- e para nunca esquecer de
       // oferecer Avaliacao quando ela existe (2026-08-22, achado do Gabriel
@@ -585,19 +588,31 @@ export async function processarMensagem(
       // texto de instrucao). A correcao e estrutural: o Core decide qual
       // dos dois fatos manda, a redatora so usa o que recebeu.
       //
-      // - `aguardando_procedimento` (paciente tentou agendar sem dizer o
-      //   que quer): manda SO o nome da avaliacao, se existir no catalogo
-      //   -- nunca a lista inteira, entao a redatora fisicamente nao tem
-      //   como listar mais de uma opcao.
       // - `duvida_livre` (pergunta livre, ex.: "quais procedimentos voces
       //   fazem?"): manda a lista completa -- e o momento em que descrever
       //   as opcoes faz sentido de verdade.
-      ...(decisao.tipo === 'aguardando_procedimento'
-        ? (() => {
-            const avaliacao = procedimentosDisponiveis.find((p) => p.procedimento_id === 'consultation_evaluation');
-            return avaliacao !== undefined ? { procedimento_avaliacao_disponivel: avaliacao.nome_pt } : {};
-          })()
-        : {}),
+      //
+      // REMOVIDO em 2026-08-31 (decisao do Gabriel,
+      // specs/recomendacao-avaliacao-paciente-novo-v1.md secao 8): aqui
+      // `aguardando_procedimento` derivava `procedimento_avaliacao_disponivel`,
+      // e a instrucao da redatora obrigava a OFERECER a avaliacao.
+      //
+      // Por que isso estava errado, e por que a correcao e estrutural:
+      // `aguardando_procedimento` significa apenas que `procedimento_id` nao
+      // veio. NAO significa que o paciente esta em duvida -- e significa quase
+      // o contrario. A interpretadora ja resolve a duvida real sozinha: pela
+      // instrucao de `procedimentos_disponiveis`, "se o paciente demonstrar
+      // que nao sabe qual procedimento precisa, e a lista contiver uma
+      // consulta ou avaliacao, esse e o procedimento adequado" -- nesse caso
+      // ela PREENCHE `procedimento_id` com a avaliacao e o fluxo nem chega
+      // aqui.
+      //
+      // Logo, chegar em `aguardando_procedimento` e evidencia de que a duvida
+      // NAO foi detectada: o paciente so nao disse ainda. O certo e PERGUNTAR
+      // qual atendimento ele deseja, nunca oferecer avaliacao por padrao.
+      //
+      // Nenhum evento, estado ou taxonomia nova foi criado para isso: a
+      // representacao da duvida real ja existia na interpretadora.
       ...(decisao.tipo === 'duvida_livre' && procedimentosDisponiveis.length > 0
         ? { procedimentos_ativos_da_clinica: procedimentosDisponiveis.map((p) => p.nome_pt) }
         : {}),
@@ -796,22 +811,10 @@ const DECISOES_COM_CONTEXTO_DE_AGENDAMENTO: readonly DecisaoOrquestrador['tipo']
   'mensagem_nao_compreendida',
 ];
 
-/**
- * Decisoes em que o fato `paciente_novo_na_clinica` e relevante
- * (specs/recomendacao-avaliacao-paciente-novo-v1.md secao 3): as mesmas tres
- * conversacionais de `DECISOES_COM_CONTEXTO_DE_AGENDAMENTO` mais
- * `aguardando_procedimento` -- o desfecho exato de "a IA nao conseguiu
- * resolver procedimento", onde a duvida real do paciente se manifesta no
- * Core. Lista propria e nao um superconjunto/subconjunto da outra: as duas
- * respondem perguntas diferentes (qual contexto de agendamento mostrar vs.
- * quando "novo aqui" ainda e relevante).
- */
-const DECISOES_PACIENTE_NOVO: readonly DecisaoOrquestrador['tipo'][] = [
-  'saudacao',
-  'duvida_livre',
-  'mensagem_nao_compreendida',
-  'aguardando_procedimento',
-];
+// REMOVIDA em 2026-08-31 (specs/recomendacao-avaliacao-paciente-novo-v1.md
+// secao 8): `DECISOES_PACIENTE_NOVO` listava as decisoes em que o fato
+// `paciente_novo_na_clinica` era considerado relevante. Sem o fato, a lista
+// perde a razao de existir -- e uma lista de excecoes por estado a menos.
 
 /**
  * Busca os agendamentos futuros do paciente para servirem de CONTEXTO a
@@ -1537,9 +1540,14 @@ async function decidir(
     return {
       decisao: {
         tipo: 'aguardando_procedimento',
-        ...(avaliacaoOferecivel(clinicaId, dados.procedimento_id ?? '', catalogo)
-          ? { procedimento_oferecido: CONSULTA_AVALIACAO_ID }
-          : {}),
+        // REMOVIDO em 2026-08-31: aqui `aguardando_procedimento` tambem
+        // declarava `procedimento_oferecido`, gravando uma oferta de avaliacao
+        // que a decisao nova proibe -- procedimento ausente nao autoriza
+        // oferta. A pergunta certa e "qual atendimento voce deseja?".
+        //
+        // `procedimento_oferecido` continua vivo onde a oferta e legitima
+        // (`sem_dentista_disponivel`), e `oferta_procedimento_pendente`
+        // continua sendo o mecanismo que sustenta o "pode ser".
         // Fato ADICIONAL: a decisao continua sendo `aguardando_procedimento`
         // (o procedimento ainda falta), e a redatora recebe os dois -- "nao
         // atendemos domingo" e "qual procedimento?" -- para combinar

@@ -404,14 +404,31 @@ function limparConfirmacaoAoEntrarEmFluxoDeAgendamentoExistente(
 function descartarCadastroInvalido(
   alteracoes: AlteracoesDados,
   dataReferencia: string | undefined
-): { alteracoes: AlteracoesDados; invalidos: CampoCadastralInterpretacao[] } {
+): {
+  alteracoes: AlteracoesDados;
+  invalidos: CampoCadastralInterpretacao[];
+  /** Valor cru do CPF rejeitado neste turno. NUNCA vai para log tecnico. */
+  cpfRejeitado?: string;
+} {
   const resultado: AlteracoesDados = {};
   // Quais campos o paciente informou NESTE turno e o Core rejeitou. Ate
   // 2026-08-16 esta informacao se perdia: o valor era descartado em silencio
   // e a Iris repetia o mesmo pedido sem dizer o motivo -- o paciente
-  // reenviava o mesmo dado errado e o ciclo nao terminava. So o NOME do
-  // campo e propagado; o valor rejeitado e PII e nunca sai daqui.
+  // reenviava o mesmo dado errado e o ciclo nao terminava.
+  //
+  // 2026-08-31 (decisao do Gabriel, specs/cadastro-conversacional-v1.md
+  // secao 4): o VALOR do CPF rejeitado passa a acompanhar o nome do campo,
+  // para a Iris poder repeti-lo ao paciente ("o numero que recebi foi X, e
+  // ele nao passou na validacao"). Sem isso o paciente nao sabe qual numero
+  // o sistema leu, e reenvia o mesmo errado.
+  //
+  // LIMITES desta autorizacao, ambos obrigatorios:
+  // - vale SO para `cpf`. Os demais campos continuam propagando apenas o
+  //   nome, como antes;
+  // - o valor NUNCA pode ir para log tecnico. Ele existe para ser dito ao
+  //   proprio paciente, que acabou de escreve-lo na mesma conversa.
   const invalidos: CampoCadastralInterpretacao[] = [];
+  let cpfRejeitado: string | undefined;
 
   for (const [campo, alteracao] of Object.entries(alteracoes)) {
     if (!CAMPOS_CADASTRAIS_INTERPRETACAO.includes(campo as CampoCadastralInterpretacao)) {
@@ -430,12 +447,23 @@ function descartarCadastroInvalido(
     );
     if (normalizado === undefined) {
       invalidos.push(campo as CampoCadastralInterpretacao);
+      // So o CPF viaja com o valor (ver limites no topo da funcao). Guardado
+      // como o paciente digitou, sem normalizar: normalizar aqui e impossivel
+      // -- o valor foi rejeitado justamente por nao ser normalizavel -- e a
+      // Iris precisa repetir o que ELE escreveu, nao uma versao limpa.
+      if (campo === 'cpf' && typeof alteracao.valor === 'string') {
+        cpfRejeitado = alteracao.valor;
+      }
       continue;
     }
     resultado[campo] = { ...alteracao, valor: normalizado };
   }
 
-  return { alteracoes: resultado, invalidos };
+  return {
+    alteracoes: resultado,
+    invalidos,
+    ...(cpfRejeitado !== undefined ? { cpfRejeitado } : {}),
+  };
 }
 
 const CHAVES_ENTRADA_INTEGRADA = ['conversa_id', 'clinica_id', 'telefone_normalizado', 'mensagens_atuais'] as const;
@@ -730,6 +758,12 @@ export async function interpretarEAplicar(
     // dizer QUAL campo estava errado, em vez de repetir o pedido inteiro.
     ...(validacaoCadastral.invalidos.length > 0
       ? { campos_cadastrais_invalidos: validacaoCadastral.invalidos }
+      : {}),
+    // Valor cru do CPF rejeitado (2026-08-31), pelo mesmo caminho transitorio
+    // do nome do campo: existe so para a Iris repetir ao paciente qual numero
+    // o sistema leu. Nunca gravado em `dados`, nunca em log tecnico.
+    ...(validacaoCadastral.cpfRejeitado !== undefined
+      ? { cpf_rejeitado: validacaoCadastral.cpfRejeitado }
       : {}),
     aplicacao,
     dentistas_candidatos: guardaLista.candidatos,

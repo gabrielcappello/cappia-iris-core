@@ -1,12 +1,37 @@
 # Recomendação de avaliação para paciente novo — spec mínima v1
 
-**Status:** **implementada, testada e publicada em 2026-08-22.** Commit
-`af6df85`. Edge `iris-nova-mensagem` v78 `ACTIVE` no operacional
-`udizowyfjnhuhgxkeayk`, `verify_jwt: true` preservado. Suíte determinística
-1549/1554 (5 skipped, 0 falhas). Teste contra IA real (redatora, OpenAI):
-4/4 — `src/eval/teste-real-paciente-novo.ts`, cenários 6-9 da seção 6.
-Validação de tráfego real em produção (WhatsApp) ainda pendente — nenhuma
-mensagem processada pela v78 até a publicação desta nota.
+> ## ⚠️ REVOGAÇÃO PARCIAL — decisão do Gabriel, 2026-08-31
+>
+> **A definição de "paciente novo" desta spec está REVOGADA.** Ela equiparava
+> ausência de cadastro local (`identificacao.paciente.id === null`) a paciente
+> novo / primeira consulta. Essa equivalência é **falsa** e está proibida.
+>
+> **Motivo (realidade operacional):** o caso mais comum é o paciente que **já é
+> cliente da clínica**, com ficha no sistema antigo/externo ainda não
+> sincronizado com a Iris. A Iris não encontra nada pelo telefone e concluía
+> "primeira visita" — errado, e observado em conversa real de WhatsApp.
+>
+> **O que passa a valer:** `paciente.id === null` significa **somente** que não
+> existe cadastro local associado àquele telefone. Nunca primeira visita.
+> Avaliação só pode ser sugerida quando o paciente **declarar** que é sua
+> primeira consulta, ou **demonstrar que não sabe** qual atendimento precisa.
+> "Ainda não informou o procedimento" **não equivale** a "não sabe o
+> procedimento".
+>
+> **Escopo da revogação:** seção 1 (fonte de dado) e seção 3 regra 2, mais o
+> texto da instrução da seção 4. O restante da spec — avaliação como
+> procedimento de primeira classe, a decisão morar no Core e a redação ser
+> natural — **permanece em vigor**. Ver `## 8. Regra vigente` ao final.
+
+**Status:** implementada em 2026-08-22 (commit `af6df85`) e **parcialmente
+revogada em 2026-08-31** pela decisão acima. O histórico abaixo é preservado
+como registro do que foi implementado então, não como regra corrente.
+
+Registro histórico de 2026-08-22: Edge `iris-nova-mensagem` v78 `ACTIVE` no
+operacional `udizowyfjnhuhgxkeayk`, `verify_jwt: true` preservado. Suíte
+determinística 1549/1554 (5 skipped, 0 falhas). Teste contra IA real
+(redatora, OpenAI): 4/4 — `src/eval/teste-real-paciente-novo.ts`, cenários 6-9
+da seção 6.
 
 **Origem:** pedido do Gabriel (2026-08-22) discutido primeiro com o Codex, que
 propôs a regra e a definição de "paciente novo" abaixo. Esta spec formaliza
@@ -29,9 +54,13 @@ de dado já existe sem precisar de nada novo (seção 1).
 
 ## 1. Fonte de dado: cadastro do paciente
 
-**Definição final de Gabriel em 2026-08-28:** esta recomendação é exclusiva
-para quem **ainda não tem cadastro de paciente nesta clínica**. O Core já
-recebe esse fato da identificação: `identificacao.paciente.id === null`.
+> **⚠️ SEÇÃO REVOGADA em 2026-08-31.** A definição abaixo está fora de vigor.
+> Preservada como registro do que valia até 30/08. Regra vigente: seção 8.
+
+**Definição final de Gabriel em 2026-08-28 — REVOGADA em 2026-08-31:** esta
+recomendação é exclusiva para quem **ainda não tem cadastro de paciente nesta
+clínica**. O Core já recebe esse fato da identificação:
+`identificacao.paciente.id === null`.
 
 Se existe cadastro, a Iris não oferece avaliação automaticamente, mesmo que
 não exista atendimento concluído ou agendamento futuro. Quando existe
@@ -76,8 +105,10 @@ Dado um turno numa dessas quatro decisões:
    limpeza") → segue o fluxo normal. Não é interrompido por ser novo. A
    regra de dúvida real de `procedimento-semantico-v1.md` já cobre isso —
    `procedimento_id` presente e resolvido não é tocado por esta spec.
-2. **Paciente novo (seção 1) E descreve só um problema, ou está em dúvida, ou
-   ainda não mencionou procedimento algum** → o fato
+2. **[⚠️ REGRA REVOGADA em 2026-08-31 — ver seção 8. Preservada como
+   registro.]** ~~Paciente novo (seção 1) E descreve só um problema, ou está em
+   dúvida, ou~~
+   ~~ainda não mencionou procedimento algum~~ → o fato
    `paciente_novo_na_clinica: true` fica disponível para a redatora. Isso
    **não força** `consultation_evaluation` sozinho — continua sendo a regra
    de `procedimento-semantico-v1.md` § 3 que decide (dúvida real → catálogo
@@ -90,6 +121,11 @@ Dado um turno numa dessas quatro decisões:
    avaliação por causa desta spec.
 
 ## 4. Explicação natural — regra para a redatora, não lista de frases
+
+> **⚠️ O TEXTO DA INSTRUÇÃO ABAIXO ESTÁ REVOGADO em 2026-08-31** (afirma
+> "primeira vez dele aqui" a partir de cadastro ausente). Preservado como
+> registro. O princípio da seção — nenhuma frase fixa, a IA escolhe as
+> palavras — **permanece em vigor**. Instrução vigente: seção 8.
 
 Segue o padrão de `procedimento-semantico-v1.md` § 3: **nenhuma frase
 fixa, nenhum texto hardcoded.** Instrução na direção certa, a IA escolhe as
@@ -181,3 +217,77 @@ v1.md`. Não bloqueia esta spec: as duas evoluem independentes, e o fato
   técnica com esta spec (o comportamento de paciente novo/avaliação é o
   mesmo qualquer que seja o modelo por trás). Tratar como decisão à parte,
   fora deste documento, quando o Gabriel quiser.
+
+## 8. Regra vigente (decisão do Gabriel, 2026-08-31)
+
+Esta seção **substitui** a seção 1 e a regra 2 da seção 3. Onde houver
+divergência com qualquer trecho acima, esta seção prevalece.
+
+### 8.1 Dois fatos distintos, nunca convertidos um no outro
+
+| Fato | O que significa | O que NÃO significa |
+|---|---|---|
+| **cadastro local ausente** | não existe cadastro na Iris associado àquele telefone | não significa paciente novo, nem primeira consulta |
+| **declaração de vínculo** | o paciente disse que já é cliente da clínica | não significa que a ficha foi localizada |
+
+A realidade operacional que sustenta a separação: o paciente pode ser cliente
+antigo com ficha no sistema anterior da clínica, ainda não sincronizado com a
+Iris. **Cadastro não encontrado na Iris nunca prova primeira visita.**
+
+### 8.2 Quando a avaliação pode ser sugerida
+
+Somente quando:
+
+1. o paciente **declarar** que é sua primeira consulta; ou
+2. o paciente **demonstrar que não sabe** qual atendimento precisa.
+
+**"Ainda não informou o procedimento" NÃO equivale a "não sabe o
+procedimento".** Campo vazio é ausência de dado, não dúvida declarada. A regra
+de dúvida real de `procedimento-semantico-v1.md` § 3 continua sendo quem
+resolve o caso 2, sem fato novo.
+
+Ausência de cadastro local **nunca** é gatilho de avaliação.
+
+### 8.3 Saudação simples
+
+Saudação é apenas saudação: a Iris cumprimenta e pergunta como pode ajudar.
+
+O fato de cadastro ausente **não é enviado à redatora quando cadastro não é
+assunto do turno**. A garantia é estrutural (o fato não chega), nunca
+comportamental (instruir a IA a não mencionar) — instrução não é garantia, e
+depender dela já falhou antes nesta mesma spec.
+
+### 8.4 Declaração "já sou cliente"
+
+Quando o paciente declara vínculo, semanticamente e sem lista de frases:
+
+- a Iris **reconhece** a declaração;
+- **quando relevante**, explica que não encontrou cadastro associado àquele
+  número e que a ficha pode estar em outro sistema ou com outro telefone;
+- **não** o chama de paciente novo;
+- **não** oferece avaliação automaticamente;
+- **continua o fluxo normal** de agendamento, coletando apenas os dados
+  necessários.
+
+### 8.5 CPF: sem busca antecipada nesta etapa
+
+**Não existe busca por CPF antes do fluxo de persistência.** Provado contra o
+código em 2026-08-31: `cappia_persistir_paciente` é chamada uma única vez
+(`orquestrador.ts`), **depois** da confirmação do horário e **somente** com o
+cadastro já completo — a colisão de CPF é descoberta ao tentar escrever, nunca
+por consulta prévia. Persistência não é capacidade de localização.
+
+Quando o CPF chega ao fluxo existente:
+
+- **encontrado em outra ficha/telefone** → fluxo já implementado de
+  confirmação da troca de telefone (`cpf-outro-telefone-v1.md`), com
+  confirmação explícita, preservando histórico e agendamentos;
+- **não encontrado** → criar o registro operacional necessário na Iris, **sem
+  concluir nem afirmar** que é a primeira visita à clínica.
+
+### 8.6 Remoção global da inferência
+
+A inferência "cadastro local ausente = paciente novo" é removida de todo o
+sistema, não apenas suprimida na saudação. Isso vale mesmo quando a declaração
+semântica do paciente não estiver disponível no turno — impede que a conclusão
+errada reapareça em turnos futuros.

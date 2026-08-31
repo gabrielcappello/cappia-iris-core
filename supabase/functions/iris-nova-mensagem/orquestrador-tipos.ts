@@ -268,10 +268,20 @@ export type DecisaoOrquestrador =
        * respondido nada. Ele repetiu os mesmos dados e o ciclo se fecharia
        * indefinidamente, porque nada indicava QUAL campo estava errado.
        *
-       * Carrega SO o nome do campo -- nunca o valor rejeitado, que e PII.
+       * Carrega SO o nome do campo. O valor rejeitado viaja em
+       * `cpf_rejeitado`, e somente para o CPF.
        * Ausente quando nada foi rejeitado neste turno.
        */
       campos_invalidos?: readonly CampoCadastralInterpretacao[];
+      /**
+       * Valor cru do CPF rejeitado neste turno (2026-08-31, decisao do
+       * Gabriel). Permite a Iris repetir ao paciente o numero que o sistema
+       * leu, em vez de so dizer que o CPF esta errado.
+       *
+       * PROIBIDO em log tecnico. Confirmacao verbal do paciente nunca o
+       * torna valido.
+       */
+      cpf_rejeitado?: string;
     }
   // Desfecho TERMINAL de encaminhamento a recepcao. Ate 2026-08-10 cobria
   // tambem o primeiro contato com o conflito de CPF; desde
@@ -553,37 +563,23 @@ export interface ResultadoOrquestrador {
    * disciplina das demais chaves opcionais do Core.
    */
   agendamentos_do_paciente?: readonly AgendamentoAtivo[];
-  /**
-   * Paciente identificado sem NENHUM atendimento `concluido` nesta clinica
-   * (specs/recomendacao-avaliacao-paciente-novo-v1.md). Mesma natureza de
-   * `substituicao_por_avaliacao` e `agendamentos_do_paciente` acima: nao e
-   * estado, nao e decisao, e um fato deste turno anexado FORA do switch de
-   * `derivarFatosAutorizados`. O `objetivo` da resposta nunca muda por causa
-   * dele -- o Core disponibiliza, a redatora decide se e relevante explicar
-   * que o caminho e comecar por uma avaliacao.
-   *
-   * "Novo" e definido por HISTORICO DE ATENDIMENTO, nunca por ausencia de
-   * cadastro nem por ausencia de agendamento futuro: um paciente com
-   * agendamento `confirmado` pendente mas nenhum `concluido` ainda e novo
-   * para este fato. `clinica_id` sempre no predicado -- o mesmo paciente
-   * pode ser novo numa clinica e nao em outra.
-   *
-   * PRESENTE SOMENTE nas mesmas tres decisoes conversacionais de
-   * `agendamentos_do_paciente` (`saudacao`, `duvida_livre`,
-   * `mensagem_nao_compreendida`) mais `aguardando_procedimento` -- o
-   * desfecho exato de "a IA nao conseguiu resolver procedimento", momento em
-   * que a duvida real do paciente se manifesta no Core
-   * (specs/procedimento-semantico-v1.md secao 4). Nos passos seguintes de
-   * agendamento (dentista, horario, confirmacao) o procedimento ja esta
-   * resolvido e este fato deixa de ser relevante -- por isso NAO acompanha
-   * `agendamentos_do_paciente` em todas as decisoes, so nestas quatro.
-   * `desistencia` fica de fora, mesmo motivo de `agendamentos_do_paciente`.
-   *
-   * AUSENTE (nunca `false` explicito) quando o paciente NAO e novo, ou
-   * quando a decisao do turno nao e uma das quatro acima -- mesma disciplina
-   * das demais chaves opcionais do Core.
-   */
-  paciente_novo_na_clinica?: true;
+  // REMOVIDO em 2026-08-31 (decisao do Gabriel,
+  // specs/recomendacao-avaliacao-paciente-novo-v1.md secao 8): o fato
+  // `paciente_novo_na_clinica` nao existe mais.
+  //
+  // Ele era derivado de `identificacao.paciente.id === null` e afirmava
+  // "primeira vez deste paciente nesta clinica". A equivalencia e FALSA: o
+  // caso mais comum e o paciente que JA e cliente da clinica, com ficha no
+  // sistema antigo ainda nao sincronizado com a Iris -- a Iris nao encontra
+  // nada pelo telefone e concluia primeira visita. Defeito observado em
+  // conversa real de WhatsApp.
+  //
+  // Ausencia de cadastro local significa SOMENTE que nao existe cadastro na
+  // Iris associado aquele telefone, e nao vira fato do turno: nada a
+  // disponibilizar a redatora, nada a mencionar numa saudacao. A avaliacao
+  // volta a depender exclusivamente da duvida real do paciente
+  // (specs/procedimento-semantico-v1.md secao 3), que a interpretadora ja
+  // resolve pelo catalogo, sem fato novo.
   /**
    * Nome (nome_pt) da Avaliacao/Consulta, SOMENTE quando a decisao e
    * `aguardando_procedimento` (paciente tentou agendar sem dizer o

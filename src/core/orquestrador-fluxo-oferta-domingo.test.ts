@@ -76,6 +76,22 @@ function montarCenario(tabelas: TabelasFalsas) {
     tempo_padrao: 30,
     ativo: true,
   });
+  // Procedimento real SEM nenhum dentista apto -- origina a oferta LEGITIMA
+  // de avaliacao (o cenario que sobreviveu a revogacao de 31/08).
+  const idSemDentista = crypto.randomUUID();
+  tabelas.procedimentos_catalogo.push({
+    id: idSemDentista,
+    nome_pt: 'Clareamento',
+    nome_es: null,
+    nome_en: null,
+    nome_fr: null,
+    nome_de: null,
+    nome_it: null,
+    nome_ru: null,
+    nome_ar: null,
+    tempo_padrao: 60,
+    ativo: true,
+  });
   tabelas.estado_conversa.push({
     id: crypto.randomUUID(),
     clinica_id: clinicaId,
@@ -87,7 +103,7 @@ function montarCenario(tabelas: TabelasFalsas) {
     atualizado_em: new Date('2026-08-01T00:00:00.000Z').toISOString(),
   });
 
-  return { clinicaId, pacienteId, idPerez, idRamoz };
+  return { clinicaId, pacienteId, idPerez, idRamoz, idSemDentista };
 }
 
 function entrada(mensagem: string) {
@@ -106,30 +122,37 @@ function conversa(tabelas: TabelasFalsas) {
   return linha as { dados: Record<string, unknown>; contexto_horarios: Record<string, unknown> | null };
 }
 
+// REANCORADO em 2026-08-31: o turno 1 deste fluxo era "pedi horario sem dizer
+// o procedimento", cenario cuja oferta foi revogada. O fluxo em si -- oferta
+// legitima -> "ok pode ser" -> dentista -> domingo -- continua valendo
+// integralmente, entao ele passa a partir da oferta que SOBREVIVEU: o paciente
+// pede um procedimento sem nenhum dentista apto.
 test('FLUXO REAL: oferta -> "ok pode ser" -> "diego perez" -> domingo, sem repetir pergunta', async () => {
   const tabelas = criarTabelasFalsasVazias();
-  const { idPerez } = montarCenario(tabelas);
+  const { idPerez, idSemDentista } = montarCenario(tabelas);
   const banco = new ClienteFalso(tabelas);
   const rpc = new ClienteRpcFalso({});
 
-  // --- Turno 1: pede horario para hoje, sem dizer o procedimento -----------
+  // --- Turno 1: pede um procedimento sem dentista apto -> oferta legitima ---
   const t1 = await processarMensagem(
     new ClienteModeloFalso([
       {
         natureza_mensagem: 'pedido',
         alteracoes: {
           intencao: { acao: 'informar', valor: 'novo_agendamento' },
+          procedimento_id: { acao: 'informar', valor: idSemDentista },
+          // A data continua vindo no mesmo turno, como no fluxo original --
+          // e ela que faz o turno 3 chegar em `horarios_disponiveis`.
           data_texto: { acao: 'informar', valor: 'hoje' },
         },
       },
     ]),
     banco,
     rpc,
-    entrada('quero um turno para hoje. tem algum horario disponivel?')
+    entrada('queria fazer um clareamento hoje')
   );
 
-  assert.equal(t1.decisao.tipo, 'aguardando_procedimento');
-  assert.equal(t1.procedimento_avaliacao_disponivel, 'Consulta / Avaliação');
+  assert.equal(t1.decisao.tipo, 'sem_dentista_disponivel');
   assert.deepEqual(
     conversa(tabelas).contexto_horarios?.oferta_procedimento_pendente,
     { procedimento_id: ID_AVALIACAO },
@@ -197,23 +220,26 @@ test('FLUXO REAL: oferta -> "ok pode ser" -> "diego perez" -> domingo, sem repet
 // teste garante que ele chega.
 test('FLUXO REAL: os fatos do ultimo turno nunca negam o dentista ja persistido', async () => {
   const tabelas = criarTabelasFalsasVazias();
-  const { idPerez } = montarCenario(tabelas);
+  const { idPerez, idSemDentista } = montarCenario(tabelas);
   const banco = new ClienteFalso(tabelas);
   const rpc = new ClienteRpcFalso({});
 
+  // Mesma reancoragem do teste acima: a oferta nasce do procedimento sem
+  // dentista apto, nao da ausencia de procedimento.
   await processarMensagem(
     new ClienteModeloFalso([
       {
         natureza_mensagem: 'pedido',
         alteracoes: {
           intencao: { acao: 'informar', valor: 'novo_agendamento' },
+          procedimento_id: { acao: 'informar', valor: idSemDentista },
           data_texto: { acao: 'informar', valor: 'hoje' },
         },
       },
     ]),
     banco,
     rpc,
-    entrada('quero um turno para hoje. tem algum horario disponivel?')
+    entrada('queria fazer um clareamento hoje')
   );
   await processarMensagem(
     new ClienteModeloFalso([

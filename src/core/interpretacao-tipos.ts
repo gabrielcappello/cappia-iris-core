@@ -361,10 +361,27 @@ export interface ResultadoInterpretacao {
    * inteiro e o paciente reenviava o mesmo dado errado, sem nunca saber qual
    * campo estava com problema. Medido em conversa real.
    *
-   * Carrega SO o nome do campo -- nunca o valor rejeitado, que e PII.
+   * Carrega SO o nome do campo. O valor rejeitado viaja separado, e SO para
+   * o CPF -- ver `cpf_rejeitado` abaixo.
    * Ausente quando nada foi rejeitado.
    */
   campos_cadastrais_invalidos?: readonly CampoCadastralInterpretacao[];
+  /**
+   * Valor cru do CPF rejeitado NESTE turno, exatamente como o paciente o
+   * escreveu (2026-08-31, decisao do Gabriel).
+   *
+   * REVOGA, apenas para o CPF, a regra anterior de que o valor rejeitado
+   * nunca sai do validador. Motivo: sem repetir o numero lido, o paciente
+   * nao descobre o que o sistema entendeu e reenvia o mesmo erro. O CPF ja
+   * atravessa esta fronteira na mensagem crua do proprio paciente.
+   *
+   * PROIBIDO em log tecnico, em qualquer nivel. Existe para ser dito ao
+   * proprio paciente que acabou de escreve-lo, e para mais nada.
+   *
+   * Confirmacao verbal do paciente NUNCA torna este valor valido: ele
+   * continua rejeitado ate passar na validacao dos digitos.
+   */
+  cpf_rejeitado?: string;
   aplicacao: ResultadoAplicarDados | null;
   /**
    * Candidatos a dentista lidos pela IA nesta mensagem
