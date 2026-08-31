@@ -122,6 +122,23 @@ export interface InterpretarEAplicarInput extends ContextoConversa {
     horario: string;
   }[];
   /**
+   * Carregador PREGUICOSO dos `dentista_id` distintos do historico de
+   * atendimento passado elegivel (dentistas-historicos.ts, 2026-08-31).
+   *
+   * FUNCAO, nunca valor pronto: a consulta ao banco so acontece se
+   * `aplicarDentistaPreferido` precisar deduzir o profissional
+   * (specs/dentista-semantico-v1.md secao 13.5). Uma saudacao nao paga
+   * consulta, e uma falha nessa leitura nao alcanca conversas que nao
+   * dependem dela.
+   *
+   * NUNCA entra no payload do modelo. Existe so para alimentar
+   * `aplicarDentistaPreferido`, que e deterministico. A IA nao precisa
+   * conhecer o historico para essa deducao, e misturar passado no contexto
+   * dela permitiria apresentar atendimento antigo como consulta futura -- o
+   * motivo de esta fonte ser separada de `agendamentos_do_paciente`.
+   */
+  carregar_dentistas_historicos?: () => Promise<readonly string[]>;
+  /**
    * Cadastro JA PERSISTIDO do paciente (identificacao.ts). SEGUNDA ORIGEM de
    * dado cadastral, ao lado do snapshot da conversa.
    *
@@ -484,6 +501,12 @@ const CHAVES_OPCIONAIS_INTEGRADA = [
   // TODA mensagem numa conversa com historico virava 400 e a Iris parava de
   // responder. Um campo novo no payload precisa SEMPRE entrar aqui.
   'tratamentos_pendentes',
+  // 2026-08-31. Entrada da ORQUESTRACAO, nunca do payload do modelo: e
+  // consumida apenas por `aplicarDentistaPreferido` e some antes de montar o
+  // que vai a IA (a montagem do payload lista campo a campo o que envia).
+  // Precisa constar aqui pelo mesmo motivo do caso de 19/08 acima -- esta
+  // lista valida a ENTRADA de `interpretarEAplicar`, nao o payload.
+  'carregar_dentistas_historicos',
 ] as const;
 
 /**
@@ -652,11 +675,25 @@ export async function interpretarEAplicar(
   // dois com o Dr. Diego, e a Iris perguntou com qual dos dois profissionais
   // ele queria. A regra existe na instrucao e nao foi seguida; aqui e
   // deducao. Ver dentista-preferido-do-paciente.ts.
-  const dentistaPreferido = aplicarDentistaPreferido(
+  // O historico so e lido quando a deducao e REALMENTE necessaria
+  // (specs/dentista-semantico-v1.md secao 13.5): sem dentista ja definido e
+  // sem escolha explicita no turno. Sem essa condicao, um "bom dia" ganharia
+  // uma consulta extra ao banco, e uma falha nessa leitura poderia derrubar
+  // uma conversa que nao envolve dentista nenhum.
+  //
+  // A checagem e a MESMA que `aplicarDentistaPreferido` ja faz nos dois
+  // primeiros ifs -- aqui ela decide se vale a pena PAGAR a consulta, la ela
+  // decide se aplica. Duplicar a condicao seria arriscar divergencia, entao
+  // a funcao recebe um carregador preguicoso e continua sendo a unica dona
+  // da regra: se ela nao precisar do historico, nunca o pede.
+  const dentistaPreferido = await aplicarDentistaPreferido(
     dentistaDoPlano.alteracoes,
     guardaLista.candidatos,
     entrada.agendamentos_do_paciente,
-    snapshotOficial
+    snapshotOficial,
+    // Fonte SEPARADA do passado (2026-08-31). Chega so ate aqui: nunca ao
+    // payload do modelo, nunca a redatora.
+    entrada.carregar_dentistas_historicos
   );
   if (dentistaPreferido.aplicou) {
     console.log('dentista_preferido_aplicado=1');

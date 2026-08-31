@@ -18,6 +18,7 @@ import { declararPerguntaPendente } from './declarar-pergunta-pendente.ts';
 import { historicoValidoParaEnvio } from './historico-conversa.ts';
 import { montarContextoUnificado } from './sombra-contexto-unificado.ts';
 import { aplicarDados } from './aplicar-dados.ts';
+import { buscarDentistasHistoricos } from './dentistas-historicos.ts';
 import { formatarData } from './gerar-resposta-paciente.ts';
 import { ErroRpcTecnico } from './erros.ts';
 import { CAMPOS_CADASTRAIS_INTERPRETACAO } from './interpretacao-tipos.ts';
@@ -217,9 +218,31 @@ export async function processarMensagem(
       .map((a) => ({ agendamento_id: a.agendamento_id, data: a.data }));
   }
 
+  // DENTISTA HABITUAL (2026-08-31): leitura SEPARADA do historico de
+  // atendimento, so com os `dentista_id` elegiveis. Nao reutiliza
+  // `agendamentos_do_paciente` de proposito -- aquele campo significa
+  // agendamento FUTURO/ATIVO e atravessa ate a redatora; misturar passado
+  // ali permitiria apresentar atendimento antigo como consulta marcada.
+  //
+  // PREGUICOSO por decisao do Gabriel (specs/dentista-semantico-v1.md secao
+  // 13.5): passa-se a FUNCAO, nunca o resultado. A consulta so acontece se
+  // `aplicarDentistaPreferido` precisar deduzir o profissional -- assim um
+  // "bom dia" nao paga consulta extra, e uma falha nesta leitura nao derruba
+  // conversa que nao envolve dentista.
+  //
+  // O resultado alimenta exclusivamente `aplicarDentistaPreferido`, que e
+  // deterministico. Nada disto entra no payload do modelo.
+  const carregarDentistasHistoricos = () =>
+    buscarDentistasHistoricos(clienteBanco, {
+      clinica_id: identificacao.clinica_id,
+      paciente_id: identificacao.paciente.id,
+      instante_atual: entrada.instante_atual,
+    });
+
   const interpretacao = await interpretarEAplicar(clienteModelo, clienteBanco, {
     conversa_id: identificacao.conversa.id,
     clinica_id: identificacao.clinica_id,
+    carregar_dentistas_historicos: carregarDentistasHistoricos,
     telefone_normalizado: entrada.telefone_normalizado,
     mensagens_atuais: entrada.mensagens_atuais,
     // Horarios ja oferecidos na ultima pergunta gerada, quando houver --

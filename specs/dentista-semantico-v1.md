@@ -512,3 +512,120 @@ preferencia_nao_localizada?: true;   // só quando dentistas_candidatos === []
 
 Nada de fuzzy no Core, score, confidence, alias, regex, match textual ou evento novo. O
 Core apenas conta, confere integridade e escreve.
+
+---
+
+## 13. Dentista habitual, deduzido do histórico de atendimento (2026-08-31)
+
+**Status: aprovado pelo Gabriel em 2026-08-31.** Estende a seção 12 sem alterá-la:
+a correlação continua respondendo *"a quem ele se refere?"*; esta seção responde a uma
+pergunta diferente — *"quem já atende este paciente?"* — quando ele **não** nomeia
+ninguém.
+
+### 13.1 O defeito real que originou
+
+Conversa real, WhatsApp, v93, 31/08/2026:
+
+> **Paciente:** "quero o mesmo dentista que sempre me atende."
+> **Iris:** "Você prefere o Dr. Diego Ramoz, o Dr. Diego Perez ou o Dr. Pablo Arruda?"
+
+O paciente tinha **um** agendamento com o Dr. Diego Perez, em 31/08 às 08:00, e escreveu
+às 10:32. `aplicarDentistaPreferido` recebia apenas `agendamentos_do_paciente`, que vem
+de `buscarAgendamentoAtivo` — e essa busca filtra `status='confirmado'` **e**
+`data >= hoje`, com corte adicional por minuto no mesmo dia. O atendimento das 08:00 já
+estava fora às 10:32, e não existia nenhuma outra consulta capaz de ver o passado.
+
+### 13.2 Fonte SEPARADA — condição arquitetural
+
+**Proibido ampliar ou reutilizar `agendamentos_do_paciente` para carregar consultas
+passadas.** Esse campo tem semântica vigente de agendamento **futuro/ativo** e atravessa
+até a interpretadora e a redatora; misturar passado nele permitiria à Iris apresentar um
+atendimento antigo como consulta marcada.
+
+A leitura histórica é um módulo próprio e devolve **somente `dentista_id`** — nunca data,
+horário, procedimento ou nome. Ela alimenta **exclusivamente** o mecanismo determinístico
+`aplicarDentistaPreferido`. **Nada disso entra no payload do modelo:** o Core deduz, a IA
+não precisa conhecer o histórico para isso.
+
+### 13.3 Status elegíveis
+
+Definidos sobre os valores **reais** observados em `agendamentos.status` no banco
+operacional (2026-08-31: `confirmado`, `concluido`, `faltou`), mais os do vocabulário
+canônico do código (`cancelado`, `remarcado`).
+
+| Status | Elegível? | Por quê |
+|---|---|---|
+| `confirmado` **já passado** | **sim** | é o caso real; a recepção nem sempre vira para `concluido` |
+| `concluido` | **sim** | atendimento encerrado |
+| `confirmado` **futuro** | não | é compromisso, não histórico — já chega por `agendamentos_do_paciente` |
+| `cancelado` | não | não houve atendimento |
+| `remarcado` | não | substituído por outro registro; contaria em dobro |
+| `faltou` | não | o paciente não compareceu; não estabelece vínculo |
+
+"Já passado" usa o mesmo critério de `buscar-agendamento-ativo.ts`, invertido: data
+anterior a hoje, ou hoje com horário já iniciado. O desempate do mesmo dia é sempre em
+**minutos**, nunca em SQL — `horario` é `text` e a comparação lexicográfica erra
+(`'9:00' > '14:00'`).
+
+### 13.4 Resolução
+
+- **Exatamente um** `dentista_id` distinto no conjunto elegível → aplicar como habitual.
+- **Zero ou mais de um** → não escolher; a Iris pergunta. Escolher entre vários seria
+  decidir pelo paciente.
+- **A escolha explícita do turno sempre prevalece** — mantém a regra da seção 12 e do
+  próprio `aplicarDentistaPreferido`, que já retorna sem aplicar quando há candidatos da
+  IA ou dentista já definido na conversa.
+- Futuro e passado somam no **mesmo conjunto**: se ambos apontarem para o mesmo
+  profissional, continua sendo um só e a dedução vale.
+
+### 13.5 Quando a leitura acontece — SOB DEMANDA
+
+**A consulta histórica não pode rodar em toda mensagem.** Ela só é feita quando o Core
+realmente precisa deduzir o profissional, isto é, quando as **três** condições valem:
+
+1. **`dentistas_candidatos === null`** — o paciente não mencionou profissional nenhum.
+   **`null` e `[]` não são a mesma coisa** (seção 12): `[]` significa que ele *mencionou*
+   alguém que não existe nesta clínica, e nesse caso a dedução é proibida — a preferência
+   declarada prevalece, mesmo não localizada, e o turno segue pelo comportamento vigente
+   de `preferencia_nao_localizada`. Qualquer array interrompe, inclusive o vazio;
+2. nenhum dentista já definido (nem no snapshot da conversa, nem nas alterações do turno),
+   e nenhuma **remoção** de dentista neste turno — `acao: 'remover'` é escolha explícita na
+   direção contrária, e reaplicar o habitual desfaria o que o paciente acabou de pedir;
+3. **o turno está no fluxo de NOVO AGENDAMENTO**, e não em qualquer intenção:
+   - `intencao === 'novo_agendamento'`; **ou**
+   - continuação inequívoca desse fluxo — `procedimento_id` na visão efetiva **sem**
+     nenhum `agendamento_id` em foco.
+
+   **`remarcacao` e `cancelamento` estão explicitamente excluídos.** `INTENCOES_PERMITIDAS`
+   tem três valores, e esta dedução pertence só ao primeiro:
+
+   - **`remarcacao`** — o profissional vem do **contrato da própria remarcação** (o
+     dentista do agendamento que está sendo remarcado, `remarcacao-conversacional-v1.md`),
+     nunca do habitual. Deduzir aqui poderia trocar o dentista de um agendamento que já
+     existe.
+   - **`cancelamento`** — não há profissional a escolher.
+
+   A intenção **efetiva** decide (turno sobrepondo snapshot): uma conversa que era de
+   agendamento e virou cancelamento sai por aqui. E `agendamento_id` presente é marcador
+   estrutural de que a conversa trata de um agendamento **já existente** — dispensa a
+   dedução mesmo sem `intencao` explícita. Um `procedimento_id` antigo no snapshot **não**
+   autoriza nada quando a intenção efetiva é cancelamento ou remarcação.
+
+A terceira é indispensável, e faltava: as duas primeiras são satisfeitas por um "bom dia"
+numa conversa nova — sem candidato da IA e sem dentista definido —, então sem ela a
+saudação pagaria a consulta assim mesmo. Conversa básica (saudação, dúvida livre,
+agradecimento) não tem profissional a deduzir e sai antes de qualquer leitura.
+
+O sinal é **estrutural e já existente**: nenhuma regex, nenhum estado novo, nenhuma
+taxonomia nova.
+
+Motivo: sem isso, um "bom dia" ganharia uma consulta adicional ao banco, e uma falha
+nessa leitura poderia derrubar uma conversa que não envolve dentista nenhum. O
+isolamento por `clinica_id` + `paciente_id` no predicado do banco é preservado
+integralmente.
+
+### 13.6 O que NÃO é criado
+
+Nenhuma coluna, tabela, migration, campo persistente de "dentista favorito", evento,
+estado ou taxonomia. A dedução é derivada a cada turno, do mesmo `agendamentos` que já
+existe.

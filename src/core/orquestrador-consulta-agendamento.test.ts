@@ -404,8 +404,10 @@ test('8. a busca acontece DEPOIS da decisao -- inclui o agendamento criado no pr
   // UMA consulta de agendamento ATIVO por turno -- nunca uma por consumidor
   // (a busca da interpretadora e reaproveitada aqui, por `finalizar`).
   //
-  // Paciente novo agora significa ficha inexistente nesta clinica; nenhuma
-  // segunda consulta de historico e necessaria.
+  // E continua UMA depois de dentistas-historicos.ts (2026-08-31): esta e uma
+  // SAUDACAO, sem intencao e sem procedimento, entao a terceira guarda da
+  // secao 13.5 dispensa a deducao de dentista antes de qualquer leitura de
+  // historico. Se este numero virar 2 numa saudacao, a guarda regrediu.
   assert.equal(clienteBanco.estatisticas.chamadasSelect.agendamentos, 1);
 });
 
