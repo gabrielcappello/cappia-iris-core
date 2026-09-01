@@ -48,8 +48,18 @@
 // O dentista do plano e decisao CLINICA da clinica, nao preferencia: quem
 // avalia nem sempre executa. Entao candidato so derruba o plano quando e
 // escolha inequivoca do paciente -- UM candidato, e diferente do que o plano
-// define. Dois ou mais nunca sao escolha: sao a IA em duvida, e ai o plano
-// manda.
+// define.
+//
+// DOIS OU MAIS NAO E HEURISTICA, E O CONTRATO DA IA LIDO CORRETAMENTE.
+// `interpretacao-instrucoes.ts` diz, literalmente: "Voce NUNCA escolhe entre
+// varios plausiveis -- quem pergunta ao paciente e o sistema." Uma lista com
+// dois ou mais e, POR DEFINICAO DO CAMPO, a IA declarando que nao sabe a
+// quem o paciente se referiu. Nunca foi promessa de escolha; a guarda antiga
+// e que lia a saida de um jeito que o contrato nao sustenta.
+//
+// Consequencia: nao existe caso em que 2+ deveria derrubar o plano. Mesmo o
+// paciente citando dois de proposito ("pode ser com o Ramoz ou o Perez,
+// tanto faz") termina certo -- ele nao escolheu, e o plano manda.
 //
 // Distincao ESTRUTURAL (quantidade e identidade), nunca leitura do texto do
 // paciente -- `docs/00-principios.md`.
@@ -126,6 +136,15 @@ export function aplicarDentistaDoTratamento(
   // clinica -- foi exatamente o defeito de 2026-09-01.
   //
   // UM candidato IGUAL ao do plano: concordam, nada a decidir; segue o plano.
+  //
+  // REDUNDANCIA CONHECIDA, nao corrigida (revisao de 2026-09-01). Neste
+  // ultimo caso `aplicarCandidatoUnicoDeDentista` (interpretar-e-aplicar.ts)
+  // reescreve o MESMO `dentista_id` logo depois. Hoje e inofensivo -- mesmo
+  // id, mesma acao `informar`, resultado identico, verificado. Fica
+  // registrado porque sao dois mecanismos escrevendo o mesmo campo no mesmo
+  // turno: se algum dia a acao divergir (`corrigir` vs `informar`), o
+  // segundo vence em silencio. Nao mexido aqui de proposito -- aquela funcao
+  // atende outros caminhos, e nao ha defeito real observado.
   const escolhaDoPaciente =
     candidatosDaIA !== null &&
     candidatosDaIA.length === 1 &&

@@ -100,7 +100,12 @@ test('UM candidato DIFERENTE do plano -> escolha do paciente prevalece', () => {
 });
 
 test('lista VAZIA (nomeou alguem que nao existe na clinica) -> o plano manda', () => {
-  // `[]` significa "falou de alguem que nao existe aqui", nunca uma escolha.
+  // `[]` significa "falou de alguem que nao existe aqui" -- nunca a escolha de
+  // um profissional que existe, entao nao derruba o plano.
+  //
+  // `[]` CHEGA ate aqui: `descartarListaVaziaSemMencao` so o converte em
+  // `null` quando o turno traz campo de agendamento. Sem esse campo, a lista
+  // vazia sobrevive -- e este teste cobre exatamente esse caminho.
   const r = aplicarDentistaDoTratamento(
     { procedimento_id: informar('cleaning') }, [], LIMPEZA, {}
   );
@@ -137,10 +142,10 @@ test('sem tratamentos no payload -> nao faz nada', () => {
   assert.equal(aplicarDentistaDoTratamento(alteracoes, null, [], {}).aplicou, false);
 });
 
-test('candidatos VAZIOS (nao nomeou ninguem) nao impedem a aplicacao', () => {
-  // `[]` significa "mencionou alguem inexistente" -- a guarda de lista vazia
-  // ja o converte em `null` num turno de agendamento. Aqui garantimos que
-  // `null` (o caso comum) deixa o dentista do painel valer.
+test('candidatos NULL (nao mencionou profissional) nao impedem a aplicacao', () => {
+  // `null` e o caso comum: o paciente nao falou de profissional nenhum.
+  // Distinto do `[]` do teste acima, que e "falou de alguem inexistente" --
+  // os dois deixam o dentista do painel valer, por motivos diferentes.
   const r = aplicarDentistaDoTratamento(
     { procedimento_id: informar('canal_premolar') }, null, TRATAMENTOS, {}
   );
