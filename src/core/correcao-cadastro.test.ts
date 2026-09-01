@@ -21,7 +21,10 @@ function entrada(parcial: Partial<EntradaCorrecaoCadastro> = {}): EntradaCorreca
     alteracoes: {} as AlteracoesDados,
     camposInvalidos: undefined,
     dados: {},
-    cadastroFicha: { nome: 'gabriel cappello', data_nascimento: '1973-08-02' },
+    // Ficha COMPLETA: e o estado em que uma correcao faz sentido. Campo
+    // ausente significa que o paciente esta completando o cadastro, nao
+    // corrigindo -- caso proprio, testado abaixo.
+    cadastroFicha: { nome: 'gabriel cappello', data_nascimento: '1973-08-02', email: 'velho@exemplo.com' },
     ...parcial,
   };
 }
@@ -77,31 +80,39 @@ test('CC-05 invalido tem PRECEDENCIA sobre valido no mesmo turno', () => {
   assert.equal(r.tipo, 'invalido');
 });
 
-test('CC-06 COM agendamento em andamento -> comportamento de hoje, inalterado', () => {
+// ── CORRIGE SEMPRE, em qualquer ponto da conversa ───────────────────────
+// Decisao do Gabriel (2026-09-01), depois do teste real que reprovou a versao
+// anterior: "a troca deve funcionar sempre. nao tem que ter um momento
+// especifico para poder entender uma msg."
+//
+// A versao anterior travava a correcao quando havia fluxo de agendamento em
+// andamento. Em producao isso reprovou: o paciente acabara de dar os dados do
+// cadastro (que ficam em `dados` depois da reserva) e pediu para trocar o ano
+// de nascimento -- a correcao nao disparou e ele ouviu "qual procedimento voce
+// esta buscando?" duas vezes.
+
+test('CC-06 COM agendamento em andamento -> AINDA ASSIM corrige', () => {
   const r = decidirCorrecaoCadastro(
     entrada({
       alteracoes: { data_nascimento: corrigir('1974-08-02') } as AlteracoesDados,
-      dados: { procedimento_id: 'restoration_2' },
+      dados: { procedimento_id: 'restoration_2', dentista_id: 'd1', horario_texto: '08:00' },
     })
   );
-  assert.deepEqual(r, { tipo: 'nao_se_aplica' }, 'a reserva ja persiste o cadastro nesse caminho');
+  assert.deepEqual(r, { tipo: 'corrigir', campos: ['data_nascimento'] });
 });
 
-// ── FURO REAL, achado na revisao antes do commit (2026-09-01) ───────────
-// A primeira versao olhava so `procedimento_id`. O paciente pode ter escolhido
-// dentista e data sem ainda ter dito o procedimento -- e uma correcao ali
-// sequestrava o agendamento em andamento.
-test('CC-06b FURO: dentista e data escolhidos, SEM procedimento_id -> nao intercepta', () => {
+test('CC-06b CASO REAL 19:38: cadastro recem-preenchido em `dados` nao bloqueia', () => {
+  // Estado EXATO da conversa apos a reserva, lido do banco de producao.
   const r = decidirCorrecaoCadastro(
     entrada({
-      alteracoes: { email: corrigir('novo@exemplo.com') } as AlteracoesDados,
-      dados: { dentista_id: 'd1', data_texto: 'amanha' },
+      alteracoes: { data_nascimento: corrigir('1974-08-02') } as AlteracoesDados,
+      dados: { cpf: '06113236722', nome: 'gabriel cappello', data_nascimento: '1973-08-02' },
     })
   );
-  assert.deepEqual(r, { tipo: 'nao_se_aplica' }, 'correcao nunca sequestra agendamento em andamento');
+  assert.deepEqual(r, { tipo: 'corrigir', campos: ['data_nascimento'] }, 'foi este caso que reprovou em producao');
 });
 
-test('CC-06c cada campo operacional, sozinho, ja indica fluxo em andamento', () => {
+test('CC-06c nenhum campo operacional bloqueia a correcao', () => {
   for (const campo of ['procedimento_id', 'dentista_id', 'data_texto', 'periodo', 'horario_texto', 'agendamento_id']) {
     const r = decidirCorrecaoCadastro(
       entrada({
@@ -109,17 +120,15 @@ test('CC-06c cada campo operacional, sozinho, ja indica fluxo em andamento', () 
         dados: { [campo]: 'valor-qualquer' },
       })
     );
-    assert.deepEqual(r, { tipo: 'nao_se_aplica' }, `campo ${campo} deveria bloquear a correcao`);
+    assert.deepEqual(r, { tipo: 'corrigir', campos: ['email'] }, `campo ${campo} nao pode bloquear`);
   }
 });
 
-test('CC-06d fluxo em andamento vence ate sobre campo INVALIDO', () => {
-  // O agendamento nao pode ser interrompido nem para avisar de dado invalido:
-  // o cadastro sera pedido dentro da propria reserva, com o mesmo aviso.
+test('CC-06d dado invalido tambem avisa durante o agendamento', () => {
   const r = decidirCorrecaoCadastro(
     entrada({ camposInvalidos: ['data_nascimento'], dados: { dentista_id: 'd1' } })
   );
-  assert.deepEqual(r, { tipo: 'nao_se_aplica' });
+  assert.deepEqual(r, { tipo: 'invalido', campos: ['data_nascimento'] });
 });
 
 test('CC-07 paciente NAO identificado -> comportamento de hoje, inalterado', () => {
@@ -160,14 +169,18 @@ test('valor vazio ou so espacos nunca vira correcao', () => {
   }
 });
 
-test('campo ausente na ficha -> informar tambem e correcao (nao havia valor)', () => {
+test('COMPLETAR nao e corrigir: campo ausente na ficha segue o fluxo normal', () => {
+  // Defeito real achado por teste (2026-09-01): a Iris pede "nome, CPF e data"
+  // durante a reserva, o paciente responde "nasci em 10/05/1985", e a correcao
+  // interceptava -- quebrando a reserva no mesmo turno. Preencher o que foi
+  // pedido nunca e pedido de troca.
   const r = decidirCorrecaoCadastro(
     entrada({
       alteracoes: { email: { acao: 'informar', valor: 'primeiro@exemplo.com' } } as AlteracoesDados,
       cadastroFicha: { nome: 'gabriel cappello' },
     })
   );
-  assert.deepEqual(r, { tipo: 'corrigir', campos: ['email'] });
+  assert.deepEqual(r, { tipo: 'nao_se_aplica' }, 'campo ausente = completando cadastro, nao corrigindo');
 });
 
 test('procedimento_id vazio nao conta como fluxo aberto', () => {
@@ -178,4 +191,27 @@ test('procedimento_id vazio nao conta como fluxo aberto', () => {
     })
   );
   assert.equal(r.tipo, 'corrigir');
+});
+
+// ── Mapeamento no contexto de horarios ─────────────────────────────────
+// `derivarAcaoContextoHorarios` e um switch EXAUSTIVO sem `default`: uma
+// decisao nova nao listada devolve `undefined` e quebra
+// `gravarContextoHorarios` em runtime -- foi o que aconteceu no primeiro
+// commit desta frente, achado por um teste de reserva que passou a falhar.
+import { derivarAcaoContextoHorarios } from './contexto-horarios.ts';
+
+test('as tres decisoes novas PRESERVAM o contexto -- nunca undefined', () => {
+  const decisoes = [
+    { tipo: 'cadastro_atualizado', campos_atualizados: ['data_nascimento'] },
+    { tipo: 'correcao_cadastro_invalida', campos_invalidos: ['data_nascimento'] },
+    { tipo: 'correcao_cadastro_falhou' },
+  ] as const;
+
+  for (const decisao of decisoes) {
+    const acao = derivarAcaoContextoHorarios(decisao as never);
+    assert.ok(acao !== undefined, `${decisao.tipo} nao pode devolver undefined`);
+    // Preservar: corrigir um dado no meio do agendamento nunca pode apagar a
+    // proposta de horario pendente.
+    assert.equal(acao.tipo, 'preservar', decisao.tipo);
+  }
 });

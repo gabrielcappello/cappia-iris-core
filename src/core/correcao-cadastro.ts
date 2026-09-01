@@ -52,35 +52,6 @@ export const CAMPOS_CORRIGIVEIS_FORA_DO_AGENDAMENTO: readonly CampoCadastralInte
   'email',
 ];
 
-/**
- * Campos cuja presenca em `dados` significa "ha um fluxo de agendamento em
- * andamento" -- e portanto a correcao NAO intercepta a conversa.
- *
- * FURO REAL corrigido em 2026-09-01, antes do commit: a primeira versao olhava
- * SO `procedimento_id`. Mas o paciente pode ter escolhido dentista e data e
- * ainda nao ter dito o procedimento ("quero com a Dra. X amanha"); se ele
- * corrigisse o e-mail no turno seguinte, a correcao sequestrava o fluxo.
- *
- * A lista e mais ampla que o minimo necessario DE PROPOSITO: ela nao depende
- * de ter mapeado corretamente todos os caminhos que produzem cada estado. Um
- * campo operacional presente e sinal suficiente de que a conversa esta no meio
- * de outra coisa -- a correcao pode esperar o proximo turno, o agendamento
- * nao.
- *
- * `aguardando_resposta` (pergunta de cadastro pendente) NAO entra: uma
- * pergunta dessas so existe depois de `procedimento_id`, que ja esta na lista.
- * Proteger duas vezes o mesmo caminho seria a camada sem bloqueio comprovado
- * que `AGENTS.md` manda adiar.
- */
-const CAMPOS_DE_FLUXO_EM_ANDAMENTO: readonly string[] = [
-  'procedimento_id',
-  'dentista_id',
-  'data_texto',
-  'periodo',
-  'horario_texto',
-  'agendamento_id',
-];
-
 export interface EntradaCorrecaoCadastro {
   /** `null` quando nao ha cadastro local para este telefone nesta clinica. */
   pacienteId: string | null;
@@ -107,9 +78,6 @@ export type ResultadoCorrecaoCadastro =
  *
  * Nao se aplica quando:
  *   - o paciente nao esta identificado (sem ficha nao ha o que corrigir);
- *   - ha fluxo de agendamento em andamento -- qualquer campo de
- *     CAMPOS_DE_FLUXO_EM_ANDAMENTO presente na conversa; ali o caminho atual
- *     ja persiste o cadastro dentro da reserva;
  *   - o turno nao trouxe `data_nascimento`/`email`, nem como alteracao valida
  *     nem como campo invalido;
  *   - o valor informado e IGUAL ao que ja esta na ficha (nao e correcao:
@@ -123,17 +91,49 @@ export type ResultadoCorrecaoCadastro =
 export function decidirCorrecaoCadastro(entrada: EntradaCorrecaoCadastro): ResultadoCorrecaoCadastro {
   if (entrada.pacienteId === null) return { tipo: 'nao_se_aplica' };
 
-  // FLUXO DE AGENDAMENTO EM ANDAMENTO -- nada muda.
+  // REMOVIDA em 2026-09-01, no mesmo dia em que foi criada, por teste real
+  // (WhatsApp, Cleardent): a guarda de "fluxo em andamento" -- primeiro so
+  // `procedimento_id`, depois a lista de campos operacionais.
   //
-  // QUALQUER campo operacional presente basta (ver
-  // CAMPOS_DE_FLUXO_EM_ANDAMENTO): o paciente pode ter escolhido dentista e
-  // data sem ainda ter dito o procedimento, e uma correcao ali sequestraria o
-  // agendamento em vez de esperar o proximo turno.
-  const emAndamento = CAMPOS_DE_FLUXO_EM_ANDAMENTO.some((campo) => {
-    const valor = entrada.dados[campo];
-    return typeof valor === 'string' && valor.trim() !== '';
+  // O QUE ELA QUEBROU: o paciente agendou, informou nome/CPF/data no cadastro
+  // e logo em seguida disse "passei o ano errado, minha data certa e
+  // 02-08-1974". A IA entendeu perfeitamente (`data_nascimento:corrigiu`, dois
+  // turnos seguidos) -- e a correcao NAO disparou, porque a conversa ainda
+  // guardava `nome`/`cpf`/`data_nascimento` do cadastro recem-preenchido.
+  // Resultado para o paciente: "Qual procedimento voce esta buscando?", duas
+  // vezes, a uma pergunta que nada tinha a ver com procedimento.
+  //
+  // A DECISAO (Gabriel, 2026-09-01): "a troca deve funcionar sempre. nao tem
+  // que ter um momento especifico para poder entender uma msg." Corrigir um
+  // dado cadastral e sempre legitimo -- em qualquer ponto da conversa, com ou
+  // sem agendamento em andamento. O paciente nao deve precisar terminar de
+  // marcar horario para poder consertar o proprio ano de nascimento.
+  //
+  // Nao ha risco de "sequestrar" o agendamento: os campos operacionais
+  // (procedimento, dentista, data, horario) continuam intactos em `dados`, e
+  // o proximo turno retoma o fluxo exatamente de onde parou. A correcao grava
+  // o dado e a conversa segue.
+  //
+  // A lista de campos operacionais que a sustentava foi removida junto.
+
+  // COMPLETAR NAO E CORRIGIR (2026-09-01, achado por teste que quebrou).
+  //
+  // A Iris pede "nome, CPF e data de nascimento" durante a reserva e o
+  // paciente responde "nasci em 10/05/1985". Isso e ele PREENCHENDO o que ela
+  // pediu, nunca um pedido de troca -- e a reserva tem que continuar no mesmo
+  // turno, como sempre fez.
+  //
+  // A distincao e ESTRUTURAL, nunca leitura do texto: se o campo ainda falta
+  // na ficha, ele esta completando; se ja existe e o valor novo e diferente,
+  // ele esta corrigindo. O laco abaixo ja exige "diferente do que esta na
+  // ficha" -- o que faltava era nao tratar campo AUSENTE como correcao.
+  const completandoCadastro = CAMPOS_CORRIGIVEIS_FORA_DO_AGENDAMENTO.some((campo) => {
+    const alteracao = entrada.alteracoes[campo];
+    if (alteracao === undefined || alteracao.acao === 'remover') return false;
+    const naFicha = entrada.cadastroFicha[campo];
+    return naFicha === undefined || naFicha.trim() === '';
   });
-  if (emAndamento) return { tipo: 'nao_se_aplica' };
+  if (completandoCadastro) return { tipo: 'nao_se_aplica' };
 
   // GATILHO 2 (o nao obvio): o campo foi descartado antes de chegar aqui.
   const invalidos = (entrada.camposInvalidos ?? []).filter((campo) =>

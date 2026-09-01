@@ -183,6 +183,22 @@ export function derivarAcaoContextoHorarios(decisao: DecisaoOrquestrador): AcaoC
     case 'cadastro_necessario':
       return { tipo: 'preservar' };
 
+    // CORRECAO DE CADASTRO (2026-09-01,
+    // specs/correcao-cadastro-conversacional-v1.md): PRESERVAR, nunca limpar.
+    //
+    // A correcao pode acontecer no meio de um agendamento -- e a decisao do
+    // Gabriel e que ela funcione em QUALQUER momento. Se limpasse o contexto,
+    // corrigir a data de nascimento apagaria a proposta de horario pendente e
+    // o paciente teria que recomecar. Ele corrige o dado e a conversa segue
+    // exatamente de onde parou.
+    //
+    // Estes tres casos faltavam no switch (que e exaustivo, sem `default`), e
+    // a ausencia devolvia `undefined` -- quebrando `gravarContextoHorarios`.
+    case 'cadastro_atualizado':
+    case 'correcao_cadastro_invalida':
+    case 'correcao_cadastro_falhou':
+      return { tipo: 'preservar' };
+
     // AGUARDANDO_PROCEDIMENTO (2026-08-30): quando a Iris OFERECE a
     // Consulta/Avaliacao aqui, a oferta precisa ser gravada -- mesma acao e
     // mesmo motivo de `sem_dentista_disponivel` acima.
