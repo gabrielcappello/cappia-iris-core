@@ -51,6 +51,63 @@ test('o PACIENTE nomeou alguem -> a escolha dele prevalece, mesmo diferente do p
   assert.equal(r.alteracoes.dentista_id, undefined);
 });
 
+// ── Defeito real de 2026-09-01 (WhatsApp, clinica Cleardent) ────────────
+// Plano: "Limpeza dental (profilaxia) -- com Dr. Diego Ramoz". O paciente
+// respondeu por audio "pode ser pra hoje", SEM citar profissional. Ele tinha
+// agendamento com dois naquele dia (Ramoz 14:10, Perez 16:00), entao a IA
+// devolveu OS DOIS em `dentistas_candidatos` (log: `ia_candidatos=2`), sem
+// escolher. A guarda antiga leu isso como escolha do paciente, descartou o
+// plano, e o agendamento saiu com o profissional errado.
+const PEREZ = '9c693b86-5113-41d4-b97d-be52a579ae8c';
+
+const LIMPEZA: TratamentoNoPayload[] = [
+  { procedimento_id: 'cleaning', nome_pt: 'Limpeza dental (profilaxia)', dente: '24', dentista_id: DIEGO, assunto_atual: true },
+];
+
+test('CASO REAL 01/09: DOIS candidatos e duvida da IA, nunca escolha -> o plano manda', () => {
+  const r = aplicarDentistaDoTratamento(
+    { procedimento_id: informar('cleaning'), data_texto: informar('hoje') },
+    [DIEGO, PEREZ],
+    LIMPEZA,
+    {}
+  );
+  assert.equal(r.aplicou, true, 'duvida da IA nao pode derrubar a definicao clinica da clinica');
+  assert.deepEqual(r.alteracoes.dentista_id, { acao: 'informar', valor: DIEGO });
+});
+
+test('tres ou mais candidatos tambem sao duvida -> o plano manda', () => {
+  const r = aplicarDentistaDoTratamento(
+    { procedimento_id: informar('cleaning') }, [DIEGO, PABLO, PEREZ], LIMPEZA, {}
+  );
+  assert.equal(r.aplicou, true);
+  assert.deepEqual(r.alteracoes.dentista_id, { acao: 'informar', valor: DIEGO });
+});
+
+test('UM candidato IGUAL ao do plano -> concordam, segue o plano', () => {
+  const r = aplicarDentistaDoTratamento(
+    { procedimento_id: informar('cleaning') }, [DIEGO], LIMPEZA, {}
+  );
+  assert.equal(r.aplicou, true);
+  assert.deepEqual(r.alteracoes.dentista_id, { acao: 'informar', valor: DIEGO });
+});
+
+test('UM candidato DIFERENTE do plano -> escolha do paciente prevalece', () => {
+  const r = aplicarDentistaDoTratamento(
+    { procedimento_id: informar('cleaning') }, [PEREZ], LIMPEZA, {}
+  );
+  assert.equal(r.aplicou, false, 'pedido explicito do paciente nunca e sobrescrito');
+  assert.equal(r.alteracoes.dentista_id, undefined);
+});
+
+test('lista VAZIA (nomeou alguem que nao existe na clinica) -> o plano manda', () => {
+  // `[]` significa "falou de alguem que nao existe aqui", nunca uma escolha.
+  const r = aplicarDentistaDoTratamento(
+    { procedimento_id: informar('cleaning') }, [], LIMPEZA, {}
+  );
+  assert.equal(r.aplicou, true);
+  assert.deepEqual(r.alteracoes.dentista_id, { acao: 'informar', valor: DIEGO });
+});
+
 test('conversa que JA tem dentista definido nao e sobrescrita', () => {
   const r = aplicarDentistaDoTratamento(
     { procedimento_id: informar('canal_premolar') }, null, TRATAMENTOS,
