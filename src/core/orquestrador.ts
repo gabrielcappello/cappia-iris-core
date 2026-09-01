@@ -1600,6 +1600,20 @@ async function decidir(
   );
   if ('decisaoAntecipada' in resolucaoDentista) return { decisao: resolucaoDentista.decisaoAntecipada };
 
+  // PONTO CEGO COBERTO (2026-09-01). Defeito real: o estado da conversa
+  // guardava Pablo (`dentista_do_plano_aplicado=1`), e a consulta de agenda
+  // saiu para o Perez no MESMO turno -- visto nos edge_logs
+  // (`dentista_id=eq.9c693b86...`). O caminho lido no codigo leva a Pablo; a
+  // execucao real foi para outro. Faltava enxergar o valor efetivo aqui.
+  //
+  // So rotulos estruturais: os tres candidatos a origem do dentista e o que
+  // de fato seguiu para `carregarEntradaDisponibilidade`. Sem PII -- ids de
+  // dentista sao identificadores de catalogo da clinica, nunca dado pessoal
+  // de paciente.
+  console.log(
+    `dentista_efetivo analise=${analise.dentistaId ?? '-'} estado=${dados.dentista_id ?? '-'} resolvido=${resolucaoDentista.dentistaId} procedimento=${resolucaoDentista.procedimentoIdEfetivo}`
+  );
+
   // Do ponto de vista de duracao, disponibilidade e reserva, o procedimento
   // oficial deste turno e o EFETIVO -- que difere do pedido somente quando
   // cedeu lugar a Consulta/Avaliacao para preservar o dentista escolhido.
