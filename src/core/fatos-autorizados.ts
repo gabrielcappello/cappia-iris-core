@@ -77,7 +77,9 @@ export type ObjetivoResposta =
   | 'informar_sem_agendamento_para_cancelar' // 2026-08-11 -- specs/cancelamento-conversacional-v1.md secao 2.
   | 'escolher_entre_agendamentos_cancelamento' // 2026-08-11 -- idem, secao 5.
   | 'pedir_confirmacao_cancelamento' // 2026-08-11 -- idem, secao 4.
-  | 'informar_cancelamento_criado'; // 2026-08-11 -- idem, secao 7.
+  | 'informar_cancelamento_criado' // 2026-08-11 -- idem, secao 7.
+  | 'informar_cadastro_atualizado' // 2026-09-01 -- specs/correcao-cadastro-conversacional-v1.md.
+  | 'informar_correcao_cadastro_invalida'; // 2026-09-01 -- idem, valor rejeitado.
 
 export interface FatosAutorizados {
   objetivo: ObjetivoResposta;
@@ -193,6 +195,15 @@ export interface FatosAutorizados {
    * campo.
    */
   dados_invalidos?: CampoFaltante[];
+  /**
+   * Campos cadastrais que o Core acabou de ATUALIZAR na ficha, fora de um
+   * fluxo de agendamento (2026-09-01,
+   * specs/correcao-cadastro-conversacional-v1.md).
+   *
+   * So aparece quando a RPC confirmou a gravacao. E fato, nunca frase: a
+   * redatora escolhe como dizer que o dado foi corrigido.
+   */
+  campos_atualizados?: CampoFaltante[];
   /**
    * Valor cru do CPF que o paciente informou NESTE turno e o Core rejeitou
    * (2026-08-31, decisao do Gabriel).
@@ -594,6 +605,9 @@ function derivarPorDecisao(decisao: DecisaoOrquestrador, dataHoje: string): Fato
     case 'duracao_nao_configurada':
     case 'erro_configuracao_duracao':
     case 'reserva_falhou':
+    // 2026-09-01: a gravacao da correcao nao foi confirmada pelo banco.
+    // Falha tecnica honesta -- nunca "atualizei".
+    case 'correcao_cadastro_falhou':
       return { objetivo: 'informar_falha_tecnica', falha_tecnica: true };
 
     case 'saudacao':
@@ -698,6 +712,25 @@ function derivarPorDecisao(decisao: DecisaoOrquestrador, dataHoje: string): Fato
       return {
         objetivo: 'pedir_confirmacao',
         proposta_pendente: { data: formatarDataParaRedatora(decisao.opcao.data, dataHoje), horario: formatarMinutos(decisao.opcao.inicio_min) },
+      };
+
+    // 2026-09-01 -- specs/correcao-cadastro-conversacional-v1.md.
+    // Fato, nunca frase pronta: a redatora diz com as proprias palavras que o
+    // dado foi corrigido. `campos_atualizados` so chega aqui depois de a RPC
+    // confirmar a gravacao.
+    case 'cadastro_atualizado':
+      return {
+        objetivo: 'informar_cadastro_atualizado',
+        campos_atualizados: [...decisao.campos_atualizados],
+      };
+
+    // O paciente tentou corrigir e o valor nao passou na validacao. NADA foi
+    // gravado -- e a redatora precisa dizer qual campo, para ele nao reenviar
+    // o mesmo dado errado (mesma licao de `dados_invalidos`, 2026-08-16).
+    case 'correcao_cadastro_invalida':
+      return {
+        objetivo: 'informar_correcao_cadastro_invalida',
+        dados_invalidos: [...decisao.campos_invalidos],
       };
 
     case 'cadastro_necessario':

@@ -13,6 +13,9 @@ import { cancelarAgendamento } from './cancelar-agendamento.ts';
 import { persistirPaciente } from './persistir-paciente.ts';
 import { trocarTelefonePaciente } from './trocar-telefone-paciente.ts';
 import { calcularCadastroFaltante, comporVisaoEfetivaCadastro } from './cadastro-paciente.ts';
+import { decidirCorrecaoCadastro } from './correcao-cadastro.ts';
+import type { AlteracoesDados } from './tipos.ts';
+import type { CampoCadastralInterpretacao } from './interpretacao-tipos.ts';
 import { derivarAcaoContextoHorarios, gravarContextoHorarios } from './contexto-horarios.ts';
 import { declararPerguntaPendente } from './declarar-pergunta-pendente.ts';
 import { historicoValidoParaEnvio } from './historico-conversa.ts';
@@ -812,7 +815,12 @@ export async function processarMensagem(
     entrada.instante_atual,
     interpretacao.dentistas_candidatos,
     identificacao.paciente.cadastro,
-    interpretacao.resposta_troca_telefone
+    interpretacao.resposta_troca_telefone,
+    // 2026-09-01: correcao de cadastro fora do agendamento precisa ver TANTO
+    // a alteracao aplicada quanto o campo que a validacao descartou -- um
+    // valor invalido nunca chega em `alteracoes`.
+    interpretacao.alteracoes_aplicaveis,
+    interpretacao.campos_cadastrais_invalidos
   );
 
   return await finalizar(resultadoDecisao.decisao, resultadoDecisao.substituicao);
@@ -912,6 +920,62 @@ const CAMPOS_NOVO_AGENDAMENTO: readonly CampoDadosConversa[] = [
  * `dados.intencao` na desistencia garante que uma negacao qualquer, sem
  * relacao com remarcacao/cancelamento, nunca dispara aquela limpeza.
  */
+/**
+ * Grava a correcao cadastral pedida FORA de um fluxo de agendamento
+ * (2026-09-01, specs/correcao-cadastro-conversacional-v1.md).
+ *
+ * A decisao devolvida so afirma sucesso quando a RPC CONFIRMOU a gravacao --
+ * e o ponto que fecha o defeito original, em que a Iris disse "ficou
+ * registrada" sobre um dado que continuou o antigo no banco. Qualquer outro
+ * desfecho da RPC vira falha tecnica, nunca "atualizei".
+ *
+ * `persistirPaciente` exige `nome` em TODA chamada, inclusive numa correcao
+ * que so toca o e-mail. Na pratica a ficha sempre tem nome (a reserva o
+ * exige), mas uma ficha sem nome faria a correcao ESTOURAR em vez de
+ * responder -- por isso a checagem explicita aqui (cenario CC-05b).
+ */
+async function aplicarCorrecaoCadastro(
+  clienteRpc: ClienteRpc,
+  clinicaId: string,
+  telefoneNormalizado: string,
+  dados: Record<string, string | undefined>,
+  cadastroFicha: CadastroPaciente,
+  campos: readonly CampoCadastralInterpretacao[]
+): Promise<DecisaoOrquestrador> {
+  const visaoEfetiva = comporVisaoEfetivaCadastro(cadastroFicha, dados);
+
+  // Sem nome na ficha a RPC lancaria `EntradaInvalidaError` -- uma excecao
+  // crua, que nao e situacao do paciente. Vira falha tecnica declarada, pelo
+  // mesmo caminho que as demais falhas ja usam (`correcao_cadastro_falhou`).
+  const nome = visaoEfetiva.nome;
+  if (typeof nome !== 'string' || nome.trim() === '') {
+    return { tipo: 'correcao_cadastro_falhou' };
+  }
+
+  const persistencia = await persistirPaciente(clienteRpc, {
+    clinica_id: clinicaId,
+    telefone_normalizado: telefoneNormalizado,
+    nome,
+    // SOMENTE os campos desta correcao. Ausente = a RPC nao altera o valor
+    // gravado, entao um turno que corrige o e-mail nunca toca a data.
+    ...(campos.includes('data_nascimento') && visaoEfetiva.data_nascimento !== undefined
+      ? { data_nascimento: visaoEfetiva.data_nascimento }
+      : {}),
+    ...(campos.includes('email') && visaoEfetiva.email !== undefined
+      ? { email: visaoEfetiva.email }
+      : {}),
+  });
+
+  // CC-09: qualquer desfecho que nao seja `persistido` NUNCA pode virar
+  // "atualizei". `cpf_ja_cadastrado` e inalcancavel aqui (esta v1 nunca envia
+  // CPF), mas e tratado por exaustividade em vez de presumido impossivel.
+  if (persistencia.tipo !== 'persistido') {
+    return { tipo: 'correcao_cadastro_falhou' };
+  }
+
+  return { tipo: 'cadastro_atualizado', campos_atualizados: campos };
+}
+
 function camposParaLimparAoConcluir(
   decisao: DecisaoOrquestrador,
   dados: Record<string, string | undefined>
@@ -1516,8 +1580,35 @@ async function decidir(
   instanteAtual: InstanteAtual,
   dentistasCandidatos: string[] | null,
   cadastroFicha: CadastroPaciente,
-  respostaTrocaTelefone: RespostaTrocaTelefone | null
+  respostaTrocaTelefone: RespostaTrocaTelefone | null,
+  alteracoesDoTurno: AlteracoesDados,
+  camposCadastraisInvalidos: readonly CampoCadastralInterpretacao[] | undefined
 ): Promise<{ decisao: DecisaoOrquestrador; substituicao?: { dentista_nome_exibido: string } }> {
+  // CORRECAO DE CADASTRO FORA DO AGENDAMENTO (2026-09-01,
+  // specs/correcao-cadastro-conversacional-v1.md).
+  //
+  // Vem ANTES de tudo porque o gatilho e justamente a AUSENCIA de fluxo de
+  // agendamento: com `procedimento_id` na conversa, `decidirCorrecaoCadastro`
+  // devolve `nao_se_aplica` e nada aqui muda (cenario CC-06). Sem ele, o
+  // caminho de hoje cairia em `aguardando_procedimento` e perguntaria "qual
+  // procedimento?" a quem so queria corrigir o ano de nascimento.
+  const correcao = decidirCorrecaoCadastro({
+    pacienteId,
+    alteracoes: alteracoesDoTurno,
+    camposInvalidos: camposCadastraisInvalidos,
+    dados,
+    cadastroFicha,
+  });
+
+  if (correcao.tipo === 'invalido') {
+    // NADA e gravado. A redatora diz qual campo nao foi aceito.
+    return { decisao: { tipo: 'correcao_cadastro_invalida', campos_invalidos: correcao.campos } };
+  }
+
+  if (correcao.tipo === 'corrigir') {
+    return { decisao: await aplicarCorrecaoCadastro(clienteRpc, clinicaId, telefoneNormalizado, dados, cadastroFicha, correcao.campos) };
+  }
+
   // INTEGRIDADE, NUNCA INTERPRETACAO (specs/procedimento-semantico-v1.md
   // secao 4). Quem entendeu o pedido do paciente foi a IA, que devolveu um
   // `procedimento_id` canonico; aqui o Core so confere tres coisas -- o ID

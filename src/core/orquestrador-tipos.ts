@@ -250,6 +250,31 @@ export type DecisaoOrquestrador =
   // entao nunca inclui algo que ja se sabe. O Core autoriza QUAIS campos
   // faltam; a redatora e quem formula a pergunta -- nao existe sequencia
   // rigida de textos.
+  // CORRECAO DE CADASTRO FORA DO AGENDAMENTO (2026-09-01,
+  // specs/correcao-cadastro-conversacional-v1.md).
+  //
+  // Defeito real que isto corrige: o paciente pediu para corrigir o ano de
+  // nascimento sem ter agendamento em andamento; a Iris respondeu que "ficou
+  // registrada" e a data no banco continuou a antiga. `persistirPaciente` so
+  // era chamada dentro da reserva, entao o dado corrigido nao tinha destino.
+  //
+  // `campos_atualizados` so lista o que a RPC CONFIRMOU ter gravado -- esta
+  // decisao nunca e produzida a partir da intencao de gravar, so do retorno
+  // do banco. E o que impede a Iris de afirmar sucesso sem sucesso.
+  | {
+      tipo: 'cadastro_atualizado';
+      campos_atualizados: readonly CampoCadastralInterpretacao[];
+    }
+  // O paciente tentou corrigir um dado e o valor nao passou na validacao.
+  // Nada e gravado; a redatora pede de novo, dizendo QUAL campo.
+  | {
+      tipo: 'correcao_cadastro_invalida';
+      campos_invalidos: readonly CampoCadastralInterpretacao[];
+    }
+  // A gravacao da correcao NAO foi confirmada pelo banco. Existe para que a
+  // Iris jamais diga "atualizei" sem sucesso -- o defeito que originou esta
+  // spec foi exatamente uma afirmacao de sucesso sem gravacao.
+  | { tipo: 'correcao_cadastro_falhou' }
   | {
       tipo: 'cadastro_necessario';
       campos_faltantes: readonly CampoCadastralInterpretacao[];
