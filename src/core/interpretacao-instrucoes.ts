@@ -10,6 +10,33 @@ import { NATUREZAS_MENSAGEM_PERMITIDAS, TIPOS_EVENTO_CANDIDATO_PERMITIDOS } from
 // registrado. Qualquer mudanca de comportamento esperado da IA deve ser
 // feita aqui, nunca duplicada em outro arquivo.
 
+// ── A FRASE "Responda estritamente no formato do schema fornecido..." ────
+//
+// NAO EDITE ESSA FRASE ISOLADAMENTE. Ela parece contradizer o
+// SCHEMA_SAIDA_INTERPRETACAO logo abaixo (que exige QUATRO campos raiz,
+// enquanto a frase cita dois) -- e a contradicao e APARENTE, nao real:
+//
+//   1. FORMATO INTERNO do Core: `alteracoes` e um objeto indexado pelo nome
+//      do campo. E o que esta frase e o schema deste arquivo descrevem.
+//   2. FORMATO ENVIADO A IA: `cliente-modelo-openai.ts` LOCALIZA esta frase
+//      exata e a SUBSTITUI (`construirInstrucoesPortatil`) por outra, que
+//      descreve `alteracoes` como lista de { campo, acao, valor }. A IA
+//      nunca ve o texto que esta aqui.
+//
+// A substituicao e por correspondencia textual EXATA e exige a frase
+// presente UMA unica vez: o adaptador aborta antes de qualquer chamada se
+// achar zero ou duas. Altera-la, duplica-la ou remove-la sem atualizar
+// `cliente-modelo-openai.ts` quebra a montagem do prompt inteiro.
+//
+// Verificado na pratica em 2026-09-02: uma tentativa de "corrigir" a frase
+// para casar com o schema deste arquivo derrubou 112 testes de uma vez, com
+// mensagens que nao apontavam para a causa. O teste
+// `interpretacao-instrucoes-frase-estrutural.test.ts` existe para que a
+// proxima tentativa falhe com uma mensagem que explica o motivo.
+//
+// Antes de comparar prompt com schema, rastreie o prompt EFETIVAMENTE
+// enviado -- substituicoes, adaptadores e schemas por camada.
+
 export const INSTRUCOES_EXTRATOR = `
 Voce interpreta uma janela de mensagens de um paciente em uma clinica odontologica e produz somente as alteracoes estruturadas finais a aplicar ao cadastro em andamento da conversa.
 
