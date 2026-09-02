@@ -24,6 +24,25 @@
 // horarios do Dr. Diego Perez. `6181c2c` corrigiu a CONSEQUENCIA (dois
 // candidatos deixaram de derrubar o plano); este arquivo cobre a CAUSA.
 //
+// ── PENDENTE: TESTE REAL POR WHATSAPP, antes de considerar fechado ──────
+// Estes testes provam o mecanismo, nao a conversa. O deploy foi
+// deliberadamente adiado: e mudanca no contrato da interpretadora, e quem
+// valida tom e fluxo e uma conversa real.
+//
+// Cenario: paciente COM agendamento marcado pede um procedimento novo sem
+// mencionar nenhum profissional.
+//
+// Criterios de aceite (os tres precisam valer juntos):
+//   1. a Iris NAO pergunta com qual dentista ele quer -- a pergunta e
+//      desnecessaria quando o Core ja sabe deduzir;
+//   2. o profissional aplicado e o correto (o do plano, do agendamento ou do
+//      historico, conforme a regra do Core) -- verificavel no agendamento
+//      criado e no log `dentista_efetivo`;
+//   3. um profissional DIFERENTE so aparece quando o paciente o mencionar ou
+//      escolher explicitamente.
+//
+// Estado no momento deste commit: Edge Function na v106, SEM esta correcao.
+
 // Estes testes exercitam os mecanismos do Core diretamente: eles ja se
 // comportam corretamente quando recebem `null`. A correcao foi so na
 // instrucao -- nenhuma linha de Core mudou.
