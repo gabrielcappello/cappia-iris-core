@@ -238,7 +238,14 @@ test('DOMINGO: nenhuma consulta de disponibilidade, nenhuma RPC, nenhuma reserva
   );
 
   // Regra 4 do pedido: nao procurar horarios antes de procedimento e dentista.
-  assert.deepEqual(rpc.chamadas, [], 'nenhuma RPC pode ser chamada -- nem horarios, nem reserva');
+  //
+  // ATUALIZADO em 2026-09-01: `aguardando_procedimento` passou a receber o
+  // plano de tratamento, entao `iris_nova_tratamentos_aprovados` pode ser
+  // chamada aqui -- e leitura, nunca efeito. O que este teste protege segue
+  // intacto e agora esta asserido explicitamente: nenhuma consulta de
+  // HORARIOS e nenhuma RESERVA antes de procedimento e dentista.
+  const proibidas = rpc.chamadas.filter((c) => c.nome !== 'iris_nova_tratamentos_aprovados');
+  assert.deepEqual(proibidas, [], 'nenhuma RPC de horarios ou reserva pode ser chamada');
   assert.equal(tabelas.agendamentos.length, 0, 'nenhuma reserva pode ser criada');
   assert.equal(banco.estatisticas.chamadasSelect.bloqueios ?? 0, 0, 'bloqueios so sao lidos ao montar disponibilidade');
 });
@@ -482,4 +489,56 @@ test('FATOS: dia util nao manda motivo de fechamento nem data de referencia', ()
     ['procedimento'],
     'sem fechamento a data segue valida -- pedi-la de novo faria o paciente repetir o que ja disse'
   );
+});
+
+// ── Plano de tratamento em `aguardando_procedimento` (2026-09-01) ────────
+//
+// O CASO REAL: quem ja fez avaliacao tem um plano com os procedimentos que o
+// dentista apontou. Se essa pessoa abre a conversa com "quero um turno para
+// quinta" -- que NAO e saudacao --, ate 2026-09-01 o plano nao chegava a
+// redatora: a lista so ia nas tres decisoes conversacionais. A Iris perguntava
+// qual atendimento ele queria justamente quando ele voltava para agendar o que
+// o dentista ja tinha indicado.
+//
+// TESTE ISOLADO: com a lista antiga (so as tres conversacionais) este teste
+// FALHA -- e o unico que prova este mecanismo.
+test('PLANO DE TRATAMENTO chega em aguardando_procedimento, nao so na saudacao', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  montarCenario(tabelas);
+
+  const rpc = new ClienteRpcFalso({
+    iris_nova_tratamentos_aprovados: {
+      data: [
+        {
+          descricao: 'Restauração / Cárie (2+ faces)',
+          dente: '36',
+          procedimento_id: 'restoration_2',
+          para_agendar: true,
+          avisado: true,
+          observacao_id: crypto.randomUUID(),
+          dentista_id: null,
+          dentista_nome: null,
+          avisado_em: null,
+          dentista_e_padrao: false,
+        },
+      ],
+      error: null,
+    },
+  });
+
+  const resultado = await processarMensagem(
+    clienteModeloPedeData('quinta feira'),
+    new ClienteFalso(tabelas),
+    rpc,
+    // QUINTA-FEIRA, dia util: o desfecho e `aguardando_procedimento` pela
+    // falta do procedimento, nunca por ser domingo.
+    entrada('quero um turno para quinta feira', { data: '2026-09-03', minuto_min: 9 * 60 }),
+  );
+
+  assert.equal(resultado.decisao.tipo, 'aguardando_procedimento');
+  assert.ok(
+    resultado.tratamentos_aprovados !== undefined && resultado.tratamentos_aprovados.length === 1,
+    'a redatora precisa receber o plano para nao perguntar o que o dentista ja apontou',
+  );
+  assert.equal(resultado.tratamentos_aprovados?.[0]?.procedimento_id, 'restoration_2');
 });

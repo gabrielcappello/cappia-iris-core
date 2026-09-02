@@ -912,7 +912,12 @@ test('PAR A/B: a MESMA frase so cancela quando intencao=cancelamento esta presen
       rpc,
       entrada('sim')
     );
-    return { decisao: resultado.decisao, chamadas: rpc.chamadas.length };
+    // So as chamadas que EXECUTAM algo. O plano de tratamento
+    // (`iris_nova_tratamentos_aprovados`) passou a ser lido em mais decisoes
+    // em 2026-09-01 e e leitura pura -- contá-lo aqui mediria o instrumento,
+    // nao o mecanismo que este par A/B existe para provar.
+    const executivas = rpc.chamadas.filter((c) => c.nome !== 'iris_nova_tratamentos_aprovados');
+    return { decisao: resultado.decisao, chamadas: executivas.length };
   }
 
   const comIntencao = await rodar({ intencao: 'cancelamento', confirmacao: 'sim' });

@@ -494,8 +494,27 @@ export async function processarMensagem(
     // daquele tratamento. Por isso, nas decisoes conversacionais, fazemos a
     // leitura mesmo sem historico. Quando a interpretadora ja fez a leitura,
     // reaproveitamos o resultado -- nunca duas consultas no mesmo turno.
+    // EM TODO TURNO, para paciente identificado (2026-09-01, decisao do
+    // Gabriel). Ate aqui a lista so chegava nas tres decisoes conversacionais
+    // (`DECISOES_COM_CONTEXTO_DE_AGENDAMENTO`), entao quem ja tinha plano e
+    // abria a conversa direto com "quero um turno para quinta" -- que nao e
+    // saudacao -- passava batido: a redatora nao sabia que existiam
+    // procedimentos aprovados esperando, e perguntava qual atendimento ele
+    // queria. Justamente o momento em que o paciente VOLTA para agendar o que
+    // o dentista indicou.
+    //
+    // Custo: nenhuma consulta a mais na maioria dos turnos -- a busca da
+    // interpretadora e reaproveitada (`??` abaixo). Ela so nao acontece no
+    // primeiro turno de uma conversa (sem historico), e e exatamente ali que
+    // esta lista mais importa.
+    //
+    // NAO e em TODA decisao, e a diferenca importa: cancelamento, remarcacao,
+    // desistencia, erros de configuracao e desfechos ja executados nao ganham
+    // nada com o plano -- e buscar ali quebraria a garantia, coberta por
+    // teste, de que esses caminhos nao tocam o banco ("quero cancelar" sem
+    // agendamento nenhum nao deve gerar consulta).
     let tratamentosParaRedatora: readonly TratamentoAprovado[] | undefined;
-    if (DECISOES_COM_CONTEXTO_DE_AGENDAMENTO.includes(decisao.tipo) && identificacao.paciente.id !== null) {
+    if (DECISOES_COM_PLANO_DE_TRATAMENTO.includes(decisao.tipo) && identificacao.paciente.id !== null) {
       tratamentosParaRedatora =
         tratamentosParaInterpretacao ??
         (await buscarTratamentosAprovados(clienteRpc, identificacao.clinica_id, identificacao.paciente.id));
@@ -836,6 +855,38 @@ export async function processarMensagem(
  * quis fechar. Por isso a lista e explicita, e nao "tudo que `decidirPorNatureza`
  * devolve".
  */
+/**
+ * Decisoes em que o PLANO DE TRATAMENTO do paciente chega a redatora
+ * (2026-09-01, decisao do Gabriel).
+ *
+ * Por que existe: depois de uma avaliacao o dentista registra os
+ * procedimentos que a pessoa precisa, e e disso que o plano serve -- agendar
+ * a partir dele evita marcar o procedimento errado. Ate aqui a lista so
+ * chegava nas tres decisoes conversacionais, entao quem tinha plano e abria a
+ * conversa com "quero um turno para quinta" (que nao e saudacao) passava
+ * batido: a Iris perguntava qual atendimento ele queria, justamente no
+ * momento em que ele voltava para agendar o que o dentista indicou.
+ *
+ * Por que NAO em toda decisao: cancelamento, remarcacao, desistencia, erros
+ * de configuracao e desfechos ja executados nao ganham nada com o plano. Alem
+ * de inutil, buscar ali quebraria a garantia -- coberta por teste -- de que
+ * esses caminhos nao tocam o banco: "quero cancelar" sem agendamento nenhum
+ * nao pode gerar consulta.
+ *
+ * O criterio e util para ESTA conversa: as tres conversacionais (onde o
+ * paciente ainda nao disse o que quer) mais os passos de um agendamento em
+ * curso (onde o plano diz o que ele provavelmente veio marcar).
+ */
+const DECISOES_COM_PLANO_DE_TRATAMENTO: readonly DecisaoOrquestrador['tipo'][] = [
+  'saudacao',
+  'duvida_livre',
+  'mensagem_nao_compreendida',
+  'aguardando_procedimento',
+  'aguardando_escolha_dentista',
+  'aguardando_data_horario',
+  'sem_dentista_disponivel',
+];
+
 const DECISOES_COM_CONTEXTO_DE_AGENDAMENTO: readonly DecisaoOrquestrador['tipo'][] = [
   'saudacao',
   'duvida_livre',

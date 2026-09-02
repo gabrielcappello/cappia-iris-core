@@ -656,7 +656,14 @@ test('mensagem seguinte sem conteudo novo (ex.: "obrigado") apos reserva_criada 
   // Sem procedimento_id em dados, decidir() para no primeiro passo -- ANTES
   // de resolver dentista, duracao, temporal ou consultar disponibilidade.
   assert.equal(resultadoSegundoTurno.decisao.tipo, 'aguardando_procedimento');
-  assert.equal(clienteRpcSegundoTurno.chamadas.length, 0, 'nenhuma RPC de reserva foi chamada para "obrigado"');
+  // A leitura do plano de tratamento passou a acontecer tambem em
+  // `aguardando_procedimento` (2026-09-01) e e leitura pura -- o que este
+  // teste protege e que nenhuma RESERVA seja refeita, nao que o turno nao
+  // consulte nada.
+  const reservasSegundoTurno = clienteRpcSegundoTurno.chamadas.filter(
+    (c) => c.nome !== 'iris_nova_tratamentos_aprovados'
+  );
+  assert.equal(reservasSegundoTurno.length, 0, 'nenhuma RPC de reserva foi chamada para "obrigado"');
 });
 
 test('RPC recusa por sobreposicao real (corrida): reserva_conflito, nunca insiste sozinho', async () => {
