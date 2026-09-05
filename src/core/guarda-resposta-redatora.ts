@@ -213,26 +213,44 @@ function extrairHorariosCitados(texto: string): number[] {
  * Formato `DD/MM`, que é como a redatora escreve para o paciente. O ano fica
  * de fora de propósito: a redatora não o cita, e compará-lo criaria falso
  * negativo na virada de ano sem cobrir nenhum caso real.
+ *
+ * CORRIGIDO (2026-09-05, achado do Codex): `proposta_pendente.data`,
+ * `agendamento_confirmado.data` e `agendamento_atual.data` NUNCA chegam em
+ * ISO (`YYYY-MM-DD`) na producao real -- `fatos-autorizados.ts` sempre os
+ * produz via `formatarDataParaRedatora`/`formatarData`, que devolvem `DD/MM`
+ * (ou `"hoje, DD/MM"`/`"amanhã, DD/MM"`). O parser antigo so reconhecia ISO,
+ * entao a data da PROPOSTA nunca entrava no set autorizado -- ela so parecia
+ * funcionar nos testes porque eles passavam ISO artificialmente
+ * (`as FatosAutorizados`), um formato que o codigo de producao nunca produz.
+ *
+ * DEFEITO REAL MEDIDO: com a proposta em 09/09 e outro agendamento do
+ * paciente em 07/09 (que entra pelo formato de TEXTO, `deTexto`, e portanto
+ * "funcionava"), o set deixava de estar vazio e a guarda passava a exigir
+ * que toda data citada estivesse nele -- a propria proposta (09/09), nunca
+ * adicionada, era reprovada como se fosse invencao. A resposta caia no
+ * fallback fixo ("Encontrei esse horario: ...") mesmo a redatora tendo dito
+ * a data certa.
+ *
+ * A correcao usa a MESMA extracao por padrao (`deTexto`, REGEX_DATA) para
+ * TODAS as fontes, nao so as de lista -- e o formato real e unico (DD/MM,
+ * com prefixo textual opcional), entao uma unica funcao basta.
  */
 function coletarDatasAutorizadas(fatos: FatosAutorizados): Set<string> {
   const datas = new Set<string>();
 
-  const juntar = (iso: string | undefined) => {
-    if (iso === undefined) return;
-    const p = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(iso);
-    if (p) datas.add(`${p[3]}/${p[2]}`);
-  };
   const deTexto = (t: string | undefined) => {
     if (t === undefined) return;
-    // Texto já formatado para o paciente (ex.: "quinta-feira, 27/08 às 15:00").
+    // Cobre tanto "09/09" quanto "hoje, 09/09"/"amanhã, 09/09" (proposta/
+    // confirmacao) e texto ja montado ("quinta-feira, 27/08 às 15:00",
+    // listas de agendamento) -- mesmo padrao, mesma extracao.
     for (const m of t.matchAll(REGEX_DATA)) {
       datas.add(`${String(m[1]).padStart(2, '0')}/${String(m[2]).padStart(2, '0')}`);
     }
   };
 
-  juntar(fatos.proposta_pendente?.data);
-  juntar(fatos.agendamento_confirmado?.data);
-  juntar(fatos.agendamento_atual?.data);
+  deTexto(fatos.proposta_pendente?.data);
+  deTexto(fatos.agendamento_confirmado?.data);
+  deTexto(fatos.agendamento_atual?.data);
   for (const d of fatos.agendamentos_candidatos ?? []) deTexto(d);
   for (const d of fatos.agendamentos_do_paciente ?? []) deTexto(d);
 

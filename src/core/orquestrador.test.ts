@@ -550,8 +550,16 @@ test('escolha + confirmacao + paciente cadastrado: reserva_criada, chamando capp
     dentista_nome_exibido: 'Dra. Ana',
     procedimento_nome: 'Limpeza',
   });
-  assert.equal(clienteRpc.chamadas.length, 1);
-  assert.deepEqual(clienteRpc.chamadas[0].parametros, {
+  // DUAS chamadas desde 2026-09-05 (continuidade do pedido multiplo):
+  // `reserva_criada` entrou em DECISOES_COM_PLANO_DE_TRATAMENTO, entao o
+  // Core tambem busca `iris_nova_tratamentos_aprovados` para saber se ha um
+  // segundo procedimento pendente no plano. A busca e best-effort (a RPC
+  // nao esta configurada neste dublê e falha em silencio, sem derrubar a
+  // decisao ja tomada) -- mas a CHAMADA em si acontece, e e isso que este
+  // teste passa a provar tambem.
+  const chamadaReserva = clienteRpc.chamadas.find((c) => c.nome === 'cappia_reservar_agendamento');
+  assert.ok(chamadaReserva !== undefined, 'a reserva precisa ter sido chamada');
+  assert.deepEqual(chamadaReserva.parametros, {
     p_clinica_id: clinicaId,
     p_data: '2026-08-03',
     p_horario: '10:00',
@@ -564,6 +572,10 @@ test('escolha + confirmacao + paciente cadastrado: reserva_criada, chamando capp
     p_documento: '52998224725',
     p_procedimento: 'Limpeza',
   });
+  assert.ok(
+    clienteRpc.chamadas.some((c) => c.nome === 'iris_nova_tratamentos_aprovados'),
+    'a busca do plano de tratamento tambem precisa acontecer, para a continuidade do pedido multiplo'
+  );
 });
 
 test('reserva_criada: limpa intencao/procedimento_id/dentista_id/data_texto/periodo/horario_texto/confirmacao de dados', async () => {

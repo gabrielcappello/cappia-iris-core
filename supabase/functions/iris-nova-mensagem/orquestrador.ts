@@ -515,9 +515,38 @@ export async function processarMensagem(
     // agendamento nenhum nao deve gerar consulta).
     let tratamentosParaRedatora: readonly TratamentoAprovado[] | undefined;
     if (DECISOES_COM_PLANO_DE_TRATAMENTO.includes(decisao.tipo) && identificacao.paciente.id !== null) {
-      tratamentosParaRedatora =
-        tratamentosParaInterpretacao ??
-        (await buscarTratamentosAprovados(clienteRpc, identificacao.clinica_id, identificacao.paciente.id));
+      // CONTINUIDADE do pedido multiplo (2026-09-05, pedido do Gabriel):
+      // `reserva_criada` acabou de entrar nesta lista para que, quando o
+      // plano de tratamento ainda tiver um segundo procedimento pendente, a
+      // redatora saiba disso ao anunciar a reserva -- sem isso ela fechava a
+      // conversa sem convidar o paciente a marcar o que faltava.
+      //
+      // BUSCA SEMPRE FRESCA e NUNCA REAPROVEITADA aqui, ao contrario do `??`
+      // abaixo (que serve as outras seis decisoes desta lista): a leitura da
+      // interpretadora e de ANTES deste turno, e este turno acabou de criar
+      // a propria reserva -- reaproveita-la arriscaria refletir um instante
+      // anterior a ela.
+      //
+      // FILTRADO pelo procedimento que ACABOU de ser reservado: a RPC
+      // (iris_nova_tratamentos_aprovados) so retira um item da lista quando
+      // o DENTISTA marca "realizado" no painel -- criar o agendamento nao
+      // muda esse status. Sem o filtro, o item recem-marcado apareceria
+      // junto do que ainda falta, e a redatora nao teria como distinguir
+      // "o que acabei de agendar" de "o que ainda falta agendar".
+      if (decisao.tipo === 'reserva_criada') {
+        const todosOsTratamentos = await buscarTratamentosAprovados(
+          clienteRpc,
+          identificacao.clinica_id,
+          identificacao.paciente.id
+        );
+        tratamentosParaRedatora = todosOsTratamentos?.filter(
+          (t) => t.procedimento_id !== decisao.procedimento_id
+        );
+      } else {
+        tratamentosParaRedatora =
+          tratamentosParaInterpretacao ??
+          (await buscarTratamentosAprovados(clienteRpc, identificacao.clinica_id, identificacao.paciente.id));
+      }
     }
 
     // POLITICA DE FALHA, deliberadamente diferente por caminho:
@@ -898,15 +927,25 @@ export async function processarMensagem(
  * batido: a Iris perguntava qual atendimento ele queria, justamente no
  * momento em que ele voltava para agendar o que o dentista indicou.
  *
- * Por que NAO em toda decisao: cancelamento, remarcacao, desistencia, erros
- * de configuracao e desfechos ja executados nao ganham nada com o plano. Alem
- * de inutil, buscar ali quebraria a garantia -- coberta por teste -- de que
- * esses caminhos nao tocam o banco: "quero cancelar" sem agendamento nenhum
- * nao pode gerar consulta.
+ * Por que NAO em toda decisao: cancelamento, remarcacao, desistencia e erros
+ * de configuracao nao ganham nada com o plano. Alem de inutil, buscar ali
+ * quebraria a garantia -- coberta por teste -- de que esses caminhos nao
+ * tocam o banco: "quero cancelar" sem agendamento nenhum nao pode gerar
+ * consulta.
  *
  * O criterio e util para ESTA conversa: as tres conversacionais (onde o
  * paciente ainda nao disse o que quer) mais os passos de um agendamento em
  * curso (onde o plano diz o que ele provavelmente veio marcar).
+ *
+ * `reserva_criada` ENTROU em 2026-09-05 (continuidade do pedido multiplo,
+ * pedido do Gabriel), com tratamento proprio no ponto de busca (ver o `if`
+ * dedicado logo acima, em `processarMensagem`): quando o plano ainda tem um
+ * SEGUNDO procedimento pendente depois do que acabou de ser reservado, a
+ * redatora precisa saber disso para convidar o paciente a marcar o proximo,
+ * em vez de fechar a conversa como se o plano inteiro tivesse acabado.
+ * `remarcacao_criada` e `cancelamento_criado` continuam FORA: remarcar ou
+ * cancelar um agendamento existente nao e o momento de abrir um assunto
+ * novo do plano.
  */
 const DECISOES_COM_PLANO_DE_TRATAMENTO: readonly DecisaoOrquestrador['tipo'][] = [
   'saudacao',
@@ -916,6 +955,7 @@ const DECISOES_COM_PLANO_DE_TRATAMENTO: readonly DecisaoOrquestrador['tipo'][] =
   'aguardando_escolha_dentista',
   'aguardando_data_horario',
   'sem_dentista_disponivel',
+  'reserva_criada',
 ];
 
 const DECISOES_COM_CONTEXTO_DE_AGENDAMENTO: readonly DecisaoOrquestrador['tipo'][] = [

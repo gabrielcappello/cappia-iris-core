@@ -226,7 +226,11 @@ test('PERGUNTA com o mesmo verbo passa -- "posso confirmar?" nao afirma nada', (
     'Posso confirmar 24/08 as 15h para voce?',
     {
       objetivo: 'pedir_confirmacao',
-      proposta_pendente: { data: '2026-08-24', horario: '15:00' },
+      // Formato REAL de producao (fatos-autorizados.ts sempre chama
+      // formatarDataParaRedatora, que devolve DD/MM ou "hoje, DD/MM" --
+      // nunca ISO). Usar ISO aqui mascararia o defeito corrigido em
+      // 2026-09-05 (ver coletarDatasAutorizadas).
+      proposta_pendente: { data: '24/08', horario: '15:00' },
     } as FatosAutorizados
   );
   assert.equal(r.aprovado, true);
@@ -238,7 +242,50 @@ test('CASO REAL: data que o Core NAO autorizou -> reprova', () => {
     'Seu agendamento *esta confirmado* para 25/08 as 15h.',
     {
       objetivo: 'informar_reserva_criada',
-      agendamento_confirmado: { data: '2026-08-24', horario: '15:00' },
+      agendamento_confirmado: { data: '24/08', horario: '15:00' },
+    } as FatosAutorizados
+  );
+  assert.equal(r.aprovado, false);
+  assert.equal((r as { motivo: string }).motivo, 'data_nao_autorizada');
+});
+
+// --- REGRESSAO (2026-09-05): proposta_pendente.data no formato REAL de
+// producao (DD/MM, nunca ISO) precisa ser reconhecida como autorizada,
+// mesmo quando outro agendamento do paciente (formato de texto) tambem
+// aparece nos fatos -- foi exatamente essa combinacao que produzia o falso
+// bloqueio medido: proposta em 09/09, outro agendamento em 07/09, a data
+// CERTA (09/09) reprovada como se fosse invencao. ---
+
+test('REGRESSAO: proposta em DD/MM passa mesmo SEM outro agendamento nos fatos', () => {
+  const r = verificarRespostaRedatora(
+    'Encontrei esse horário: 09/09 às 10:30. Posso confirmar?',
+    {
+      objetivo: 'pedir_confirmacao',
+      proposta_pendente: { data: '09/09', horario: '10:30' },
+    } as FatosAutorizados
+  );
+  assert.deepEqual(r, { aprovado: true });
+});
+
+test('REGRESSAO: mesma proposta em DD/MM passa MESMO COM outro agendamento do paciente em outra data', () => {
+  const r = verificarRespostaRedatora(
+    'Encontrei esse horário: 09/09 às 10:30. Posso confirmar?',
+    {
+      objetivo: 'pedir_confirmacao',
+      proposta_pendente: { data: '09/09', horario: '10:30' },
+      agendamentos_do_paciente: ['Retratamento de canal — segunda-feira, 07/09 às 08:00'],
+    } as FatosAutorizados
+  );
+  assert.deepEqual(r, { aprovado: true });
+});
+
+test('REGRESSAO: resposta citando uma data REALMENTE diferente continua bloqueada', () => {
+  const r = verificarRespostaRedatora(
+    'Encontrei esse horário: 10/09 às 10:30. Posso confirmar?',
+    {
+      objetivo: 'pedir_confirmacao',
+      proposta_pendente: { data: '09/09', horario: '10:30' },
+      agendamentos_do_paciente: ['Retratamento de canal — segunda-feira, 07/09 às 08:00'],
     } as FatosAutorizados
   );
   assert.equal(r.aprovado, false);

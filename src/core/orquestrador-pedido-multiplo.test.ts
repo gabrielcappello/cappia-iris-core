@@ -21,6 +21,7 @@ import { processarMensagem } from './orquestrador.ts';
 import { derivarAcaoContextoHorarios } from './contexto-horarios.ts';
 import { derivarFatosAutorizados } from './fatos-autorizados.ts';
 import { gerarRespostaPaciente } from './gerar-resposta-paciente.ts';
+import { verificarRespostaRedatora } from './guarda-resposta-redatora.ts';
 import { ClienteFalso, criarTabelasFalsasVazias, type TabelasFalsas } from './teste-cliente-falso.ts';
 import { ClienteModeloFalso } from './teste-cliente-modelo-falso.ts';
 import { ClienteRpcFalso } from './teste-cliente-rpc-falso.ts';
@@ -444,4 +445,208 @@ test('CASO REAL -- dois periodos e dois horarios no mesmo turno respondem, sem m
   const dados = linhaConversa(tabelas).dados;
   assert.equal(dados.horario_texto, undefined);
   assert.equal(dados.periodo, undefined);
+});
+
+// --- 6. CONTINUIDADE: primeiro procedimento reservado, segundo ainda pendente ---
+//
+// Pedido do Gabriel (2026-09-05): quando o historico mostra explicitamente
+// que o paciente pediu para marcar mais de um procedimento e o primeiro
+// acabou de chegar a `reserva_criada`, a redatora deve anunciar a reserva,
+// depois convidar naturalmente a marcar o proximo e perguntar qual dia fica
+// melhor -- sem frase deterministica nova, sem estado/evento/tabela nova, e
+// sem nomear o proximo procedimento se o nome nao estiver nos fatos
+// autorizados do turno.
+//
+// A garantia e ESTRUTURAL, no mesmo espirito de `pedido_multiplo_detectado`:
+// o Core decide QUAIS fatos entregar (aqui, se ha ou nao um segundo
+// tratamento pendente, filtrado do que acabou de ser reservado), e a
+// redatora So pode nomear o que estiver de fato nos fatos.
+
+function semearPacienteCompleto(tabelas: TabelasFalsas, clinicaId: string): string {
+  const pacienteId = crypto.randomUUID();
+  tabelas.pacientes.push({
+    id: pacienteId,
+    clinica_id: clinicaId,
+    telefone_normalizado: TELEFONE,
+    nome: 'Carlos Cappello',
+    documento: '52998224725',
+    data_nascimento: '1973-08-02',
+  });
+  return pacienteId;
+}
+
+test('CONTINUIDADE -- reserva_criada entra em DECISOES_COM_PLANO_DE_TRATAMENTO e busca o plano', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const { clinicaId, cirurgiaId, restauracaoId, dentistaId } = montarCenario(tabelas);
+  const pacienteId = semearPacienteCompleto(tabelas, clinicaId);
+
+  const agendamentoId = crypto.randomUUID();
+  const rpc = new ClienteRpcFalso({
+    cappia_reservar_agendamento: {
+      data: {
+        sucesso: true,
+        agendamento_id: agendamentoId,
+        dentista_id: dentistaId,
+        duracao_min: 60,
+        data: '2026-09-09',
+        horario: '10:30',
+      },
+      error: null,
+    },
+    // O plano ainda tem a restauracao pendente -- a cirurgia (que acabou de
+    // ser reservada) NAO aparece aqui: a RPC real so retira um item quando o
+    // DENTISTA marca "realizado" no painel, entao ela devolveria os DOIS se
+    // fosse consultada de novo agora. O filtro pelo procedimento_id
+    // recem-reservado (orquestrador.ts) e o que garante a exclusao.
+    iris_nova_tratamentos_aprovados: {
+      data: [
+        { descricao: 'Cirurgia de implante', dente: '31', procedimento_id: cirurgiaId, para_agendar: false },
+        { descricao: 'Restauração / Cárie (1 face)', dente: '23', procedimento_id: restauracaoId, para_agendar: false },
+      ],
+      error: null,
+    },
+  });
+
+  const modelo = new ClienteModeloFalso([
+    {
+      natureza_mensagem: 'resposta',
+      alteracoes: {
+        procedimento_id: { acao: 'informar', valor: cirurgiaId },
+        data_texto: { acao: 'informar', valor: '09/09/2026' },
+        horario_texto: { acao: 'informar', valor: '10:30' },
+        confirmacao: { acao: 'informar', valor: 'sim' },
+      },
+      eventos_candidatos: [],
+    },
+  ]);
+
+  const resultado = await processarMensagem(modelo, new ClienteFalso(tabelas), rpc, {
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA,
+    telefone_normalizado: TELEFONE,
+    mensagens_atuais: ['pode confirmar a cirurgia pra terça as 10:30'],
+    instante_atual: INSTANTE_ATUAL,
+  });
+
+  assert.equal(resultado.decisao.tipo, 'reserva_criada');
+  assert.ok(
+    rpc.chamadas.some((c) => c.nome === 'iris_nova_tratamentos_aprovados'),
+    'reserva_criada precisa buscar o plano de tratamento, para saber se ha um segundo procedimento pendente'
+  );
+
+  // O FATO que chega a redatora tem SO a restauracao -- nunca a cirurgia,
+  // que acabou de ser reservada neste mesmo turno.
+  assert.ok(resultado.tratamentos_aprovados !== undefined, 'o segundo pendente precisa chegar como fato');
+  assert.deepEqual(
+    resultado.tratamentos_aprovados?.map((t) => t.procedimento_id),
+    [restauracaoId],
+    'o procedimento recem-reservado nao pode sobrar na lista de pendentes'
+  );
+});
+
+test('CONTINUIDADE -- sem segundo procedimento pendente, nenhum fato de plano acompanha a reserva', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const { clinicaId, cirurgiaId, dentistaId } = montarCenario(tabelas);
+  const pacienteId = semearPacienteCompleto(tabelas, clinicaId);
+
+  const rpc = new ClienteRpcFalso({
+    cappia_reservar_agendamento: {
+      data: {
+        sucesso: true,
+        agendamento_id: crypto.randomUUID(),
+        dentista_id: dentistaId,
+        duracao_min: 60,
+        data: '2026-09-09',
+        horario: '10:30',
+      },
+      error: null,
+    },
+    // O UNICO pendente era o que acabou de ser reservado -- nada mais no plano.
+    iris_nova_tratamentos_aprovados: {
+      data: [{ descricao: 'Cirurgia de implante', dente: '31', procedimento_id: cirurgiaId, para_agendar: false }],
+      error: null,
+    },
+  });
+
+  const modelo = new ClienteModeloFalso([
+    {
+      natureza_mensagem: 'resposta',
+      alteracoes: {
+        procedimento_id: { acao: 'informar', valor: cirurgiaId },
+        data_texto: { acao: 'informar', valor: '09/09/2026' },
+        horario_texto: { acao: 'informar', valor: '10:30' },
+        confirmacao: { acao: 'informar', valor: 'sim' },
+      },
+      eventos_candidatos: [],
+    },
+  ]);
+
+  const resultado = await processarMensagem(modelo, new ClienteFalso(tabelas), rpc, {
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA,
+    telefone_normalizado: TELEFONE,
+    mensagens_atuais: ['pode confirmar a cirurgia pra terça as 10:30'],
+    instante_atual: INSTANTE_ATUAL,
+  });
+
+  assert.equal(resultado.decisao.tipo, 'reserva_criada');
+  assert.equal(
+    resultado.tratamentos_aprovados,
+    undefined,
+    'sem pendente REAL, nao ha fato de plano nenhum -- a redatora nao pode convidar a marcar o que nao existe'
+  );
+});
+
+test('CONTINUIDADE -- fatos autorizados: com o plano presente, a redatora pode nomear o proximo', () => {
+  const cirurgiaId = crypto.randomUUID();
+  const restauracaoId = crypto.randomUUID();
+  const fatos = derivarFatosAutorizados(
+    {
+      tipo: 'reserva_criada',
+      agendamento_id: crypto.randomUUID(),
+      dentista_id: crypto.randomUUID(),
+      procedimento_id: cirurgiaId,
+      duracao_min: 60,
+      data: '2026-09-09',
+      horario: '10:30',
+      dentista_nome_exibido: 'Dr. Pablo Arruda',
+      procedimento_nome: 'Cirurgia de implante',
+    },
+    '2026-09-04',
+    undefined, // substituicaoPorAvaliacao
+    undefined, // agendamentosDoPaciente
+    undefined, // cadastroConhecido
+    undefined, // clinicaConhecida
+    undefined, // precos
+    undefined, // dentistasDaClinica
+    [{ procedimento: 'Restauração / Cárie (1 face)', procedimento_id: restauracaoId, dente: '23' }] // tratamentosAprovados
+  );
+
+  assert.equal(fatos.objetivo, 'informar_reserva_criada');
+  assert.equal(fatos.agendamento_confirmado?.data, '09/09');
+  assert.deepEqual(
+    fatos.tratamentos_aprovados?.map((t) => t.procedimento_id),
+    [restauracaoId],
+    'o segundo pendente precisa estar nos fatos para a redatora poder nomea-lo'
+  );
+});
+
+test('CONTINUIDADE -- guarda nao reprova a resposta esperada (data e execucao autorizadas)', () => {
+  // Ilustra o exemplo do pedido do Gabriel: primeiro anuncia a reserva
+  // (data/horario/profissional autorizados por `agendamento_confirmado`),
+  // depois convida ao proximo, sem afirmar execucao nenhuma sobre ele.
+  const fatos: Parameters<typeof verificarRespostaRedatora>[1] = {
+    objetivo: 'informar_reserva_criada',
+    agendamento_confirmado: { data: '09/09', horario: '10:30' },
+    dentista_confirmado: 'Dr. Pablo Arruda',
+    procedimento_confirmado: 'Cirurgia de implante',
+    tratamentos_aprovados: [
+      { procedimento: 'Restauração / Cárie (1 face)', procedimento_id: crypto.randomUUID(), dente: '23' },
+    ],
+  };
+  const resposta =
+    'Pronto, Carlos! Sua cirurgia ficou confirmada para 09/09 às 10:30, com o Dr. Pablo Arruda. ' +
+    'Agora vamos marcar o outro procedimento, a Restauração / Cárie. Qual dia fica melhor para você?';
+
+  assert.deepEqual(verificarRespostaRedatora(resposta, fatos), { aprovado: true });
 });

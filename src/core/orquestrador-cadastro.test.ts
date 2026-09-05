@@ -184,12 +184,19 @@ test('paciente EXISTENTE COMPLETO: cadastro nao interrompe e nao gera escrita', 
   const resultado = await processar(tabelas, clienteModelo(procedimentoId), rpc, 'sim, confirmo');
 
   assert.equal(resultado.decisao.tipo, 'reserva_criada');
-  // Uma unica chamada: a reserva. Paciente que nao mudou nao e reescrito.
+  // Paciente que nao mudou nao e reescrito: nenhuma chamada de escrita de
+  // cadastro, so a reserva. Desde 2026-09-05 (continuidade do pedido
+  // multiplo), `reserva_criada` tambem busca o plano de tratamento
+  // (`iris_nova_tratamentos_aprovados`) -- leitura, nunca escrita, e nao
+  // configurada neste dubl6 (falha em silencio, best-effort), mas a
+  // CHAMADA em si acontece e faz parte do comportamento esperado agora.
   assert.deepEqual(
-    rpc.chamadas.map((c) => c.nome),
-    ['cappia_reservar_agendamento']
+    rpc.chamadas.map((c) => c.nome).filter((nome) => nome !== 'iris_nova_tratamentos_aprovados'),
+    ['cappia_reservar_agendamento'],
+    'nenhuma escrita alem da reserva'
   );
-  assert.equal(rpc.chamadas[0].parametros.p_paciente_id, pacienteId);
+  const chamadaReserva = rpc.chamadas.find((c) => c.nome === 'cappia_reservar_agendamento');
+  assert.equal(chamadaReserva?.parametros.p_paciente_id, pacienteId);
 });
 
 test('email so entra nos faltantes quando solicitar_email = true', async () => {
@@ -312,14 +319,19 @@ test('paciente EXISTENTE que completa o que faltava: persiste e reserva no mesmo
   );
 
   assert.equal(resultado.decisao.tipo, 'reserva_criada');
+  // Desde 2026-09-05 (continuidade do pedido multiplo), `reserva_criada`
+  // tambem busca `iris_nova_tratamentos_aprovados` (leitura best-effort, nao
+  // configurada neste dubl6) -- a ordem e o conteudo das DUAS escritas de
+  // cadastro/reserva continuam sendo o que este teste verifica.
   assert.deepEqual(
-    rpc.chamadas.map((c) => c.nome),
+    rpc.chamadas.map((c) => c.nome).filter((nome) => nome !== 'iris_nova_tratamentos_aprovados'),
     ['cappia_persistir_paciente', 'cappia_reservar_agendamento']
   );
   // O nome vai junto mesmo sem ter sido dito neste turno: o Core envia o
   // estado cadastral atual conhecido, nao so o campo digitado agora.
-  assert.equal(rpc.chamadas[0].parametros.p_nome, NOME_SINTETICO);
-  assert.equal(rpc.chamadas[0].parametros.p_data_nascimento, NASCIMENTO_SINTETICO);
+  const chamadaPersistir = rpc.chamadas.find((c) => c.nome === 'cappia_persistir_paciente');
+  assert.equal(chamadaPersistir?.parametros.p_nome, NOME_SINTETICO);
+  assert.equal(chamadaPersistir?.parametros.p_data_nascimento, NASCIMENTO_SINTETICO);
 });
 
 // --- Validacao ---
