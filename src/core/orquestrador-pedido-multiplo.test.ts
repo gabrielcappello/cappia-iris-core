@@ -149,6 +149,34 @@ test('primeiro pedido multiplo vira decisao propria -- nunca segue para o fluxo 
   );
 });
 
+test('REGRESSAO -- o evento vence o roteamento conversacional, em qualquer natureza', async () => {
+  // ACHADO DA REVISAO DO CODEX (2026-09-05): `decidirPorNatureza` retorna
+  // ANTES da checagem de pedido multiplo quando `alteracoes` esta vazio.
+  //
+  // Nao e um canto raro: `alteracoes` VAZIO e o caso NORMAL deste fluxo -- a
+  // instrucao manda a IA emitir o evento e deixar os quatro campos ausentes.
+  // Basta ela classificar a mensagem como `duvida` (plausivel: "tem horarios
+  // pra esos dois dias?" e literalmente uma pergunta) e o evento era
+  // descartado em silencio, devolvendo o defeito de origem.
+  //
+  // As quatro naturezas que `decidirPorNatureza` resolve sozinha:
+  for (const natureza of ['duvida', 'saudacao', 'nao_compreendida', 'negacao']) {
+    const tabelas = criarTabelasFalsasVazias();
+    montarCenario(tabelas);
+    const modelo = new ClienteModeloFalso([
+      { natureza_mensagem: natureza, alteracoes: {}, eventos_candidatos: [EVENTO_PEDIDO_MULTIPLO] },
+    ]);
+
+    const resultado = await processar(tabelas, modelo, 'quero marcar os dois, um na terça e outro na quinta');
+
+    assert.deepEqual(
+      resultado.decisao,
+      { tipo: 'pedido_multiplo_detectado' },
+      `natureza "${natureza}" nao pode engolir o pedido multiplo -- o paciente pediu dois agendamentos`
+    );
+  }
+});
+
 test('a decisao NAO carrega procedimento nenhum -- o Core nao sabe quais foram pedidos', async () => {
   const tabelas = criarTabelasFalsasVazias();
   montarCenario(tabelas);
@@ -184,10 +212,7 @@ test('nenhuma reserva, remarcacao ou cancelamento e tentada no turno do pedido m
 // --- 2. A resposta ao paciente e obrigatoriamente generica ---
 
 test('os fatos entregues a redatora nao contem NENHUM nome de procedimento', () => {
-  const fatos = derivarFatosAutorizados(
-    { tipo: 'pedido_multiplo_detectado' },
-    { data: '2026-09-04', minuto_min: 480 }
-  );
+  const fatos = derivarFatosAutorizados({ tipo: 'pedido_multiplo_detectado' }, INSTANTE_ATUAL.data);
 
   assert.equal(fatos.objetivo, 'pedir_um_procedimento_por_vez');
   // A garantia e ESTRUTURAL, nao textual: sem nome nenhum no pacote, a
@@ -274,6 +299,124 @@ test('ISOLAMENTO -- mencionar dois procedimentos sem pedir para agendar nao disp
   const resultado = await processar(tabelas, modelo, 'quanto custa a restauração e o implante?');
 
   assert.notEqual(resultado.decisao.tipo, 'pedido_multiplo_detectado');
+});
+
+// --- 4b. CONTINUIDADE: depois de escolher, SO aquele pedido avanca ---
+
+test('CONTINUIDADE -- escolhido o procedimento, o fluxo avanca so para ele, ate a reserva', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const { cirurgiaId, restauracaoId, dentistaId } = montarCenario(tabelas);
+
+  // TURNO 1 -- o pedido duplo e interceptado.
+  const turno1 = await processar(
+    tabelas,
+    modeloComPedidoMultiplo(),
+    'Quero marcar esses dois procedimentos.. um pra terça, o outro para quinta'
+  );
+  assert.deepEqual(turno1.decisao, { tipo: 'pedido_multiplo_detectado' });
+
+  // TURNO 2 -- ele escolhe UM e diz o dia. A IA nao emite mais o evento (ele
+  // resolveu a ambiguidade) e preenche normalmente os campos daquele pedido.
+  const turno2 = await processar(
+    tabelas,
+    new ClienteModeloFalso([
+      {
+        natureza_mensagem: 'resposta',
+        alteracoes: {
+          procedimento_id: { acao: 'informar', valor: cirurgiaId },
+          data_texto: { acao: 'informar', valor: '08/09/2026' },
+        },
+        eventos_candidatos: [],
+      },
+    ]),
+    'cirugia de implante para terça feira'
+  );
+
+  // O fluxo normal retomou: chegou a oferecer horarios reais para a cirurgia.
+  assert.equal(
+    turno2.decisao.tipo,
+    'horarios_disponiveis',
+    'depois da escolha, o agendamento precisa avancar normalmente -- a interceptacao nao pode deixar a conversa presa'
+  );
+  assert.equal(
+    turno2.decisao.tipo === 'horarios_disponiveis' ? turno2.decisao.procedimento_id : null,
+    cirurgiaId,
+    'os horarios sao do procedimento ESCOLHIDO'
+  );
+  assert.notEqual(
+    turno2.decisao.tipo === 'horarios_disponiveis' ? turno2.decisao.procedimento_id : null,
+    restauracaoId,
+    'o outro procedimento nao pode ter vazado para o pedido em andamento'
+  );
+
+  // E o estado guarda exatamente UM procedimento -- nunca os dois.
+  const dados = linhaConversa(tabelas).dados;
+  assert.equal(dados.procedimento_id, cirurgiaId);
+  assert.ok(
+    !String(dados.data_texto ?? '').includes(','),
+    'a data nao pode ser uma string combinada -- era esse o formato que travava o fluxo'
+  );
+
+  // TURNO 3 -- ele escolhe o horario e confirma; a reserva acontece para o
+  // procedimento escolhido, com o dentista certo.
+  const rpc = new ClienteRpcFalso({
+    // A reserva exige cadastro persistido antes -- o fluxo real passa pelos dois.
+    cappia_persistir_paciente: {
+      data: { sucesso: true, paciente_id: crypto.randomUUID() },
+      error: null,
+    },
+    cappia_reservar_agendamento: {
+      data: {
+        sucesso: true,
+        agendamento_id: crypto.randomUUID(),
+        dentista_id: dentistaId,
+        duracao_min: 60,
+        data: '2026-09-08',
+        horario: '10:00',
+      },
+      error: null,
+    },
+  });
+  const turno3 = await processarMensagem(
+    new ClienteModeloFalso([
+      {
+        natureza_mensagem: 'resposta',
+        alteracoes: {
+          horario_texto: { acao: 'informar', valor: '10:00' },
+          confirmacao: { acao: 'informar', valor: 'sim' },
+          nome: { acao: 'informar', valor: 'Carlos Cappello' },
+          cpf: { acao: 'informar', valor: '52998224725' },
+          data_nascimento: { acao: 'informar', valor: '1973-08-02' },
+        },
+        eventos_candidatos: [],
+      },
+    ]),
+    new ClienteFalso(tabelas),
+    rpc,
+    {
+      provider: PROVIDER,
+      instancia_whatsapp: INSTANCIA,
+      telefone_normalizado: TELEFONE,
+      mensagens_atuais: ['10 hrs, pode confirmar. Carlos Cappello, 529.982.247-25, 02/08/1973'],
+      instante_atual: INSTANTE_ATUAL,
+    }
+  );
+
+  assert.equal(
+    turno3.decisao.tipo,
+    'reserva_criada',
+    `o fluxo tem de chegar ate a reserva, nao travar -- veio "${turno3.decisao.tipo}"`
+  );
+
+  // E a reserva foi feita para o procedimento ESCOLHIDO -- nunca o outro.
+  const chamadaReserva = rpc.chamadas.find((c) => c.nome === 'cappia_reservar_agendamento');
+  assert.ok(chamadaReserva !== undefined, 'a reserva precisa ter sido chamada de fato');
+  const argumentos = JSON.stringify(chamadaReserva.parametros);
+  assert.ok(argumentos.includes(cirurgiaId), 'a reserva e do procedimento escolhido');
+  assert.ok(
+    !argumentos.includes(restauracaoId),
+    'o procedimento NAO escolhido nunca pode entrar na reserva -- seria marcar a coisa errada'
+  );
 });
 
 // --- 5. A ultima mensagem do caso real: dois periodos/horarios, nunca silencio ---

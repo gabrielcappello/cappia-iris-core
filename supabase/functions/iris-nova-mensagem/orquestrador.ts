@@ -695,6 +695,37 @@ export async function processarMensagem(
     };
   };
 
+  // PEDIDO MULTIPLO -- mais de um procedimento pedido no MESMO turno, cada um
+  // com seu proprio dia/horario (specs/multiplos-procedimentos-mesmo-turno-v1.md).
+  //
+  // PRIMEIRO DE TODOS OS ROTEAMENTOS, inclusive antes do retorno
+  // conversacional logo abaixo. A ordem foi CORRIGIDA em 2026-09-05, na
+  // revisao do Codex, e o motivo e o oposto do que parece:
+  //
+  // `alteracoes` VAZIO e o caso NORMAL deste fluxo, nao um canto raro -- a
+  // instrucao manda a IA emitir o evento e deixar `procedimento_id`,
+  // `data_texto`, `periodo` e `horario_texto` AUSENTES, justamente para nao
+  // empacotar "terca, quinta" num campo que guarda UMA data. Com a checagem
+  // depois de `decidirPorNatureza`, bastava a IA classificar a mensagem como
+  // `duvida` (plausivel: "tem horarios pra esos dois dias?" e uma pergunta)
+  // para o evento ser descartado em silencio e o defeito de origem voltar
+  // inteiro. Provado por teste antes da correcao.
+  //
+  // A precedencia e a mesma ja aplicada a `alteracoes` sobre
+  // `natureza_mensagem` (specs/interpretacao-natureza-mensagem-v1.md secao 3):
+  // um sinal concreto do que o paciente PEDIU vence a classificacao do TIPO da
+  // mensagem. Aqui o sinal e o evento.
+  //
+  // Nao depende de catalogo, procedimento, dentista nem disponibilidade: o
+  // desfecho e uma pergunta ("qual primeiro?"), o mais conservador possivel.
+  //
+  // NAO LIMPA NADA de `dados`: o paciente pode estar no meio de um agendamento
+  // e ter apenas acrescentado um segundo pedido -- o estado do primeiro
+  // continua intacto para quando ele voltar a ele.
+  if (interpretacao.pedido_multiplo_detectado) {
+    return await finalizar({ tipo: 'pedido_multiplo_detectado' });
+  }
+
   if (Object.keys(interpretacao.alteracoes_interpretadas).length === 0) {
     const decisaoConversacional = decidirPorNatureza(interpretacao.natureza_mensagem, dados);
     if (decisaoConversacional !== null) {
@@ -702,31 +733,6 @@ export async function processarMensagem(
       // ponto unico dentro de `finalizar`, que TODO desfecho atravessa.
       return await finalizar(decisaoConversacional);
     }
-  }
-
-  // PEDIDO MULTIPLO -- mais de um procedimento pedido no MESMO turno, cada um
-  // com seu proprio dia/horario (specs/multiplos-procedimentos-mesmo-turno-v1.md).
-  //
-  // ANTES DE TUDO QUE INTERPRETA CAMPOS DE AGENDAMENTO, e o motivo e
-  // estrutural: `procedimento_id`, `data_texto`, `periodo` e `horario_texto`
-  // guardam UM valor cada. Quando o paciente pede dois procedimentos em dois
-  // dias, nao existe onde representar os dois pares -- e a instrucao manda a
-  // IA deixar esses campos AUSENTES justamente para nao empacotar "terca,
-  // quinta" num campo que espera uma data so. Seguir para `decidir()` (ou para
-  // remarcacao/cancelamento) com esses campos deliberadamente vazios faria o
-  // fluxo perguntar de novo o que o paciente ja disse -- o loop de tres turnos
-  // medido em producao em 2026-09-05, seguido de silencio.
-  //
-  // Nao depende de catalogo, procedimento, dentista nem disponibilidade: e uma
-  // pergunta conversacional ("qual primeiro?"), o desfecho mais conservador
-  // possivel. Mesmo criterio que ja poe o cancelamento antes da checagem de
-  // catalogo, logo abaixo.
-  //
-  // NAO LIMPA NADA de `dados`: o paciente pode estar no meio de um agendamento
-  // e ter apenas acrescentado um segundo pedido -- o estado do primeiro
-  // continua intacto para quando ele voltar a ele.
-  if (interpretacao.pedido_multiplo_detectado) {
-    return await finalizar({ tipo: 'pedido_multiplo_detectado' });
   }
 
   // CANCELAMENTO -- roteado exclusivamente por `dados.intencao === 'cancelamento'`
