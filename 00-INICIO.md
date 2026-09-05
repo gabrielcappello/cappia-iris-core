@@ -65,6 +65,19 @@ Precisão sobre o alcance das mudanças feitas a partir daqui:
 O estado corrente por frente (o que está publicado, o que aguarda revisão) vive em
 `../cappia-estado/HANDOFF-iris-nova.md`, não neste arquivo.
 
+## Branches deste repositório (atualizado 2026-09-04)
+
+Antes de mexer em qualquer coisa, confirme em qual branch está — o nome diz o que ela é:
+
+| Branch | O que é | Pode mexer? |
+|---|---|---|
+| **`main`** | Espelho do que está em produção agora (Edge Function `iris-nova-mensagem`, modelo `gpt-5.6-luna`) | Sim, mas todo push aqui reflete em produção — mudança pequena e já testada, nunca experimento |
+| **`main-congelada-2026-09-04-luna`** | Cópia fixa do estado de produção com Luna, em 2026-09-04 | **Não.** Só existe para restaurar rápido se algo em `main` quebrar |
+| **`main-congelada-2026-08-30-gpt41mini`** | Cópia fixa de antes do Luna, com o modelo anterior (`gpt-4.1-mini`) | **Não.** Fallback mais antigo, mais distante de produção |
+| **`feat/iris-espanhol`** | Onde a frente de espanhol é desenvolvida e testada (specs/iris-espanhol-v1.md, Passos 2 e 3) | Sim — é a branch de trabalho ativa desta frente |
+
+**Nunca confundir "a Iris" no singular** — hoje existem, ao mesmo tempo: a Iris em produção (`main`), e a Iris em desenvolvimento de espanhol (`feat/iris-espanhol`), que só vira produção depois de testada localmente (`src/eval/conversar-local.ts`, sem Supabase nem WhatsApp) e promovida por decisão explícita do Gabriel — mesmo processo que promoveu `iris-2` a `main` em 2026-09-04.
+
 ## Contexto histórico (referência, não fonte técnica)
 
 O histórico completo da Iris antiga e da decisão de encerrá-la está em
