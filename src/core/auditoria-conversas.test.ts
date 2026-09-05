@@ -14,8 +14,12 @@ type LinhaClinica = { id: string; provider: string; instancia_whatsapp: string }
 class ClienteBancoDadosFalso implements ClienteBancoDados {
   linhasInseridas: Array<Record<string, unknown>> = [];
   clinicas: LinhaClinica[] = [];
-  /** Quando true, qualquer operação lança -- simula falha de rede/timeout. */
+  /** Quando true, qualquer operação lança -- simula falha de rede/timeout em TUDO. */
   falharTudo = false;
+  /** Falha ISOLADA na consulta a `clinicas` -- `insert` continua funcionando (bloqueador do Codex, 05/09). */
+  falharConsultaClinica = false;
+  /** Falha ISOLADA no `insert` de `conversas_auditoria` -- consulta a `clinicas` continua funcionando. */
+  falharInsert = false;
 
   from(tabela: string) {
     if (tabela === 'conversas_auditoria') {
@@ -30,7 +34,7 @@ class ClienteBancoDadosFalso implements ClienteBancoDados {
           throw new Error('nao usado neste dublê');
         },
         insert: (valores: Record<string, unknown>) => {
-          if (this.falharTudo) throw new Error('falha simulada de escrita');
+          if (this.falharTudo || this.falharInsert) throw new Error('falha simulada de escrita');
           this.linhasInseridas.push(valores);
           const encadeavel = {
             eq: () => encadeavel,
@@ -47,6 +51,7 @@ class ClienteBancoDadosFalso implements ClienteBancoDados {
     if (tabela === 'clinicas') {
       const clinicas = this.clinicas;
       const falharTudo = this.falharTudo;
+      const falharConsultaClinica = this.falharConsultaClinica;
       return {
         select: () => {
           let provider: string | undefined;
@@ -62,7 +67,7 @@ class ClienteBancoDadosFalso implements ClienteBancoDados {
             not: () => encadeavel,
             select: () => encadeavel,
             maybeSingle: async () => {
-              if (falharTudo) throw new Error('falha simulada de rede');
+              if (falharTudo || falharConsultaClinica) throw new Error('falha simulada de rede');
               const achada = clinicas.find((c) => c.provider === provider && c.instancia_whatsapp === instancia);
               return { data: achada ? { id: achada.id } : null, error: null };
             },
@@ -205,10 +210,10 @@ test('gravarAuditoriaFalha: erro_interno sem clínica correspondente grava clini
   assert.equal(cliente.linhasInseridas[0].clinica_id, null);
 });
 
-test('gravarAuditoriaFalha: falha na resolução best-effort de clínica não impede a gravação da linha (best-effort, spec 1.2.2)', async () => {
+test('gravarAuditoriaFalha: falha ISOLADA na resolução de clínica -- insert ainda ocorre, com clinica_id: null (bloqueador real, correção do Codex 05/09)', async () => {
   const cliente = new ClienteBancoDadosFalso();
   cliente.clinicas.push({ id: 'clinica-1', provider: 'evolution', instancia_whatsapp: 'inst-1' });
-  cliente.falharTudo = true; // simula timeout tanto na consulta de clínica quanto no insert
+  cliente.falharConsultaClinica = true; // SÓ a consulta a `clinicas` falha; `insert` continua íntegro.
 
   await assert.doesNotReject(
     gravarAuditoriaFalha(cliente, {
@@ -220,6 +225,29 @@ test('gravarAuditoriaFalha: falha na resolução best-effort de clínica não im
       resultadoTurno: 'entrada_invalida',
     })
   );
-  // Com falharTudo, o insert também falha -- nenhuma linha, mas sem exceção.
+  // A prova real: mesmo com a resolução de clínica falhando, a linha É
+  // gravada -- só sem clinica_id. O teste anterior (falharTudo) não provava
+  // isso: com os dois lados falhando, "nenhuma linha" também seria
+  // consistente com um bug em que a falha da consulta interrompesse tudo.
+  assert.equal(cliente.linhasInseridas.length, 1);
+  assert.equal(cliente.linhasInseridas[0].clinica_id, null);
+  assert.equal(cliente.linhasInseridas[0].resultado_turno, 'entrada_invalida');
+});
+
+test('gravarAuditoriaFalha: falha TOTAL (consulta de clínica e insert) -- nunca lança, mesmo sem gravar nenhuma linha (best-effort, spec 1.2.2)', async () => {
+  const cliente = new ClienteBancoDadosFalso();
+  cliente.clinicas.push({ id: 'clinica-1', provider: 'evolution', instancia_whatsapp: 'inst-1' });
+  cliente.falharTudo = true;
+
+  await assert.doesNotReject(
+    gravarAuditoriaFalha(cliente, {
+      provider: 'evolution',
+      instanciaWhatsapp: 'inst-1',
+      telefoneNormalizado: '5521988046011',
+      mensagemPaciente: 'oi',
+      respostaIris: null,
+      resultadoTurno: 'entrada_invalida',
+    })
+  );
   assert.equal(cliente.linhasInseridas.length, 0);
 });

@@ -54,10 +54,14 @@ create table public.conversas_auditoria (
   -- -- vocabulário aberto de propósito, porque a guarda já tem seu próprio
   -- vocabulário fechado em outro lugar (guarda-resposta-redatora.ts) e esta
   -- tabela só ecoa o que já existe, nunca redefine.
-  check (motivo_fallback is null or resultado_turno = 'sucesso'),
-  -- Telefone no mesmo formato que toda outra tabela do projeto já valida
-  -- (E.164 sem sinal, mesma regra de contatos_excecao_iris).
-  check (telefone_normalizado ~ '^[1-9][0-9]{7,14}$')
+  check (motivo_fallback is null or resultado_turno = 'sucesso')
+  -- SEM constraint de formato em telefone_normalizado (correção do Codex,
+  -- 05/09, bloqueador real): diferente de contatos_excecao_iris, o handler
+  -- (validarPayload, index.ts:55-56) garante SOMENTE string não vazia --
+  -- nunca formato E.164. Uma constraint mais estrita aqui rejeitaria em
+  -- silêncio (INSERT falha, best-effort absorve) exatamente a auditoria de
+  -- um turno que o fluxo principal já aceitou processar, o oposto do
+  -- objetivo desta tabela.
 );
 
 create index conversas_auditoria_clinica_id_criado_em_idx
