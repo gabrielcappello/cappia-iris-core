@@ -20,9 +20,13 @@ defeito real, achado em teste manual de produção, e a correção aprovada.
   acompanhar, não como bloqueador desta entrega.
 - **Aprovação (Gabriel):** spec aprovada e implementação autorizada na branch
   `feat/pedido-multiplo`, criada a partir da `main`.
-- **Publicação NÃO autorizada.** A revisão de código e evidências está encerrada; merge na
-  `main`, push para produção e deploy da Edge Function seguem dependendo de autorização
-  explícita e posterior do Gabriel.
+- **Publicada em 2026-09-05.** Autorizada explicitamente pelo Gabriel: merge
+  `feat/pedido-multiplo` → `main` (fast-forward, commit `0d333b2`), push para
+  `origin/main`, e deploy da Edge Function `iris-nova-mensagem` no projeto
+  `udizowyfjnhuhgxkeayk` (v108 → v109, `verify_jwt: true` preservado). Rollback da v108
+  preservado em `backups/rollback-iris-nova-mensagem-v108/`. Validação pós-deploy contra a
+  v109 real confirmou o comportamento esperado (resposta genérica ao pedido múltiplo, sem
+  regressão no fluxo normal) — detalhe completo no `ROLLBACK.md` daquele diretório.
 
 ## Para quem revisa isto sem contexto prévio
 
