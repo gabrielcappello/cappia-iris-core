@@ -25,9 +25,15 @@
 // (ClienteRpcFalso) e a agenda derivada do catalogo sintetico. REAL: os dois
 // modelos, o extrator, o orquestrador, a redatora e as guardas.
 //
-// As mensagens do paciente sao as REAIS da conversa de origem (WhatsApp,
-// Cleardent, 2026-09-05), com os erros de digitacao preservados. Procedimentos,
-// ids, nomes e telefone sao sinteticos.
+// SOBRE AS MENSAGENS -- precisao importa aqui (correcao de relato apontada na
+// revisao do Codex): esta e uma CONTINUACAO ADAPTADA do caso real, nao a
+// transcricao literal na ordem original. O turno 1 e a abertura semeada no
+// historico sao as mensagens reais, textuais, da conversa de 2026-09-05. Os
+// turnos 2 a 6 sao a continuacao que a conversa real NUNCA teve -- ela travou
+// em loop e depois em silencio, entao nao existe transcricao de como ela
+// terminaria. Sao escritos no mesmo registro (erros de digitacao inclusos,
+// ex.: "cirugia") para exercitar o percurso ate a reserva. Procedimentos, ids,
+// nomes e telefone sao sinteticos.
 //
 // Chave: somente via variavel de ambiente OPENAI_API_KEY (cofre canonico,
 // .iris-secrets/openai.env), carregada exclusivamente por `node --env-file`.
@@ -99,6 +105,29 @@ function montarCenario(tabelas: TabelasFalsas): void {
     estado: 'atendimento',
     dados: {},
     paciente_id: null,
+    // HISTORICO SEMEADO -- e o ponto do teste (achado da revisao do Codex,
+    // 2026-09-05, terceira rodada).
+    //
+    // Antes, a conversa comecava VAZIA e o pedido multiplo era a primeira
+    // mensagem. Naquele cenario a redatora nao recebia a abertura que lista
+    // os procedimentos pelo nome -- ou seja, a instrucao que manda relembrar
+    // as opcoes ("Se o historico_recente mostrar que VOCE ja listou os
+    // procedimentos... relembre as opcoes pelo nome") NAO PODIA disparar.
+    // A resposta generica passava no teste sem que o risco que ela existe
+    // para cobrir tivesse sido exercitado.
+    //
+    // Agora o turno do pedido multiplo acontece COM a abertura real no
+    // historico, nomeando implante, restauracao E canal. E o caso adverso de
+    // verdade: a instrucao generica (fatos sem nomes) contra a instrucao de
+    // relembrar (nomes visiveis no historico).
+    historico_conversa: [
+      {
+        mensagem_paciente: 'ola. boa noite',
+        resposta_iris:
+          'Boa noite, Carlos! Aqui é a Iris, assistente da Cleardent. Você já tem o retratamento de canal marcado para segunda-feira, 07/09 às 08:00 com o Dr. Pablo Arruda. Também estão pendentes:\n\n* Cirurgia de implante — dente 31 — Dr. Pablo Arruda\n* Restauração / Cárie (1 face) — dente 23 — Dr. Pablo Arruda\n\nVocê quer tratar do atendimento já marcado ou agendar um desses procedimentos pendentes?',
+        gerada_em: new Date('2026-09-04T03:51:00.000Z').toISOString(),
+      },
+    ],
     atualizado_em: new Date('2026-09-04T00:00:00.000Z').toISOString(),
   });
   for (const [id, nome, tempo] of [
@@ -266,9 +295,11 @@ async function main(): Promise<void> {
       const vazou = NOMES_PROIBIDOS_NO_TURNO_1.filter((n) => minuscula.includes(n));
       if (vazou.length > 0) {
         console.log(`  ✖ FALHA: a resposta citou procedimento (${vazou.join(', ')}) -- tinha de ser generica`);
+        console.log('    (o historico desta conversa NOMEIA os tres procedimentos: era esse o risco a cobrir)');
         falhas++;
       } else {
         console.log('  ✔ resposta generica: nenhum procedimento citado pelo nome');
+        console.log('    -- e o historico do turno anterior NOMEAVA implante, restauracao e canal');
       }
       // Reconhece o pedido e pergunta qual primeiro.
       const perguntou = resposta.includes('?');
