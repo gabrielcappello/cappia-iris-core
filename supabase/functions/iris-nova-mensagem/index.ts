@@ -6,6 +6,17 @@
 // deterministico, specs/resposta-conversacional-v1.md), ja pronta.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+
+// Declaracao LOCAL, so para o `deno check` -- o import acima
+// (jsr:@supabase/functions-js/edge-runtime.d.ts) e quem de fato declara
+// `EdgeRuntime` no runtime real da Edge Function, mas o `deno check` local
+// nao o reconhece (investigado e registrado em docs/04-decisoes-canonicas.md,
+// secao "Etapa 2": tres formas testadas, nenhuma resolveu o type-checking
+// local, sem afetar o runtime real). Esta declaracao resolve SOMENTE o
+// typecheck local, sem redefinir nada em runtime -- `typeof EdgeRuntime`
+// continua checando o global real, e o guard abaixo permanece seguro
+// mesmo que o global nao exista (confirmado via `deno run --no-check`).
+declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void } | undefined;
 import { processarMensagem } from "./orquestrador.ts";
 import { gerarRespostaConversacional } from "./gerar-resposta-conversacional.ts";
 import { gravarHistoricoConversa } from "./historico-conversa.ts";
@@ -25,6 +36,7 @@ import {
   registrarMedicaoUnificada,
 } from "./sombra-contexto-unificado.ts";
 import { medirResultadoIris, registrarMedicaoIris } from "./sombra-resultado-iris.ts";
+import { gravarAuditoriaSucesso, gravarAuditoriaFalha, type ResultadoTurno } from "./auditoria-conversas.ts";
 import { ClinicaNaoEncontradaError, EntradaInvalidaError } from "./erros.ts";
 import type { ClienteBancoDados } from "./tipos.ts";
 import type { ClienteRpc } from "./mensagens-recebidas-tipos.ts";
@@ -90,6 +102,27 @@ function jsonResponse(corpo: unknown, status: number): Response {
 // interpretarEAplicar e decide a resposta HTTP do turno. Exportada so para
 // uso em teste (index.test.ts); Deno.serve continua sendo o unico chamador
 // em producao.
+// Deriva o `ResultadoTurno` (specs/auditoria-conversas-admin-v1.md) do
+// MESMO erro que `tratarErroDoTurno` examina -- os dois precisam concordar
+// sempre, entao esta funcao nunca reimplementa a decisao, so extrai o
+// codigo de auditoria correspondente a cada ramo ja existente ali. Chamada
+// so dentro do escopo ja restrito ao catch de `processarMensagem` (nunca
+// para os erros anteriores: metodo/payload/config/instancia).
+export function resultadoTurnoDoErro(erro: unknown): ResultadoTurno {
+  if (erro instanceof ClinicaNaoEncontradaError) return "clinica_nao_encontrada";
+  if (erro instanceof EntradaInvalidaError) return "entrada_invalida";
+  if (
+    erro instanceof ErroClienteModeloOpenAI &&
+    (erro.categoria === "resposta_truncada" || erro.categoriaPrimeiraTentativa === "resposta_truncada")
+  ) {
+    return "resposta_truncada_apos_retry";
+  }
+  return "erro_interno";
+}
+
+const TEXTO_RESPOSTA_TRUNCADA_APOS_RETRY =
+  "Tive uma dificuldade para entender sua mensagem agora. Você pode repeti-la, por favor?";
+
 export function tratarErroDoTurno(erro: unknown): Response {
   if (erro instanceof ClinicaNaoEncontradaError) {
     return jsonResponse({ erro: "clinica_nao_encontrada" }, 404);
@@ -123,10 +156,7 @@ export function tratarErroDoTurno(erro: unknown): Response {
         ` tentativas=${erro.tentativas} duracao_ms=${erro.duracaoMs} status_http=${erro.statusHttp ?? "-"}` +
         ` modelo=${erro.modelo}`
     );
-    return jsonResponse(
-      { resposta: "Tive uma dificuldade para entender sua mensagem agora. Você pode repeti-la, por favor?" },
-      200
-    );
+    return jsonResponse({ resposta: TEXTO_RESPOSTA_TRUNCADA_APOS_RETRY }, 200);
   }
   // DIAGNOSTICO (2026-08-19): ate aqui o erro era descartado e o turno
   // devolvia so "erro_interno". Numa falha real -- 1 em 10 turnos -- nao
@@ -384,6 +414,20 @@ async function handler(req: Request): Promise<Response> {
             .then(registrarMedicaoIris)
             .catch(() => {});
 
+    // AUDITORIA DE CONVERSAS (specs/auditoria-conversas-admin-v1.md), so
+    // para leitura humana via /admin -- NUNCA lida por orquestrador.ts, por
+    // nenhuma IA, nem por historico-conversa.ts. Mesmas garantias das
+    // sombras acima: roda DEPOIS da resposta ja decidida e gravada, nunca e
+    // `await`ada antes do `return`, e `gravarAuditoriaSucesso` NUNCA lanca
+    // (best-effort por contrato, spec secao 1.2.2).
+    const promessaAuditoria = gravarAuditoriaSucesso(clienteBanco, {
+      clinicaId: resultado.clinica_id,
+      telefoneNormalizado: payload.telefone_normalizado,
+      mensagemPaciente: payload.mensagem,
+      respostaIris: resposta,
+      motivoFallback: motivo_fallback,
+    }).catch(() => {});
+
     // `EdgeRuntime.waitUntil` mantem o isolado vivo ate a promessa acima
     // terminar, mesmo depois da resposta ja ter sido enviada -- sem isso, o
     // runtime pode encerrar o isolado antes do log-sombra rodar. Quando o
@@ -394,10 +438,33 @@ async function handler(req: Request): Promise<Response> {
       EdgeRuntime.waitUntil(promessaSombra);
       EdgeRuntime.waitUntil(promessaSombraUnificada);
       EdgeRuntime.waitUntil(promessaSombraIris);
+      EdgeRuntime.waitUntil(promessaAuditoria);
     }
 
     return jsonResponse({ resposta }, 200);
   } catch (erro) {
+    // AUDITORIA DE FALHA (specs/auditoria-conversas-admin-v1.md, secao
+    // 1.2): so dentro deste catch -- ou seja, so depois que o metodo, o
+    // payload, as variaveis de ambiente e a instancia ja foram validados
+    // (tudo isso acontece ANTES deste try/catch, nunca gera linha).
+    // `clinica_id` nao esta mais disponivel aqui (o erro interrompeu o
+    // fluxo antes de devolve-lo), entao `gravarAuditoriaFalha` resolve por
+    // conta propria, best-effort, a partir de provider+instancia_whatsapp
+    // do payload. Nunca `await`ada antes do `return` desta funcao -- via
+    // `EdgeRuntime.waitUntil`, mesma disciplina do caminho de sucesso.
+    const resultadoTurno = resultadoTurnoDoErro(erro);
+    const promessaAuditoriaFalha = gravarAuditoriaFalha(clienteBanco, {
+      provider: payload.provider,
+      instanciaWhatsapp: payload.instancia_whatsapp,
+      telefoneNormalizado: payload.telefone_normalizado,
+      mensagemPaciente: payload.mensagem,
+      respostaIris: resultadoTurno === "resposta_truncada_apos_retry" ? TEXTO_RESPOSTA_TRUNCADA_APOS_RETRY : null,
+      resultadoTurno,
+    }).catch(() => {});
+    if (typeof EdgeRuntime !== "undefined") {
+      EdgeRuntime.waitUntil(promessaAuditoriaFalha);
+    }
+
     return tratarErroDoTurno(erro);
   }
 }

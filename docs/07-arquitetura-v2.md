@@ -391,6 +391,15 @@ comportamento visível ao paciente. É o par A/B exigido pelo princípio do test
 > exista (confirmado via `deno run --no-check`), e o pior cenário se `waitUntil` não
 > funcionar como esperado em produção é log-sombra incompleto, nunca efeito no paciente.
 > Só um ambiente real resolve essa dúvida — ver próximos passos.
+>
+> **Atualização (2026-09-05, specs/auditoria-conversas-admin-v1.md):** as três formas
+> testadas acima eram todas sobre *importar* o tipo de `EdgeRuntime` de fora — nenhuma
+> tentou *declará-lo localmente* só para o compilador. Um `declare const EdgeRuntime: {
+> waitUntil(promise: Promise<unknown>): void } | undefined;` no topo de `index.ts`, ao
+> lado do import real (que continua sendo o que declara o global em runtime), resolve o
+> `deno check` local sem tocar em runtime — o `typeof EdgeRuntime` do guard continua
+> checando o global de verdade, e o comportamento em produção não muda. Zerou os 4 erros
+> `TS2304` que este documento registrava como aceitos, não mais presentes.
 
 > ℹ️ **Snapshot de 2026-08-14: a v23 registrada abaixo NÃO foi revertida — era o código
 > em produção naquela data** (redeployado como v25 e mantido nas versões seguintes). O que

@@ -244,6 +244,15 @@ export interface ClienteBancoDados {
       opcoes: { onConflict: string; ignoreDuplicates: boolean }
     ): ConsultaEncadeavel;
     update(valores: Record<string, unknown>): ConsultaEncadeavel;
+    /**
+     * Espelha PostgrestFilterBuilder.insert() do supabase-js. Usado
+     * exclusivamente por auditoria-conversas.ts
+     * (specs/auditoria-conversas-admin-v1.md): cada turno gera uma linha
+     * nova e independente, sem conflito possível (a tabela não tem
+     * constraint única) -- diferente de estado_conversa, que usa upsert por
+     * já ter concorrência de criação a resolver via `onConflict`.
+     */
+    insert(valores: Record<string, unknown>): ConsultaEncadeavel;
   };
 }
 

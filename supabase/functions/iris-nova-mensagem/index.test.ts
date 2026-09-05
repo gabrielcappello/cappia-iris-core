@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { ErroClienteModeloOpenAI, MODELO_IRIS_NOVA } from './cliente-modelo-openai.ts';
 import { ClinicaNaoEncontradaError, EntradaInvalidaError } from './erros.ts';
-import { tratarErroDoTurno } from './index.ts';
+import { tratarErroDoTurno, resultadoTurnoDoErro } from './index.ts';
 
 const MENSAGEM_FIXA_DETERMINISTICA =
   'Tive uma dificuldade para entender sua mensagem agora. Você pode repeti-la, por favor?';
@@ -88,4 +88,53 @@ test('INT-21 (HTTP): resposta de desfecho seguro nunca contem a categoria, o cod
   assert.ok(!textoCru.includes('resposta_truncada'));
   assert.ok(!textoCru.includes('resposta_incompleta'));
   assert.ok(!textoCru.includes('categoria'));
+});
+
+// resultadoTurnoDoErro (specs/auditoria-conversas-admin-v1.md, secao 1.2):
+// precisa concordar SEMPRE com tratarErroDoTurno, par a par -- os dois
+// examinam o MESMO erro e nunca podem divergir sobre qual ramo e qual.
+test('resultadoTurnoDoErro: ClinicaNaoEncontradaError -> clinica_nao_encontrada', () => {
+  assert.equal(
+    resultadoTurnoDoErro(new ClinicaNaoEncontradaError('evolution', 'instancia-teste')),
+    'clinica_nao_encontrada'
+  );
+});
+
+test('resultadoTurnoDoErro: EntradaInvalidaError -> entrada_invalida', () => {
+  assert.equal(resultadoTurnoDoErro(new EntradaInvalidaError('campo', 'invalido')), 'entrada_invalida');
+});
+
+test('resultadoTurnoDoErro: 1a e 2a tentativa truncadas -> resposta_truncada_apos_retry', () => {
+  const erro = new ErroClienteModeloOpenAI('resposta_truncada', 'resposta_incompleta', 2, 250, MODELO_IRIS_NOVA, 200);
+  assert.equal(resultadoTurnoDoErro(erro), 'resposta_truncada_apos_retry');
+});
+
+test('resultadoTurnoDoErro: 1a truncada, 2a falha por outra categoria -> ainda resposta_truncada_apos_retry (mesmo par que tratarErroDoTurno)', () => {
+  const erro = new ErroClienteModeloOpenAI(
+    'timeout',
+    'tempo_esgotado_na_tentativa',
+    2,
+    8000,
+    MODELO_IRIS_NOVA,
+    null,
+    null,
+    'resposta_truncada'
+  );
+  assert.equal(resultadoTurnoDoErro(erro), 'resposta_truncada_apos_retry');
+  // Mesmo erro, mesmo turno: tratarErroDoTurno tem que concordar (HTTP 200,
+  // mensagem fixa) -- provado par a par, nunca em teste separado que possa
+  // divergir silenciosamente.
+  const resposta = tratarErroDoTurno(erro);
+  assert.equal(resposta.status, 200);
+});
+
+test('resultadoTurnoDoErro: categoria diferente, sem sinalizacao de 1a tentativa truncada -> erro_interno', () => {
+  const erro = new ErroClienteModeloOpenAI('timeout', 'tempo_esgotado_na_tentativa', 2, 8000, MODELO_IRIS_NOVA);
+  assert.equal(resultadoTurnoDoErro(erro), 'erro_interno');
+});
+
+test('resultadoTurnoDoErro: erro desconhecido (nao instancia de nenhuma classe conhecida) -> erro_interno', () => {
+  assert.equal(resultadoTurnoDoErro(new Error('algo inesperado')), 'erro_interno');
+  assert.equal(resultadoTurnoDoErro('string crua'), 'erro_interno');
+  assert.equal(resultadoTurnoDoErro(null), 'erro_interno');
 });
