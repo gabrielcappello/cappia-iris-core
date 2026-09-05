@@ -8,11 +8,21 @@ defeito real, achado em teste manual de produção, e a correção aprovada.
   `procedimentos_mencionados` e resposta obrigatoriamente genérica; contrato físico do
   evento fechado; declaração de que é correção de roteamento da `main`, não capacidade V2
   nova; teste da última mensagem realinhado ao que a solução representa).
+- **Revisão de código e evidências (Codex, encerrada em 2026-09-05):** parecer técnico
+  favorável à correção. Confirmado independentemente: roteamento corrigido (o evento não é
+  mais engolido por `decidirPorNatureza`), histórico com os três nomes de procedimento
+  chegando de fato no payload HTTP enviado à redatora, resposta genérica mesmo com os nomes
+  visíveis, e percurso completo até a reserva do procedimento efetivamente escolhido.
+  **Ressalva registrada, não bloqueante:** numa execução independente do Codex, o terceiro
+  turno falhou com `valor_fora_do_dominio` em `saida.alteracoes.periodo.valor`; a execução
+  seguinte passou sem o mesmo erro. Causa **indeterminada** — não atribuir ao ambiente, não
+  afirmar que é preexistente, não investigado nesta rodada. Registrar como risco a
+  acompanhar, não como bloqueador desta entrega.
 - **Aprovação (Gabriel):** spec aprovada e implementação autorizada na branch
   `feat/pedido-multiplo`, criada a partir da `main`.
-- **Publicação NÃO autorizada.** Merge na `main`, push para produção e deploy da Edge
-  Function dependem de autorização explícita e posterior do Gabriel, após revisão do código
-  e das evidências de teste pelo Codex.
+- **Publicação NÃO autorizada.** A revisão de código e evidências está encerrada; merge na
+  `main`, push para produção e deploy da Edge Function seguem dependendo de autorização
+  explícita e posterior do Gabriel.
 
 ## Para quem revisa isto sem contexto prévio
 
