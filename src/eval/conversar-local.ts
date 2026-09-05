@@ -37,7 +37,7 @@ import { ClienteFalso, criarTabelasFalsasVazias, type TabelasFalsas } from '../c
 import {
   criarClienteModeloOpenAI,
   ESPERA_ENTRE_TENTATIVAS_MS_APROVADO,
-  MODELO_GPT_4_1_MINI,
+  MODELO_IRIS_NOVA,
   PRAZO_TOTAL_MS_APROVADO,
   TIMEOUT_POR_TENTATIVA_MS_APROVADO,
 } from '../core/cliente-modelo-openai.ts';
@@ -175,14 +175,14 @@ async function main(): Promise<void> {
 
   const clienteModelo = criarClienteModeloOpenAI({
     chaveApi,
-    modelo: MODELO_GPT_4_1_MINI,
+    modelo: MODELO_IRIS_NOVA,
     timeoutPorTentativaMs: TIMEOUT_POR_TENTATIVA_MS_APROVADO,
     prazoTotalMs: PRAZO_TOTAL_MS_APROVADO,
     esperaEntreTentativasMs: ESPERA_ENTRE_TENTATIVAS_MS_APROVADO,
   });
   const clienteRedator = criarClienteModeloRedatorOpenAI({
     chaveApi,
-    modelo: MODELO_GPT_4_1_MINI,
+    modelo: MODELO_IRIS_NOVA,
     timeoutMs: TIMEOUT_REDATOR_MS_APROVADO,
   });
 
