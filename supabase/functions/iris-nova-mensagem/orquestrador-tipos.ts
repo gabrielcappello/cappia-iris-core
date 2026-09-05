@@ -108,6 +108,23 @@ export type DecisaoOrquestrador =
   // (situacao "Desistencia", atendimento-v1.md secao 5). Nunca cancela
   // agendamento existente.
   | { tipo: 'desistencia' }
+  // O paciente pediu MAIS DE UM procedimento no mesmo turno, cada um com seu
+  // proprio dia/horario (specs/multiplos-procedimentos-mesmo-turno-v1.md).
+  //
+  // SEM PAYLOAD, deliberadamente. O evento da IA nao traz quais procedimentos
+  // foram pedidos, e o Core NAO os deduz de `tratamentos_pendentes`: um
+  // paciente com tres tratamentos aprovados pode ter pedido dois, e adivinhar
+  // quais seria o Core decidindo o significado da mensagem -- sempre trabalho
+  // da IA. Sem os nomes, a resposta ao paciente e obrigatoriamente generica
+  // ("vamos marcar um procedimento de cada vez; qual voce quer marcar
+  // primeiro?"), e e por isso que esta decisao NAO entra em
+  // DECISOES_COM_PLANO_DE_TRATAMENTO: sem a lista em maos, a redatora nao tem
+  // como nomear um procedimento que o Core nao sabe qual e.
+  //
+  // Terminal e conversacional: nao consulta disponibilidade, nao reserva, nao
+  // limpa o agendamento em andamento (o paciente pode estar no meio de um
+  // pedido e so ter acrescentado um segundo).
+  | { tipo: 'pedido_multiplo_detectado' }
   // Sem payload desde 2026-08-08 (specs/procedimento-semantico-v1.md): a IA
   // devolve `procedimento_id` e o Core so confere integridade. ID ausente,
   // inexistente, de outra clinica ou inativo caem todos aqui -- os motivos

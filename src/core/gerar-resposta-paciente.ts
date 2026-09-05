@@ -82,6 +82,14 @@ export function gerarRespostaPaciente(decisao: DecisaoOrquestrador): string {
       // Situacao "Desistencia" (atendimento-v1.md secao 5): encerra com
       // cordialidade, nunca trata como cancelamento de agendamento existente.
       return 'Sem problemas! Se precisar, é só chamar.';
+    case 'pedido_multiplo_detectado':
+      // GENERICA POR CONTRATO (2026-09-05,
+      // specs/multiplos-procedimentos-mesmo-turno-v1.md secao 3.3): a decisao
+      // nao carrega quais procedimentos o paciente pediu, entao nao ha nome a
+      // citar aqui -- nem haveria como saber qual citar. Mesmo principio ja
+      // aplicado em `aguardando_procedimento` acima: uma unica pergunta, sem
+      // revelar nem inventar o que o Core nao sabe.
+      return 'Vamos marcar um procedimento de cada vez. Qual você quer marcar primeiro?';
     case 'aguardando_data_horario':
       return respostaAguardandoDataHorario(decisao.resultado);
     // --- Os tres estados de conversa normal (2026-08-06) ---

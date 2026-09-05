@@ -199,6 +199,23 @@ export function derivarAcaoContextoHorarios(decisao: DecisaoOrquestrador): AcaoC
     case 'correcao_cadastro_falhou':
       return { tipo: 'preservar' };
 
+    // PEDIDO MULTIPLO (2026-09-05,
+    // specs/multiplos-procedimentos-mesmo-turno-v1.md): PRESERVAR, nunca
+    // limpar -- mesmo raciocinio da correcao de cadastro logo acima.
+    //
+    // O paciente pode estar no meio de um agendamento (com proposta de horario
+    // ja pendente) e apenas ter acrescentado um segundo pedido. Limpar aqui
+    // apagaria a proposta que ele ainda vai confirmar, e a spec e explicita:
+    // esta decisao nao limpa nada do que ja estava em andamento.
+    //
+    // Nao grava marcador proprio: a pergunta feita ("qual procedimento
+    // primeiro?") e sobre PROCEDIMENTO, e a resposta dele segue a regra normal
+    // de `procedimento_id` -- nao ha lista nem proposta a ancorar. O sinal que
+    // originou esta decisao e transitorio por construcao (spec secao 3.2) e
+    // nunca vira estado persistido.
+    case 'pedido_multiplo_detectado':
+      return { tipo: 'preservar' };
+
     // AGUARDANDO_PROCEDIMENTO (2026-08-30): quando a Iris OFERECE a
     // Consulta/Avaliacao aqui, a oferta precisa ser gravada -- mesma acao e
     // mesmo motivo de `sem_dentista_disponivel` acima.

@@ -279,6 +279,42 @@ function lerRespostaTrocaTelefone(
 }
 
 /**
+ * Le o candidato `pedido_multiplo` -- o paciente pediu mais de um
+ * procedimento no MESMO turno, cada um com seu proprio dia/horario
+ * (specs/multiplos-procedimentos-mesmo-turno-v1.md).
+ *
+ * POR QUE EXISTE: os campos do agendamento em andamento (`procedimento_id`,
+ * `data_texto`, `periodo`, `horario_texto`) sao SINGULARES por construcao --
+ * nao ha onde guardar dois pares (procedimento, dia, horario). Sem este sinal,
+ * a regra generica de "mais de um valor para o mesmo campo" empacotava os dois
+ * pedidos numa string ("terca, quinta") que nenhum resolvedor posterior sabe
+ * ler -- defeito real de producao em 2026-09-05: loop de tres turnos repetindo
+ * a mesma pergunta, depois silencio total.
+ *
+ * DIFERENTE DOS OUTROS DOIS EVENTOS, NAO EXIGE MARCADOR DO CORE: nao ha nada
+ * pendente a validar contra o estado oficial. `aceitar_opcao` e
+ * `aceitar_troca_telefone` autorizam um EFEITO (aplicar procedimento, trocar
+ * telefone), entao exigem os dois lados. Este evento nao autoriza efeito
+ * nenhum -- ele so faz a Iris PERGUNTAR qual procedimento vem primeiro, que e
+ * o desfecho mais conservador possivel. Um falso positivo custa uma pergunta a
+ * mais; um falso negativo devolve o defeito de origem.
+ *
+ * NAO CARREGA QUAIS procedimentos foram pedidos: o evento nao traz ids, e o
+ * Core nao os infere de `tratamentos_pendentes` (o paciente pode ter tres
+ * pendentes e pedir dois -- qual par ele mencionou e leitura de linguagem,
+ * nunca deducao do Core). Por isso a decisao resultante nao tem payload e a
+ * resposta ao paciente e obrigatoriamente generica (spec secoes 3.2 e 3.3).
+ *
+ * TRANSITORIO por construcao, como `resposta_troca_telefone`: sai daqui para o
+ * orquestrador e nunca e gravado em `dados`. Nao existe "modo pedido multiplo"
+ * persistido -- se a ambiguidade continuar no turno seguinte, a IA emite o
+ * evento de novo, a partir da mensagem nova.
+ */
+function lerPedidoMultiplo(eventos: readonly EventoCandidatoIA[]): boolean {
+  return eventos.some((e) => e.tipo === 'pedido_multiplo');
+}
+
+/**
  * Persiste `dentista_id` quando -- e somente quando -- a IA identificou
  * exatamente UM candidato (specs/dentista-semantico-v1.md secao 12).
  *
@@ -811,6 +847,10 @@ export async function interpretarEAplicar(
       saida.natureza_mensagem,
       entrada.troca_telefone_pendente
     ),
+    // Transitorio pelo mesmo caminho de `resposta_troca_telefone` acima: sai
+    // daqui para o orquestrador e nunca e gravado em `dados`
+    // (specs/multiplos-procedimentos-mesmo-turno-v1.md secao 3.2).
+    pedido_multiplo_detectado: lerPedidoMultiplo(saida.eventos_candidatos),
   };
 }
 

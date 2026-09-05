@@ -94,6 +94,10 @@ export function mapearDecisaoParaCapacidadeV2(tipo: DecisaoOrquestrador['tipo'])
     case 'aguardando_data_horario':
     case 'troca_telefone_pendente':
     case 'troca_telefone_recusada':
+    // 2026-09-05 (specs/multiplos-procedimentos-mesmo-turno-v1.md secao 3.4):
+    // a Iris esta conversando para desfazer uma ambiguidade -- pergunta qual
+    // procedimento vem primeiro, sem consultar nem alterar nada no sistema.
+    case 'pedido_multiplo_detectado':
       return 'nenhuma_apenas_conversar';
     case 'sem_dentista_disponivel':
     case 'combinacao_indisponivel':

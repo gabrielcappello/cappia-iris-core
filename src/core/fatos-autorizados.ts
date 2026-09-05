@@ -79,7 +79,8 @@ export type ObjetivoResposta =
   | 'pedir_confirmacao_cancelamento' // 2026-08-11 -- idem, secao 4.
   | 'informar_cancelamento_criado' // 2026-08-11 -- idem, secao 7.
   | 'informar_cadastro_atualizado' // 2026-09-01 -- specs/correcao-cadastro-conversacional-v1.md.
-  | 'informar_correcao_cadastro_invalida'; // 2026-09-01 -- idem, valor rejeitado.
+  | 'informar_correcao_cadastro_invalida' // 2026-09-01 -- idem, valor rejeitado.
+  | 'pedir_um_procedimento_por_vez'; // 2026-09-05 -- specs/multiplos-procedimentos-mesmo-turno-v1.md.
 
 export interface FatosAutorizados {
   objetivo: ObjetivoResposta;
@@ -621,6 +622,24 @@ function derivarPorDecisao(decisao: DecisaoOrquestrador, dataHoje: string): Fato
 
     case 'desistencia':
       return { objetivo: 'encerrar_cordialmente' };
+
+    // PEDIDO MULTIPLO (2026-09-05,
+    // specs/multiplos-procedimentos-mesmo-turno-v1.md secao 3.3).
+    //
+    // SEM NENHUM FATO ALEM DO OBJETIVO, e isso e a garantia estrutural da
+    // resposta generica exigida pela spec. A decisao nao carrega quais
+    // procedimentos o paciente pediu (o evento da IA nao traz ids, e o Core
+    // nao os deduz de `tratamentos_pendentes` -- ele pode ter tres aprovados e
+    // ter pedido dois). Sem nome nenhum aqui, a redatora nao tem o que citar,
+    // e nao pode inventar: "vamos marcar um procedimento de cada vez; qual
+    // voce quer marcar primeiro?".
+    //
+    // E por isso que `pedido_multiplo_detectado` NAO entra em
+    // DECISOES_COM_PLANO_DE_TRATAMENTO (orquestrador.ts): se a lista de
+    // tratamentos aprovados chegasse junto, a redatora poderia nomear -- e
+    // nomearia o item errado, ou um terceiro que ninguem pediu.
+    case 'pedido_multiplo_detectado':
+      return { objetivo: 'pedir_um_procedimento_por_vez' };
 
     case 'aguardando_procedimento':
       // O OBJETIVO NAO MUDA (2026-08-30): o que esta resposta precisa alcancar

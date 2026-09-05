@@ -259,17 +259,19 @@ export const NATUREZAS_MENSAGEM_PERMITIDAS: readonly NaturezaMensagem[] = [
  * apenas "a mensagem atual parece conter isto". Quem valida contra o estado
  * oficial e aplica qualquer efeito e sempre o Core.
  *
- * Dois tipos implementados: `aceitar_opcao` (2026-08-09) e
- * `aceitar_troca_telefone` (2026-08-10). Os outros quatro do catalogo
- * canonico -- `solicitar_nova_opcao`, `desistir`,
+ * Tres tipos implementados: `aceitar_opcao` (2026-08-09),
+ * `aceitar_troca_telefone` (2026-08-10) e `pedido_multiplo` (2026-09-05). Os
+ * outros quatro do catalogo canonico -- `solicitar_nova_opcao`, `desistir`,
  * `aceitar_qualquer_profissional`, `confirmar_resumo` -- permanecem fora:
  * nenhum deles e necessario para estes funcionarem.
  *
- * FORMA UNICA, nunca uniao discriminada. Os dois eventos afirmam a mesma
+ * FORMA UNICA, nunca uniao discriminada. Os dois primeiros afirmam a mesma
  * coisa -- "o paciente aceitou o que voce perguntou" --, entao nao existe
- * campo que um precise e o outro nao.
+ * campo que um precise e o outro nao. `pedido_multiplo` afirma outra coisa
+ * ("esta mensagem contem mais de um pedido"), mas cabe na MESMA forma: a
+ * existencia do evento ja e o fato inteiro (ver `referencia_textual` abaixo).
  *
- * NENHUM DOS DOIS TEM UM "NAO": recusa e sempre a AUSENCIA do evento. Medido
+ * NENHUM DELES TEM UM "NAO": recusa e sempre a AUSENCIA do evento. Medido
  * contra a IA real em 2026-08-10 (src/eval/diagnostico-contrato-eventos.ts):
  * um evento de recusa proprio (`recusar_troca_telefone`) foi emitido em 0 dos
  * casos, porque toda a instrucao ao redor ensina justamente a regra oposta.
@@ -280,10 +282,13 @@ export const NATUREZAS_MENSAGEM_PERMITIDAS: readonly NaturezaMensagem[] = [
  * `referencia_textual` preserva a referencia presente na mensagem quando ela
  * existe ("14h", "a segunda opcao"); e `null` para concordancia deitica
  * ("pode ser") -- exemplo da propria spec canonica. A IA NUNCA resolve essa
- * referencia para ID, indice ou registro.
+ * referencia para ID, indice ou registro. Em `pedido_multiplo` e SEMPRE
+ * `null` (specs/multiplos-procedimentos-mesmo-turno-v1.md secao 3.1): nao ha
+ * o que desambiguar -- o Core nao identifica QUAIS procedimentos foram
+ * pedidos, e deliberadamente nao tenta (secao 3.2 da mesma spec).
  */
 export interface EventoCandidatoIA {
-  tipo: 'aceitar_opcao' | 'aceitar_troca_telefone';
+  tipo: 'aceitar_opcao' | 'aceitar_troca_telefone' | 'pedido_multiplo';
   referencia_textual: string | null;
 }
 
@@ -298,6 +303,7 @@ export type RespostaTrocaTelefone = 'sim' | 'nao';
 export const TIPOS_EVENTO_CANDIDATO_PERMITIDOS: readonly EventoCandidatoIA['tipo'][] = [
   'aceitar_opcao',
   'aceitar_troca_telefone',
+  'pedido_multiplo',
 ];
 
 export interface SaidaInterpretacao {
@@ -405,4 +411,18 @@ export interface ResultadoInterpretacao {
    * nada.
    */
   resposta_troca_telefone: RespostaTrocaTelefone | null;
+  /**
+   * A mensagem atual pede MAIS DE UM procedimento ao mesmo tempo, cada um com
+   * seu proprio dia/horario (specs/multiplos-procedimentos-mesmo-turno-v1.md).
+   *
+   * TRANSITORIO, como `resposta_troca_telefone`: existe so para esta passagem
+   * do orquestrador e nunca e gravado em `dados`. Nao ha "modo pedido
+   * multiplo" persistido -- a IA reemite o evento a cada turno em que a
+   * ambiguidade aparecer.
+   *
+   * NAO DIZ QUAIS procedimentos: o evento nao traz ids e o Core nao os deduz
+   * (spec secao 3.2). So afirma que ha mais de um pedido -- o suficiente para
+   * o Core perguntar qual vem primeiro, sem nomear nenhum.
+   */
+  pedido_multiplo_detectado: boolean;
 }

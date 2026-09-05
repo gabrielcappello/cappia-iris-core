@@ -704,6 +704,31 @@ export async function processarMensagem(
     }
   }
 
+  // PEDIDO MULTIPLO -- mais de um procedimento pedido no MESMO turno, cada um
+  // com seu proprio dia/horario (specs/multiplos-procedimentos-mesmo-turno-v1.md).
+  //
+  // ANTES DE TUDO QUE INTERPRETA CAMPOS DE AGENDAMENTO, e o motivo e
+  // estrutural: `procedimento_id`, `data_texto`, `periodo` e `horario_texto`
+  // guardam UM valor cada. Quando o paciente pede dois procedimentos em dois
+  // dias, nao existe onde representar os dois pares -- e a instrucao manda a
+  // IA deixar esses campos AUSENTES justamente para nao empacotar "terca,
+  // quinta" num campo que espera uma data so. Seguir para `decidir()` (ou para
+  // remarcacao/cancelamento) com esses campos deliberadamente vazios faria o
+  // fluxo perguntar de novo o que o paciente ja disse -- o loop de tres turnos
+  // medido em producao em 2026-09-05, seguido de silencio.
+  //
+  // Nao depende de catalogo, procedimento, dentista nem disponibilidade: e uma
+  // pergunta conversacional ("qual primeiro?"), o desfecho mais conservador
+  // possivel. Mesmo criterio que ja poe o cancelamento antes da checagem de
+  // catalogo, logo abaixo.
+  //
+  // NAO LIMPA NADA de `dados`: o paciente pode estar no meio de um agendamento
+  // e ter apenas acrescentado um segundo pedido -- o estado do primeiro
+  // continua intacto para quando ele voltar a ele.
+  if (interpretacao.pedido_multiplo_detectado) {
+    return await finalizar({ tipo: 'pedido_multiplo_detectado' });
+  }
+
   // CANCELAMENTO -- roteado exclusivamente por `dados.intencao === 'cancelamento'`
   // (specs/cancelamento-conversacional-v1.md). Mesma disciplina da remarcacao:
   // NUNCA inferido pela existencia de um agendamento ativo. Quem distingue
