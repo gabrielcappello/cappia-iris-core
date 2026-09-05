@@ -447,22 +447,34 @@ test('CASO REAL -- dois periodos e dois horarios no mesmo turno respondem, sem m
   assert.equal(dados.periodo, undefined);
 });
 
-// --- 6. CONTINUIDADE: primeiro procedimento reservado, segundo ainda pendente ---
+// --- 6. CONTINUIDADE: convite ao segundo procedimento so com PEDIDO EXPLICITO ---
 //
-// Pedido do Gabriel (2026-09-05): quando o historico mostra explicitamente
-// que o paciente pediu para marcar mais de um procedimento e o primeiro
-// acabou de chegar a `reserva_criada`, a redatora deve anunciar a reserva,
-// depois convidar naturalmente a marcar o proximo e perguntar qual dia fica
-// melhor -- sem frase deterministica nova, sem estado/evento/tabela nova, e
-// sem nomear o proximo procedimento se o nome nao estiver nos fatos
-// autorizados do turno.
+// ACHADO DO CODEX (2026-09-05, segunda rodada): a primeira versao desta
+// correcao usava `tratamentos_aprovados` (fato sobre o PLANO CLINICO -- o
+// que o dentista ainda quer que se faca) como PROVA de que o paciente
+// pediu varios procedimentos NESTA conversa. Isso e FALSO POSITIVO: um
+// paciente com outro tratamento pendente no plano, que pediu SO UM
+// procedimento agora, seria convidado a marcar o outro mesmo sem ter
+// pedido isso -- oferta nao solicitada.
 //
-// A garantia e ESTRUTURAL, no mesmo espirito de `pedido_multiplo_detectado`:
-// o Core decide QUAIS fatos entregar (aqui, se ha ou nao um segundo
-// tratamento pendente, filtrado do que acabou de ser reservado), e a
-// redatora So pode nomear o que estiver de fato nos fatos.
+// CORRIGIDO: `reserva_criada` SAIU de `DECISOES_COM_PLANO_DE_TRATAMENTO`
+// (orquestrador.ts) -- nenhum fato novo e produzido pelo Core para este
+// caso. A continuidade agora depende EXCLUSIVAMENTE de
+// `historico_recente` mostrar, de forma explicita, que o paciente pediu
+// mais de um procedimento nesta conversa (redator-instrucoes.ts) -- so a
+// leitura de linguagem da redatora sabe distinguir isso, nunca um fato
+// estrutural do Core.
+//
+// Os testes desta secao verificam exatamente essa distincao: (a) o Core
+// NUNCA busca nem entrega tratamentos_aprovados para reserva_criada; (b)
+// com o historico mostrando pedido multiplo explicito, a redatora real
+// confirma o primeiro e pergunta pelo outro, de forma GENERICA; (c) sem
+// esse sinal no historico -- mesmo com outro tratamento pendente no plano
+// -- ela so confirma o primeiro, sem oferecer o resto.
 
-function semearPacienteCompleto(tabelas: TabelasFalsas, clinicaId: string): string {
+test('CONTINUIDADE -- reserva_criada NAO busca nem carrega tratamentos_aprovados (correcao do falso positivo)', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const { clinicaId, cirurgiaId, dentistaId } = montarCenario(tabelas);
   const pacienteId = crypto.randomUUID();
   tabelas.pacientes.push({
     id: pacienteId,
@@ -472,20 +484,12 @@ function semearPacienteCompleto(tabelas: TabelasFalsas, clinicaId: string): stri
     documento: '52998224725',
     data_nascimento: '1973-08-02',
   });
-  return pacienteId;
-}
 
-test('CONTINUIDADE -- reserva_criada entra em DECISOES_COM_PLANO_DE_TRATAMENTO e busca o plano', async () => {
-  const tabelas = criarTabelasFalsasVazias();
-  const { clinicaId, cirurgiaId, restauracaoId, dentistaId } = montarCenario(tabelas);
-  const pacienteId = semearPacienteCompleto(tabelas, clinicaId);
-
-  const agendamentoId = crypto.randomUUID();
   const rpc = new ClienteRpcFalso({
     cappia_reservar_agendamento: {
       data: {
         sucesso: true,
-        agendamento_id: agendamentoId,
+        agendamento_id: crypto.randomUUID(),
         dentista_id: dentistaId,
         duracao_min: 60,
         data: '2026-09-09',
@@ -493,16 +497,11 @@ test('CONTINUIDADE -- reserva_criada entra em DECISOES_COM_PLANO_DE_TRATAMENTO e
       },
       error: null,
     },
-    // O plano ainda tem a restauracao pendente -- a cirurgia (que acabou de
-    // ser reservada) NAO aparece aqui: a RPC real so retira um item quando o
-    // DENTISTA marca "realizado" no painel, entao ela devolveria os DOIS se
-    // fosse consultada de novo agora. O filtro pelo procedimento_id
-    // recem-reservado (orquestrador.ts) e o que garante a exclusao.
+    // Configurada de proposito, para provar que o Core NAO a chama mais --
+    // se chamasse, o dublê responderia e o teste abaixo (`chamadas.some`)
+    // pegaria a regressao.
     iris_nova_tratamentos_aprovados: {
-      data: [
-        { descricao: 'Cirurgia de implante', dente: '31', procedimento_id: cirurgiaId, para_agendar: false },
-        { descricao: 'Restauração / Cárie (1 face)', dente: '23', procedimento_id: restauracaoId, para_agendar: false },
-      ],
+      data: [{ descricao: 'Restauração / Cárie (1 face)', dente: '23', procedimento_id: crypto.randomUUID() }],
       error: null,
     },
   });
@@ -530,123 +529,251 @@ test('CONTINUIDADE -- reserva_criada entra em DECISOES_COM_PLANO_DE_TRATAMENTO e
 
   assert.equal(resultado.decisao.tipo, 'reserva_criada');
   assert.ok(
-    rpc.chamadas.some((c) => c.nome === 'iris_nova_tratamentos_aprovados'),
-    'reserva_criada precisa buscar o plano de tratamento, para saber se ha um segundo procedimento pendente'
+    !rpc.chamadas.some((c) => c.nome === 'iris_nova_tratamentos_aprovados'),
+    'reserva_criada NAO PODE buscar o plano de tratamento -- isso e o que causava o falso positivo'
   );
-
-  // O FATO que chega a redatora tem SO a restauracao -- nunca a cirurgia,
-  // que acabou de ser reservada neste mesmo turno.
-  assert.ok(resultado.tratamentos_aprovados !== undefined, 'o segundo pendente precisa chegar como fato');
-  assert.deepEqual(
-    resultado.tratamentos_aprovados?.map((t) => t.procedimento_id),
-    [restauracaoId],
-    'o procedimento recem-reservado nao pode sobrar na lista de pendentes'
-  );
-});
-
-test('CONTINUIDADE -- sem segundo procedimento pendente, nenhum fato de plano acompanha a reserva', async () => {
-  const tabelas = criarTabelasFalsasVazias();
-  const { clinicaId, cirurgiaId, dentistaId } = montarCenario(tabelas);
-  const pacienteId = semearPacienteCompleto(tabelas, clinicaId);
-
-  const rpc = new ClienteRpcFalso({
-    cappia_reservar_agendamento: {
-      data: {
-        sucesso: true,
-        agendamento_id: crypto.randomUUID(),
-        dentista_id: dentistaId,
-        duracao_min: 60,
-        data: '2026-09-09',
-        horario: '10:30',
-      },
-      error: null,
-    },
-    // O UNICO pendente era o que acabou de ser reservado -- nada mais no plano.
-    iris_nova_tratamentos_aprovados: {
-      data: [{ descricao: 'Cirurgia de implante', dente: '31', procedimento_id: cirurgiaId, para_agendar: false }],
-      error: null,
-    },
-  });
-
-  const modelo = new ClienteModeloFalso([
-    {
-      natureza_mensagem: 'resposta',
-      alteracoes: {
-        procedimento_id: { acao: 'informar', valor: cirurgiaId },
-        data_texto: { acao: 'informar', valor: '09/09/2026' },
-        horario_texto: { acao: 'informar', valor: '10:30' },
-        confirmacao: { acao: 'informar', valor: 'sim' },
-      },
-      eventos_candidatos: [],
-    },
-  ]);
-
-  const resultado = await processarMensagem(modelo, new ClienteFalso(tabelas), rpc, {
-    provider: PROVIDER,
-    instancia_whatsapp: INSTANCIA,
-    telefone_normalizado: TELEFONE,
-    mensagens_atuais: ['pode confirmar a cirurgia pra terça as 10:30'],
-    instante_atual: INSTANTE_ATUAL,
-  });
-
-  assert.equal(resultado.decisao.tipo, 'reserva_criada');
   assert.equal(
     resultado.tratamentos_aprovados,
     undefined,
-    'sem pendente REAL, nao ha fato de plano nenhum -- a redatora nao pode convidar a marcar o que nao existe'
+    'nenhum fato de plano pode acompanhar reserva_criada, mesmo quando existe pendente real'
   );
 });
 
-test('CONTINUIDADE -- fatos autorizados: com o plano presente, a redatora pode nomear o proximo', () => {
-  const cirurgiaId = crypto.randomUUID();
-  const restauracaoId = crypto.randomUUID();
-  const fatos = derivarFatosAutorizados(
-    {
-      tipo: 'reserva_criada',
-      agendamento_id: crypto.randomUUID(),
-      dentista_id: crypto.randomUUID(),
-      procedimento_id: cirurgiaId,
-      duracao_min: 60,
-      data: '2026-09-09',
-      horario: '10:30',
-      dentista_nome_exibido: 'Dr. Pablo Arruda',
-      procedimento_nome: 'Cirurgia de implante',
-    },
-    '2026-09-04',
-    undefined, // substituicaoPorAvaliacao
-    undefined, // agendamentosDoPaciente
-    undefined, // cadastroConhecido
-    undefined, // clinicaConhecida
-    undefined, // precos
-    undefined, // dentistasDaClinica
-    [{ procedimento: 'Restauração / Cárie (1 face)', procedimento_id: restauracaoId, dente: '23' }] // tratamentosAprovados
-  );
+// --- 6b. Validacao da instrucao com a REDATORA REAL (pedido do Gabriel,
+// item 7: "como e comportamento da redatora, validar os dois cenarios com
+// a redatora real"). Chama a OpenAI de verdade -- so roda com
+// OPENAI_API_KEY presente; sem a chave, os dois testes sao PULADOS
+// (nunca reprovados), para nao quebrar quem roda a suite sem rede/chave.
 
-  assert.equal(fatos.objetivo, 'informar_reserva_criada');
-  assert.equal(fatos.agendamento_confirmado?.data, '09/09');
-  assert.deepEqual(
-    fatos.tratamentos_aprovados?.map((t) => t.procedimento_id),
-    [restauracaoId],
-    'o segundo pendente precisa estar nos fatos para a redatora poder nomea-lo'
-  );
-});
+const TEM_CHAVE_OPENAI = typeof process.env.OPENAI_API_KEY === 'string' && process.env.OPENAI_API_KEY.trim() !== '';
 
-test('CONTINUIDADE -- guarda nao reprova a resposta esperada (data e execucao autorizadas)', () => {
-  // Ilustra o exemplo do pedido do Gabriel: primeiro anuncia a reserva
-  // (data/horario/profissional autorizados por `agendamento_confirmado`),
-  // depois convida ao proximo, sem afirmar execucao nenhuma sobre ele.
-  const fatos: Parameters<typeof verificarRespostaRedatora>[1] = {
-    objetivo: 'informar_reserva_criada',
-    agendamento_confirmado: { data: '09/09', horario: '10:30' },
-    dentista_confirmado: 'Dr. Pablo Arruda',
-    procedimento_confirmado: 'Cirurgia de implante',
-    tratamentos_aprovados: [
-      { procedimento: 'Restauração / Cárie (1 face)', procedimento_id: crypto.randomUUID(), dente: '23' },
-    ],
-  };
-  const resposta =
-    'Pronto, Carlos! Sua cirurgia ficou confirmada para 09/09 às 10:30, com o Dr. Pablo Arruda. ' +
-    'Agora vamos marcar o outro procedimento, a Restauração / Cárie. Qual dia fica melhor para você?';
+test(
+  'REDATORA REAL -- historico com pedido multiplo explicito: confirma o primeiro e pergunta o dia do outro, SEM nomea-lo',
+  { skip: !TEM_CHAVE_OPENAI },
+  async () => {
+    const { criarClienteModeloRedatorOpenAI, TIMEOUT_REDATOR_MS_APROVADO } = await import(
+      './cliente-modelo-redator-openai.ts'
+    );
+    const { MODELO_IRIS_NOVA } = await import('./cliente-modelo-openai.ts');
+    const { gerarRespostaConversacional } = await import('./gerar-resposta-conversacional.ts');
 
-  assert.deepEqual(verificarRespostaRedatora(resposta, fatos), { aprovado: true });
-});
+    const cliente = criarClienteModeloRedatorOpenAI({
+      chaveApi: process.env.OPENAI_API_KEY!,
+      modelo: MODELO_IRIS_NOVA,
+      timeoutMs: TIMEOUT_REDATOR_MS_APROVADO,
+    });
+
+    const historico = [
+      {
+        mensagem_paciente:
+          'Quero marcar esses dois procedimentos.. vamos marcar um pra terça pode ser? o outro para quinta.',
+        resposta_iris: 'Vamos marcar um procedimento de cada vez. Qual deles você quer agendar primeiro?',
+        gerada_em: new Date(Date.now() - 4 * 60 * 1000).toISOString(),
+      },
+      {
+        mensagem_paciente: 'cirugia de implante primeiro entao',
+        resposta_iris: 'Certo, vamos começar pela cirurgia de implante com o Dr. Pablo Arruda. Que dia prefere?',
+        gerada_em: new Date(Date.now() - 3 * 60 * 1000).toISOString(),
+      },
+      {
+        mensagem_paciente: 'terça as 10:30',
+        resposta_iris: 'Posso confirmar a cirurgia de implante para *09/09 às 10:30*?',
+        gerada_em: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
+      },
+    ];
+
+    const { resposta, motivo_fallback } = await gerarRespostaConversacional(cliente, {
+      decisao: {
+        tipo: 'reserva_criada',
+        agendamento_id: crypto.randomUUID(),
+        dentista_id: crypto.randomUUID(),
+        procedimento_id: crypto.randomUUID(),
+        duracao_min: 60,
+        data: '2026-09-09',
+        horario: '10:30',
+        dentista_nome_exibido: 'Dr. Pablo Arruda',
+        procedimento_nome: 'Cirurgia de implante',
+      },
+      mensagemPaciente: 'isso mesmo, pode confirmar',
+      naturezaMensagem: 'resposta',
+      historicoConversa: historico,
+      dataHoje: '2026-09-04',
+    });
+
+    assert.equal(motivo_fallback, null, 'a redatora real precisa ter produzido o texto, sem cair no fallback');
+
+    const minuscula = resposta.toLowerCase();
+    assert.ok(
+      minuscula.includes('09/09') || minuscula.includes('10:30') || minuscula.includes('10h30'),
+      `a reserva precisa ser anunciada primeiro -- resposta: ${JSON.stringify(resposta)}`
+    );
+    assert.ok(
+      minuscula.includes('outro') ||
+        minuscula.includes('segundo') ||
+        minuscula.includes('próximo') ||
+        minuscula.includes('proximo'),
+      `precisa convidar ao OUTRO procedimento de forma generica -- resposta: ${JSON.stringify(resposta)}`
+    );
+    for (const proibido of ['restaura', 'cárie', 'carie', 'canal']) {
+      assert.ok(
+        !minuscula.includes(proibido),
+        `nao pode nomear o proximo procedimento (achou "${proibido}") -- resposta: ${JSON.stringify(resposta)}`
+      );
+    }
+  }
+);
+
+test(
+  'REDATORA REAL -- SEM pedido multiplo no historico: so confirma o primeiro, nunca oferece o restante',
+  { skip: !TEM_CHAVE_OPENAI },
+  async () => {
+    const { criarClienteModeloRedatorOpenAI, TIMEOUT_REDATOR_MS_APROVADO } = await import(
+      './cliente-modelo-redator-openai.ts'
+    );
+    const { MODELO_IRIS_NOVA } = await import('./cliente-modelo-openai.ts');
+    const { gerarRespostaConversacional } = await import('./gerar-resposta-conversacional.ts');
+
+    const cliente = criarClienteModeloRedatorOpenAI({
+      chaveApi: process.env.OPENAI_API_KEY!,
+      modelo: MODELO_IRIS_NOVA,
+      timeoutMs: TIMEOUT_REDATOR_MS_APROVADO,
+    });
+
+    // MESMO PACIENTE, MESMO PLANO com outro tratamento pendente -- a UNICA
+    // diferenca e que ele pediu SO a cirurgia desta vez, sem mencionar a
+    // restauracao em nenhum momento da janela.
+    //
+    // `tratamentosAprovados` NAO E PASSADO aqui de proposito: e o estado
+    // REAL pos-correcao. `reserva_criada` saiu de
+    // DECISOES_COM_PLANO_DE_TRATAMENTO (orquestrador.ts), entao o Core
+    // NUNCA envia este fato para esta decisao -- nao ha o que a redatora
+    // "resistir a nao mencionar", porque o dado simplesmente nao chega.
+    const historico = [
+      {
+        mensagem_paciente: 'boa tarde, queria marcar a cirurgia de implante',
+        resposta_iris: 'Boa tarde! Vou verificar os horários com o Dr. Pablo Arruda. Que dia prefere?',
+        gerada_em: new Date(Date.now() - 3 * 60 * 1000).toISOString(),
+      },
+      {
+        mensagem_paciente: 'terça as 10:30',
+        resposta_iris: 'Posso confirmar a cirurgia de implante para *09/09 às 10:30*?',
+        gerada_em: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
+      },
+    ];
+
+    const { resposta, motivo_fallback } = await gerarRespostaConversacional(cliente, {
+      decisao: {
+        tipo: 'reserva_criada',
+        agendamento_id: crypto.randomUUID(),
+        dentista_id: crypto.randomUUID(),
+        procedimento_id: crypto.randomUUID(),
+        duracao_min: 60,
+        data: '2026-09-09',
+        horario: '10:30',
+        dentista_nome_exibido: 'Dr. Pablo Arruda',
+        procedimento_nome: 'Cirurgia de implante',
+      },
+      mensagemPaciente: 'isso mesmo, pode confirmar',
+      naturezaMensagem: 'resposta',
+      historicoConversa: historico,
+      dataHoje: '2026-09-04',
+    });
+
+    assert.equal(motivo_fallback, null, 'a redatora real precisa ter produzido o texto, sem cair no fallback');
+
+    const minuscula = resposta.toLowerCase();
+    assert.ok(
+      minuscula.includes('09/09') || minuscula.includes('10:30') || minuscula.includes('10h30'),
+      `a reserva precisa ser anunciada -- resposta: ${JSON.stringify(resposta)}`
+    );
+    for (const indicioDeOferta of [
+      'outro procedimento',
+      'próximo procedimento',
+      'proximo procedimento',
+      'restaura',
+      'cárie',
+      'carie',
+    ]) {
+      assert.ok(
+        !minuscula.includes(indicioDeOferta),
+        `NAO pode oferecer o restante sem pedido explicito (achou "${indicioDeOferta}") -- resposta: ${JSON.stringify(resposta)}`
+      );
+    }
+  }
+);
+
+// --- DEFESA EM PROFUNDIDADE (achado durante a validacao, nao pedido pelo
+// Gabriel, registrado por honestidade): esta e a MESMA situacao do teste
+// acima, mas simulando um vazamento hipotetico -- `tratamentosAprovados`
+// presente no payload mesmo sem pedido multiplo no historico (o que NAO
+// deveria acontecer, ja que `reserva_criada` foi removida de
+// DECISOES_COM_PLANO_DE_TRATAMENTO, mas serve para medir se a INSTRUCAO
+// sozinha resiste, caso esse fato vaze por outro caminho no futuro).
+//
+// MEDIDO: a instrucao sozinha NAO resiste com confianca -- com o fato
+// presente no payload, a IA as vezes ainda convida ao "outro procedimento"
+// mesmo sem pedido no historico (a lista visivel pesa mais que a
+// instrucao textual, mesmo padrao ja documentado em
+// "procedimentos_ativos_da_clinica"/"procedimento_avaliacao_disponivel").
+// A protecao real e ESTRUTURAL (o Core nunca envia o fato), nao textual --
+// por isso este teste e informativo, marcado `todo`, e NAO bloqueia a
+// suite: a garantia que importa e a do teste anterior, onde o fato de
+// fato nao chega.
+test(
+  'REDATORA REAL (informativo) -- com tratamentos_aprovados vazando no payload, a instrucao sozinha nem sempre resiste',
+  { skip: !TEM_CHAVE_OPENAI, todo: 'defesa em profundidade -- a protecao real e o Core nunca enviar o fato' },
+  async () => {
+    const { criarClienteModeloRedatorOpenAI, TIMEOUT_REDATOR_MS_APROVADO } = await import(
+      './cliente-modelo-redator-openai.ts'
+    );
+    const { MODELO_IRIS_NOVA } = await import('./cliente-modelo-openai.ts');
+    const { gerarRespostaConversacional } = await import('./gerar-resposta-conversacional.ts');
+
+    const cliente = criarClienteModeloRedatorOpenAI({
+      chaveApi: process.env.OPENAI_API_KEY!,
+      modelo: MODELO_IRIS_NOVA,
+      timeoutMs: TIMEOUT_REDATOR_MS_APROVADO,
+    });
+
+    const historico = [
+      {
+        mensagem_paciente: 'boa tarde, queria marcar a cirurgia de implante',
+        resposta_iris: 'Boa tarde! Vou verificar os horários com o Dr. Pablo Arruda. Que dia prefere?',
+        gerada_em: new Date(Date.now() - 3 * 60 * 1000).toISOString(),
+      },
+      {
+        mensagem_paciente: 'terça as 10:30',
+        resposta_iris: 'Posso confirmar a cirurgia de implante para *09/09 às 10:30*?',
+        gerada_em: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
+      },
+    ];
+
+    const { resposta } = await gerarRespostaConversacional(cliente, {
+      decisao: {
+        tipo: 'reserva_criada',
+        agendamento_id: crypto.randomUUID(),
+        dentista_id: crypto.randomUUID(),
+        procedimento_id: crypto.randomUUID(),
+        duracao_min: 60,
+        data: '2026-09-09',
+        horario: '10:30',
+        dentista_nome_exibido: 'Dr. Pablo Arruda',
+        procedimento_nome: 'Cirurgia de implante',
+      },
+      tratamentosAprovados: [
+        { procedimento: 'Restauração / Cárie (1 face)', procedimento_id: crypto.randomUUID(), dente: '23' },
+      ],
+      mensagemPaciente: 'isso mesmo, pode confirmar',
+      naturezaMensagem: 'resposta',
+      historicoConversa: historico,
+      dataHoje: '2026-09-04',
+    });
+
+    const minuscula = resposta.toLowerCase();
+    assert.ok(
+      !minuscula.includes('outro procedimento') && !minuscula.includes('restaura'),
+      `resposta: ${JSON.stringify(resposta)}`
+    );
+  }
+);
+
