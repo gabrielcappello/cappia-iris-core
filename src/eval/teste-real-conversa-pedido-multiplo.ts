@@ -58,6 +58,29 @@ import { gerarRespostaConversacional } from '../core/gerar-resposta-conversacion
 import { gravarHistoricoConversa } from '../core/historico-conversa.ts';
 import { ClienteFalso, criarTabelasFalsasVazias, type TabelasFalsas } from '../core/teste-cliente-falso.ts';
 import { ClienteRpcFalso } from '../core/teste-cliente-rpc-falso.ts';
+import type { ClienteModeloEstruturado, EntradaInterpretacao } from '../core/interpretacao-tipos.ts';
+
+/**
+ * Envolve o cliente REAL da OpenAI so para CAPTURAR o payload de cada
+ * chamada -- nunca substitui, nunca altera o comportamento. A chamada real
+ * acontece sempre; isto so guarda uma copia do que foi de fato enviado.
+ *
+ * Existe por causa de um achado da revisao do Codex (2026-09-05, quarta
+ * rodada): um log que AFIRMA "o historico foi enviado" nao e evidencia --
+ * e uma alegacao. A unica prova e inspecionar o payload que atravessou a
+ * fronteira de fato. Ver a asserção no turno 1, mais abaixo.
+ */
+function comCapturaDePayload(
+  clienteReal: ClienteModeloEstruturado,
+  payloadsCapturados: EntradaInterpretacao[]
+): ClienteModeloEstruturado {
+  return {
+    async executar(entrada) {
+      payloadsCapturados.push(entrada.payload);
+      return clienteReal.executar(entrada);
+    },
+  };
+}
 
 const PROVIDER = 'evolution';
 const INSTANCIA = 'clinica-teste';
@@ -120,12 +143,24 @@ function montarCenario(tabelas: TabelasFalsas): void {
     // historico, nomeando implante, restauracao E canal. E o caso adverso de
     // verdade: a instrucao generica (fatos sem nomes) contra a instrucao de
     // relembrar (nomes visiveis no historico).
+    // O array (nao um valor solto): `historico_conversa` e sempre lista.
     historico_conversa: [
       {
         mensagem_paciente: 'ola. boa noite',
         resposta_iris:
           'Boa noite, Carlos! Aqui é a Iris, assistente da Cleardent. Você já tem o retratamento de canal marcado para segunda-feira, 07/09 às 08:00 com o Dr. Pablo Arruda. Também estão pendentes:\n\n* Cirurgia de implante — dente 31 — Dr. Pablo Arruda\n* Restauração / Cárie (1 face) — dente 23 — Dr. Pablo Arruda\n\nVocê quer tratar do atendimento já marcado ou agendar um desses procedimentos pendentes?',
-        gerada_em: new Date('2026-09-04T03:51:00.000Z').toISOString(),
+        // ACHADO DA REVISAO DO CODEX (2026-09-05, quarta rodada): um
+        // timestamp FIXO aqui, de uma data de calendario simulada, e
+        // invalidado pelo filtro real de 12h (historico-conversa.ts,
+        // `historicoValidoParaEnvio`, que usa `Date.now()` -- o RELOGIO REAL
+        // da maquina, nunca o `instante_atual` simulado). Um valor fixo em
+        // 2026-09-04 ja tinha mais de 12h decorridas no momento da execucao
+        // real -- a abertura era descartada ANTES de chegar a IA, e o teste
+        // "aprovava" o mesmo cenario sem historico de antes, com um log que
+        // afirmava o oposto.
+        //
+        // RELATIVO AO MOMENTO DA EXECUCAO, sempre dentro da janela de 12h.
+        gerada_em: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
       },
     ],
     atualizado_em: new Date('2026-09-04T00:00:00.000Z').toISOString(),
@@ -195,13 +230,17 @@ async function main(): Promise<void> {
   console.log('banco, RPCs e agenda: SIMULADOS. IA: real nas duas pontas.');
   console.log('');
 
-  const clienteModelo = criarClienteModeloOpenAI({
-    chaveApi,
-    modelo: MODELO_IRIS_NOVA,
-    timeoutPorTentativaMs: TIMEOUT_POR_TENTATIVA_MS_APROVADO,
-    prazoTotalMs: PRAZO_TOTAL_MS_APROVADO,
-    esperaEntreTentativasMs: ESPERA_ENTRE_TENTATIVAS_MS_APROVADO,
-  });
+  const payloadsInterpretadora: EntradaInterpretacao[] = [];
+  const clienteModelo = comCapturaDePayload(
+    criarClienteModeloOpenAI({
+      chaveApi,
+      modelo: MODELO_IRIS_NOVA,
+      timeoutPorTentativaMs: TIMEOUT_POR_TENTATIVA_MS_APROVADO,
+      prazoTotalMs: PRAZO_TOTAL_MS_APROVADO,
+      esperaEntreTentativasMs: ESPERA_ENTRE_TENTATIVAS_MS_APROVADO,
+    }),
+    payloadsInterpretadora
+  );
   const clienteRedator = criarClienteModeloRedatorOpenAI({
     chaveApi,
     modelo: MODELO_IRIS_NOVA,
@@ -283,6 +322,29 @@ async function main(): Promise<void> {
 
     // --- Verificacoes por turno ---
     if (numero === 1) {
+      // PRIMEIRO DE TUDO: o payload REALMENTE ENVIADO a interpretadora, nao
+      // uma alegacao de log. Achado da revisao do Codex (quarta rodada): um
+      // timestamp fixo de calendario simulado ja tinha mais de 12h passadas
+      // no momento real da execucao, o filtro de validade descartava a
+      // abertura, e o log anterior "afirmava" nomes visiveis sem checar o
+      // payload de fato. Esta e a unica fonte de verdade aceitavel aqui.
+      const payloadDoTurno1 = payloadsInterpretadora[0];
+      const historicoRecebido = payloadDoTurno1?.historico_recente;
+      const textoDoHistoricoRecebido = JSON.stringify(historicoRecebido ?? null).toLowerCase();
+      const historicoContemOsNomes =
+        textoDoHistoricoRecebido.includes('implante') &&
+        (textoDoHistoricoRecebido.includes('restaura') || textoDoHistoricoRecebido.includes('rie')) &&
+        textoDoHistoricoRecebido.includes('canal');
+
+      if (!historicoContemOsNomes) {
+        console.log('  ✖ FALHA (fatal): o historico com os nomes NAO chegou ao payload real da interpretadora');
+        console.log(`    historico_recente enviado: ${JSON.stringify(historicoRecebido ?? null)}`);
+        console.log('    sem isto, nenhuma verificacao abaixo sobre "resposta generica" prova o caso adverso');
+        falhas++;
+      } else {
+        console.log('  ✔ CONFIRMADO no payload real: historico_recente enviado a IA contem os tres procedimentos');
+      }
+
       if (resultado.decisao.tipo !== 'pedido_multiplo_detectado') {
         console.log('  ✖ FALHA: o pedido multiplo tinha de ser reconhecido JA no primeiro turno');
         falhas++;
@@ -295,11 +357,11 @@ async function main(): Promise<void> {
       const vazou = NOMES_PROIBIDOS_NO_TURNO_1.filter((n) => minuscula.includes(n));
       if (vazou.length > 0) {
         console.log(`  ✖ FALHA: a resposta citou procedimento (${vazou.join(', ')}) -- tinha de ser generica`);
-        console.log('    (o historico desta conversa NOMEIA os tres procedimentos: era esse o risco a cobrir)');
         falhas++;
+      } else if (historicoContemOsNomes) {
+        console.log('  ✔ resposta generica: nenhum procedimento citado, MESMO com os nomes confirmados no payload');
       } else {
-        console.log('  ✔ resposta generica: nenhum procedimento citado pelo nome');
-        console.log('    -- e o historico do turno anterior NOMEAVA implante, restauracao e canal');
+        console.log('  (resposta generica sem citar nomes -- mas o caso adverso NAO foi exercitado, ver FALHA acima)');
       }
       // Reconhece o pedido e pergunta qual primeiro.
       const perguntou = resposta.includes('?');
