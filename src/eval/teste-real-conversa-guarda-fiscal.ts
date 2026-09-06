@@ -17,12 +17,16 @@
 // incluindo a Restauracao). Sem essa abertura semeada no historico, o turno
 // seguinte ("bora marcar os pendentes... vamos fazer a restauração") nao
 // exercita o caso real -- a redatora nunca recebe o contexto de que a
-// Restauracao ja tinha sido oferecida por nome. Corrigido semeando a abertura
-// real no historico da conversa (mesmo padrao de
-// src/eval/teste-real-conversa-pedido-multiplo.ts), e capturando o payload
-// REAL enviado a interpretadora e a redatora para provar -- nao alegar -- que
-// o contexto relevante (procedimento pendente, preferencia de 16h, "hoje ja
-// passou") de fato atravessou a fronteira do modelo em cada turno que importa.
+// Restauracao ja tinha sido oferecida por nome. Corrigido semeando uma versao
+// ABREVIADA/ADAPTADA dessa abertura no historico da conversa (nao transcricao
+// literal -- mesmo padrao de src/eval/teste-real-conversa-pedido-multiplo.ts),
+// e capturando o payload REAL enviado a interpretadora e a redatora para
+// provar -- nao alegar -- que o contexto relevante de fato atravessou a
+// fronteira do modelo em cada turno que importa: a abertura (Restauração
+// pendente) chega tanto a interpretadora quanto a REDATORA no turno 1 --
+// sao dois payloads distintos, capturados por clientes diferentes, e so
+// checar a mensagem do proprio turno (como nos turnos 3 e 5) nao prova que o
+// HISTORICO foi de fato transportado ate a redatora.
 //
 // NAO EXIGIDO (fora de escopo, spec secao 1/8): resolver "ultimo dia do mes
 // disponivel" -- a IA pode continuar sem saber responder isso. O que este
@@ -130,12 +134,15 @@ function montarCenario(tabelas: TabelasFalsas): void {
     estado: 'atendimento',
     dados: {},
     paciente_id: null,
-    // HISTORICO SEMEADO com a ABERTURA REAL da conversa (spec secao 1,
-    // primeira linha): a saudacao que lista a Restauração como pendente. Sem
-    // isto, o turno 1 do paciente ("bora marcar os pendentes... vamos fazer a
-    // restauração") chega a IA como se fosse a PRIMEIRA mensagem da conversa,
-    // nunca uma continuacao -- exatamente o defeito que a primeira versao
-    // deste runner tinha (achado do Codex).
+    // HISTORICO SEMEADO com uma versao ABREVIADA/ADAPTADA da abertura real da
+    // conversa (spec secao 1, primeira linha) -- nao transcricao literal: a
+    // linha real e mais longa (cumprimenta, lista agendamentos ja marcados e
+    // so depois os pendentes); aqui ficou so o essencial para exercitar o
+    // caso, a Restauração como pendente. Sem esta abertura semeada, o turno 1
+    // do paciente ("bora marcar os pendentes... vamos fazer a restauração")
+    // chega a IA como se fosse a PRIMEIRA mensagem da conversa, nunca uma
+    // continuacao -- exatamente o defeito que a primeira versao deste runner
+    // tinha (achado do Codex).
     historico_conversa: [
       {
         mensagem_paciente: 'boa noite',
@@ -290,6 +297,23 @@ async function main(): Promise<void> {
         falhas++;
       } else {
         console.log('  ✔ CONFIRMADO no payload real: a interpretadora recebeu a abertura com a Restauração pendente');
+      }
+
+      // A mesma prova, do lado da REDATORA (achado do Codex: verificar
+      // mensagemPaciente nos turnos 3 e 5 prova que a MENSAGEM daquele turno
+      // chegou, nunca que o HISTORICO da abertura foi transportado ate a
+      // redatora -- sao dois payloads distintos, capturados por clientes
+      // diferentes). Sem esta checagem, um defeito que quebrasse so o
+      // repasse do historico para EntradaRedator passaria despercebido.
+      const payloadRedatoraDoTurno1 = payloadsRedatora[0];
+      const textoHistoricoRedatora = JSON.stringify(payloadRedatoraDoTurno1?.historicoRecente ?? null).toLowerCase();
+      const contextoChegouNaRedatora = textoHistoricoRedatora.includes('restaura');
+      if (!contextoChegouNaRedatora) {
+        console.log('  ✖ FALHA (fatal): a abertura semeada (Restauração pendente) NAO chegou ao payload real da REDATORA');
+        console.log(`    historicoRecente enviado a redatora: ${JSON.stringify(payloadRedatoraDoTurno1?.historicoRecente ?? null)}`);
+        falhas++;
+      } else {
+        console.log('  ✔ CONFIRMADO no payload real: a REDATORA recebeu a abertura com a Restauração pendente');
       }
     }
 
