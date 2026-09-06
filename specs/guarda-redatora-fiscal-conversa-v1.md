@@ -1,9 +1,11 @@
 # A guarda da redatora não pode fiscalizar conversa — v1
 
-**Status:** especificação **proposta, não aprovada e não implementada**. Registra um
-defeito real, achado em teste manual de produção, e propõe correção. Nenhuma linha de
-código muda até aprovação do Gabriel. Esta rodada é **somente investigação e spec** —
-autorização explícita do Gabriel/Codex de não implementar nada além disto.
+**Status:** **aprovada, implementada e publicada em produção** (2026-09-06,
+`iris-nova-mensagem` v113, `verify_jwt: true`). Revisão do Codex encerrada sem
+bloqueadores; validada com a redatora real (gpt-5.6-luna) na conversa completa do
+caso de origem e em teste controlado adicional em produção (data já passada
+reconhecida corretamente, sem repetir o loop de fallback fixo original). Documento
+mantido como registro histórico do defeito, da investigação e da correção.
 
 ## Para quem revisa isto sem contexto prévio
 
