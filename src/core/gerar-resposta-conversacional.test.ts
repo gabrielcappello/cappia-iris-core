@@ -123,6 +123,75 @@ test('guarda reprova texto vazio: cai no fallback', async () => {
   assert.equal(resultado.motivo_fallback, 'texto_vazio');
 });
 
+// ── CAMPO NOVO resposta_rejeitada_pelo_fiscal (2026-09-05/06,
+// specs/guarda-redatora-fiscal-conversa-v1.md secao 5.2) ────────────────
+
+test('resposta_rejeitada_pelo_fiscal: guarda reprova por horario_nao_autorizado -> preserva o texto ORIGINAL da redatora', async () => {
+  const decisao: DecisaoOrquestrador = {
+    tipo: 'horarios_disponiveis',
+    dentista_nome_exibido: 'Dra. Ana',
+    procedimento_id: 'p1',
+    dentista_id: 'd1',
+    duracao_min: 40,
+    resultado: {
+      tipo: 'opcoes',
+      opcoes: [
+        {
+          clinica_id: 'c1',
+          procedimento_id: 'p1',
+          dentista_id: 'd1',
+          data: '2026-08-05',
+          fuso: 'America/Sao_Paulo',
+          duracao_min: 40,
+          inicio_min: 540,
+          fim_min: 580,
+        },
+      ],
+    },
+  };
+  const resultado = await gerarRespostaConversacional(clienteQueRetorna('Tenho 15:00 disponível, que tal?'), {
+    decisao,
+    mensagemPaciente: 'quero limpeza hoje',
+    ...BASE,
+  });
+  assert.equal(resultado.motivo_fallback, 'horario_nao_autorizado');
+  assert.equal(resultado.resposta_rejeitada_pelo_fiscal, 'Tenho 15:00 disponível, que tal?');
+});
+
+test('resposta_rejeitada_pelo_fiscal: guarda reprova por texto_vazio -> null, nunca a string vazia/espacos', async () => {
+  const resultado = await gerarRespostaConversacional(clienteQueRetorna('   '), {
+    decisao: DECISAO_SAUDACAO,
+    mensagemPaciente: 'oi',
+    ...BASE,
+  });
+  assert.equal(resultado.motivo_fallback, 'texto_vazio');
+  assert.equal(resultado.resposta_rejeitada_pelo_fiscal, null);
+});
+
+test('resposta_rejeitada_pelo_fiscal: turno aprovado -> null', async () => {
+  const resultado = await gerarRespostaConversacional(clienteQueRetorna('Oi! Tudo bem? Como posso ajudar?'), {
+    decisao: DECISAO_SAUDACAO,
+    mensagemPaciente: 'oi',
+    ...BASE,
+  });
+  assert.equal(resultado.motivo_fallback, null);
+  assert.equal(resultado.resposta_rejeitada_pelo_fiscal, null);
+});
+
+test('resposta_rejeitada_pelo_fiscal: redator_nao_configurado -> null', async () => {
+  const resultado = await gerarRespostaConversacional(null, { decisao: DECISAO_SAUDACAO, mensagemPaciente: 'oi', ...BASE });
+  assert.equal(resultado.resposta_rejeitada_pelo_fiscal, null);
+});
+
+test('resposta_rejeitada_pelo_fiscal: falha_redatora -> null', async () => {
+  const resultado = await gerarRespostaConversacional(clienteQueFalha(), {
+    decisao: DECISAO_SAUDACAO,
+    mensagemPaciente: 'oi',
+    ...BASE,
+  });
+  assert.equal(resultado.resposta_rejeitada_pelo_fiscal, null);
+});
+
 // --- a Iris nunca fica calada ---
 
 test('em qualquer cenario de falha, a resposta final e sempre uma string nao vazia', async () => {

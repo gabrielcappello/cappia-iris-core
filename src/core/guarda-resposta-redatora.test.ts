@@ -63,6 +63,10 @@ test('aprova horarios vindos de agendamentos_candidatos (defeito corrigido)', ()
   );
 });
 
+// Continua passando apos 2026-09-05, agora pela razao estrutural da secao
+// 3.2: `acolher_e_retomar` esta fora do conjunto protegido, entao a checagem
+// nao executa -- antes passava porque a fonte cobria o horario citado, o
+// resultado e o mesmo mas o motivo mudou.
 test('aprova horarios vindos de agendamentos_do_paciente (contexto conversacional)', () => {
   const f = fatos({
     objetivo: 'acolher_e_retomar',
@@ -74,16 +78,37 @@ test('aprova horarios vindos de agendamentos_do_paciente (contexto conversaciona
   );
 });
 
-// A correcao NAO afrouxa a guarda: horario que nao esta em nenhuma fonte
-// continua reprovado, mesmo com as listas presentes. Este e o caso medido
-// da redatora inventando horario de funcionamento ("das 8h as 18h").
-test('horario fora das listas continua REPROVADO -- a correcao nao afrouxa', () => {
+// MUDANCA DE EXPECTATIVA CONSCIENTE (2026-09-05,
+// specs/guarda-redatora-fiscal-conversa-v1.md secao 3.3): este teste antes
+// provava que a checagem de horario reprovava mesmo com as listas presentes.
+// A causa raiz do defeito real (loop de fallback fixo) e que
+// `acolher_e_retomar` e puramente conversacional -- a checagem de
+// horario/data agora NAO EXECUTA para este objetivo (secao 3.2), entao a
+// mesma frase passa a ser aprovada. Isto NAO significa que uma fonte nova
+// (`horario_funcionamento`) foi aceita -- nenhuma fonte nova existe (secao
+// 3.3); a aprovacao e por ausencia de fiscalizacao neste objetivo, nao por
+// "das 8h as 18h" ter sido reconhecido como fato real. O teste seguinte prova
+// que, DENTRO de um objetivo protegido, o mesmo horario de funcionamento
+// continua reprovado.
+test('horario fora das listas, em objetivo conversacional, passa a ser APROVADO -- ausencia de fiscalizacao, nao fonte nova', () => {
   const f = fatos({
     objetivo: 'acolher_e_retomar',
     agendamentos_do_paciente: ['Limpeza com Dra. Ana — segunda-feira, 10/08 às 14:00'],
   });
   assert.deepEqual(
     verificarRespostaRedatora('Funcionamos das 8h às 18h. Sua consulta é 10/08 às 14:00.', f),
+    { aprovado: true }
+  );
+});
+
+test('o MESMO horario de funcionamento continua REPROVADO dentro de um objetivo protegido', () => {
+  const f = fatos({
+    objetivo: 'apresentar_horarios',
+    horarios_disponiveis: ['14:00'],
+    clinica_conhecida: { horario_funcionamento: '08:00 as 18:00' },
+  });
+  assert.deepEqual(
+    verificarRespostaRedatora('Tenho 8h disponível.', f),
     { aprovado: false, motivo: 'horario_nao_autorizado' }
   );
 });
@@ -300,4 +325,162 @@ test('sem nenhuma data nos fatos, a checagem de data NAO reprova', () => {
     { objetivo: 'acolher_e_retomar' } as FatosAutorizados
   );
   assert.equal(r.aprovado, true);
+});
+
+// ── GUARDA CONDICIONADA POR OBJETIVO (2026-09-05,
+// specs/guarda-redatora-fiscal-conversa-v1.md) ──────────────────────────
+// A checagem de horario/data deixa de rodar incondicionalmente e passa a
+// depender de `fatos.objetivo` estar no conjunto de 11 protegidos (secao
+// 3.2). Os testes abaixo cobrem exatamente a secao 7 (verificacao exigida).
+
+test('TESTE NEGATIVO -- disponibilidade inventada continua bloqueada em objetivo protegido', () => {
+  const r = verificarRespostaRedatora(
+    'Tenho 15:00 disponível.',
+    { objetivo: 'apresentar_horarios', horarios_disponiveis: ['14:00'] } as FatosAutorizados
+  );
+  assert.deepEqual(r, { aprovado: false, motivo: 'horario_nao_autorizado' });
+});
+
+test('TESTE POSITIVO -- 16h como preferencia do paciente e reconhecida, objetivo fora do conjunto protegido', () => {
+  const r = verificarRespostaRedatora(
+    'Entendi, 16h ficaria bem pra voce. Para qual data voce gostaria de agendar?',
+    { objetivo: 'pedir_data_ou_horario' } as FatosAutorizados
+  );
+  assert.deepEqual(r, { aprovado: true });
+});
+
+// Caso real da spec (secao 1): "Esse horário de hoje já passou" -- reconhecer
+// que "hoje" ja passou e uma explicacao conversacional, nao uma oferta.
+test('CASO REAL -- explicar que o horario de hoje ja passou nao e bloqueado', () => {
+  const r = verificarRespostaRedatora(
+    'Esse horário de hoje já passou, viu? Hoje e sabado, estamos abertos ate as 18h. Quer marcar pra amanha?',
+    { objetivo: 'acolher_e_retomar' } as FatosAutorizados
+  );
+  assert.deepEqual(r, { aprovado: true });
+});
+
+test('par negativo por objetivo protegido -- informar_sem_expediente_e_pedir_outra_data', () => {
+  const r = verificarRespostaRedatora(
+    'Nao temos expediente nesse dia, mas tenho 10:00 disponível na proxima data.',
+    { objetivo: 'informar_sem_expediente_e_pedir_outra_data' } as FatosAutorizados
+  );
+  assert.deepEqual(r, { aprovado: false, motivo: 'horario_nao_autorizado' });
+});
+
+test('par negativo por objetivo protegido -- pedir_confirmacao_remarcacao', () => {
+  const r = verificarRespostaRedatora(
+    'Voce esta com 14:00. Quer passar para 16:00?',
+    {
+      objetivo: 'pedir_confirmacao_remarcacao',
+      agendamento_atual: { data: '10/08', horario: '14:00' },
+    } as FatosAutorizados
+  );
+  assert.deepEqual(r, { aprovado: false, motivo: 'horario_nao_autorizado' });
+});
+
+test('par negativo por objetivo protegido -- informar_horario_indisponivel', () => {
+  const r = verificarRespostaRedatora(
+    'Esse horário não está livre. Tenho 11:00 disponível.',
+    { objetivo: 'informar_horario_indisponivel', horarios_disponiveis: ['10:30', '13:00'] } as FatosAutorizados
+  );
+  assert.deepEqual(r, { aprovado: false, motivo: 'horario_nao_autorizado' });
+});
+
+test('par negativo por objetivo protegido -- escolher_entre_agendamentos_cancelamento', () => {
+  const r = verificarRespostaRedatora(
+    'Você tem dois agendamentos: 10/08 às 14:00 e 15/08 às 09:00. Qual deles quer cancelar?',
+    {
+      objetivo: 'escolher_entre_agendamentos_cancelamento',
+      agendamentos_candidatos: ['10/08 às 14:00'],
+    } as FatosAutorizados
+  );
+  assert.deepEqual(r, { aprovado: false, motivo: 'horario_nao_autorizado' });
+});
+
+test('par negativo por objetivo protegido -- pedir_confirmacao_cancelamento (adicionado nesta revisao)', () => {
+  const r = verificarRespostaRedatora(
+    'Você quer cancelar sua consulta de 20/08 às 15:00?',
+    {
+      objetivo: 'pedir_confirmacao_cancelamento',
+      agendamento_atual: { data: '20/08', horario: '14:00' },
+    } as FatosAutorizados
+  );
+  assert.deepEqual(r, { aprovado: false, motivo: 'horario_nao_autorizado' });
+});
+
+test('par negativo por objetivo protegido -- informar_cancelamento_criado (adicionado nesta revisao)', () => {
+  const r = verificarRespostaRedatora(
+    'Pronto, cancelei seu agendamento de 21/08 às 14:00.',
+    {
+      objetivo: 'informar_cancelamento_criado',
+      agendamento_confirmado: { data: '20/08', horario: '14:00' },
+    } as FatosAutorizados
+  );
+  assert.deepEqual(r, { aprovado: false, motivo: 'data_nao_autorizada' });
+});
+
+test('falsa confirmacao continua bloqueada -- pedir_confirmacao_cancelamento', () => {
+  const r = verificarRespostaRedatora(
+    'Você quer cancelar sua consulta de 20/08 às 14:00?',
+    {
+      objetivo: 'pedir_confirmacao_cancelamento',
+      agendamento_atual: { data: '20/08', horario: '14:00' },
+    } as FatosAutorizados
+  );
+  assert.deepEqual(r, { aprovado: true });
+});
+
+// Os tres objetivos conversacionais NAO fiscalizam data/horario, em nenhum
+// caso -- nem quando o horario citado bate com um fato real, nem quando nao
+// bate com nada (secao 3.2/7).
+for (const objetivo of [
+  'cumprimentar_e_oferecer_ajuda',
+  'cumprimentar_e_mencionar_tratamento_pendente',
+  'acolher_e_retomar',
+] as const) {
+  test(`objetivo conversacional (${objetivo}) -- horario que BATE com fato real e aprovado`, () => {
+    const r = verificarRespostaRedatora(
+      'Sua limpeza esta marcada para 10/08 às 14:00.',
+      {
+        objetivo,
+        agendamentos_do_paciente: ['Limpeza com Dra. Ana — segunda-feira, 10/08 às 14:00'],
+      } as FatosAutorizados
+    );
+    assert.deepEqual(r, { aprovado: true });
+  });
+
+  test(`objetivo conversacional (${objetivo}) -- horario que NAO BATE com nenhum fato tambem e aprovado (checagem nao executa)`, () => {
+    const r = verificarRespostaRedatora(
+      'Sua limpeza esta marcada para 20/09 às 16:00.',
+      {
+        objetivo,
+        agendamentos_do_paciente: ['Limpeza com Dra. Ana — segunda-feira, 10/08 às 14:00'],
+      } as FatosAutorizados
+    );
+    assert.deepEqual(r, { aprovado: true });
+  });
+}
+
+// Guarda de execucao continua ativa nos tres objetivos conversacionais --
+// independente do conjunto de horario/data (secao 3.1). Cenarios corrigidos
+// (achado do Codex): "esta confirmado" com agendamento existente NAO prova
+// nada (afirmaExecucao ja ignora esse participio por design). Os dois
+// cenarios abaixo provam a guarda de fato.
+test('execucao SEM nenhum agendamento existente -- "esta confirmado" e reprovado mesmo em objetivo conversacional', () => {
+  const r = verificarRespostaRedatora(
+    'Prontinho, esta confirmado!',
+    { objetivo: 'acolher_e_retomar' } as FatosAutorizados
+  );
+  assert.deepEqual(r, { aprovado: false, motivo: 'execucao_nao_autorizada' });
+});
+
+test('execucao COM agendamento existente, particípio fora da excecao -- "foi remarcado" continua reprovado', () => {
+  const r = verificarRespostaRedatora(
+    'Sua consulta foi remarcado para 10/08 às 14:00.',
+    {
+      objetivo: 'acolher_e_retomar',
+      agendamentos_do_paciente: ['Limpeza com Dra. Ana — segunda-feira, 10/08 às 14:00'],
+    } as FatosAutorizados
+  );
+  assert.deepEqual(r, { aprovado: false, motivo: 'execucao_nao_autorizada' });
 });

@@ -34,6 +34,12 @@ export interface GravarAuditoriaSucessoEntrada {
   mensagemPaciente: string;
   respostaIris: string;
   motivoFallback: MotivoFallbackResposta | null;
+  /**
+   * Texto original da redatora quando a guarda o reprovou por um motivo com
+   * conteudo real -- `null` para texto_vazio ou qualquer outro desfecho
+   * (specs/guarda-redatora-fiscal-conversa-v1.md secao 5).
+   */
+  respostaRejeitadaPeloFiscal: string | null;
 }
 
 /**
@@ -51,6 +57,7 @@ export async function gravarAuditoriaSucesso(
     resposta_iris: entrada.respostaIris,
     motivo_fallback: entrada.motivoFallback,
     resultado_turno: 'sucesso',
+    resposta_rejeitada_pelo_fiscal: entrada.respostaRejeitadaPeloFiscal,
   });
 }
 

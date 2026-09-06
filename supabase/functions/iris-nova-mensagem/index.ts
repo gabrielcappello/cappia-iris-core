@@ -267,7 +267,7 @@ async function handler(req: Request): Promise<Response> {
     // redatora, com fallback deterministico em qualquer falha -- a Iris
     // nunca fica calada (`resposta` nunca e null). `motivo_fallback' e so
     // telemetria interna, nunca exposto ao paciente.
-    const { resposta, motivo_fallback } = await gerarRespostaConversacional(clienteRedator, {
+    const { resposta, motivo_fallback, resposta_rejeitada_pelo_fiscal } = await gerarRespostaConversacional(clienteRedator, {
       decisao: resultado.decisao,
       mensagemPaciente: payload.mensagem,
       naturezaMensagem: resultado.natureza_mensagem,
@@ -426,6 +426,7 @@ async function handler(req: Request): Promise<Response> {
       mensagemPaciente: payload.mensagem,
       respostaIris: resposta,
       motivoFallback: motivo_fallback,
+      respostaRejeitadaPeloFiscal: resposta_rejeitada_pelo_fiscal,
     }).catch(() => {});
 
     // `EdgeRuntime.waitUntil` mantem o isolado vivo ate a promessa acima

@@ -72,14 +72,49 @@ const OBJETIVOS_EXECUTADOS: ReadonlySet<string> = new Set([
   'informar_cancelamento_criado',
 ]);
 
+// OBJETIVOS QUE AFIRMAM UM FATO OPERACIONAL CONCRETO (specs/guarda-redatora-
+// fiscal-conversa-v1.md secao 3.2). A checagem de horario/data so faz sentido
+// quando a resposta esta descrevendo disponibilidade real, uma proposta
+// concreta, uma confirmacao de operacao ou um agendamento existente -- nos
+// demais objetivos (conversa, saudacao, duvida) ela vira o mesmo erro do caso
+// no 2 de docs/00-principios.md: um regex tentando decidir se a IA "tinha
+// permissao" para falar de horario. Conjunto fechado, os 11 avaliados um a
+// um contra os 34 valores reais de ObjetivoResposta -- ver spec para a tabela
+// completa e para os 3 objetivos avaliados e mantidos de fora.
+const OBJETIVOS_COM_HORARIO_DATA_FISCALIZADOS: ReadonlySet<string> = new Set([
+  'apresentar_horarios',
+  'informar_sem_expediente_e_pedir_outra_data',
+  'pedir_confirmacao',
+  'informar_reserva_criada',
+  'informar_horario_indisponivel',
+  'pedir_confirmacao_remarcacao',
+  'informar_remarcacao_criada',
+  'escolher_entre_agendamentos',
+  'escolher_entre_agendamentos_cancelamento',
+  'pedir_confirmacao_cancelamento',
+  'informar_cancelamento_criado',
+]);
+
 export function verificarRespostaRedatora(texto: string, fatos: FatosAutorizados): ResultadoGuarda {
   if (texto.trim() === '') {
     return { aprovado: false, motivo: 'texto_vazio' };
   }
 
-  // AFIRMAR EXECUÇÃO SEM O CORE TER EXECUTADO (2026-08-21).
+  // AFIRMAR EXECUÇÃO SEM O CORE TER EXECUTADO (2026-08-21). Independente do
+  // objetivo -- nunca condicionada ao conjunto abaixo (specs/guarda-redatora-
+  // fiscal-conversa-v1.md secao 3.1).
   if (!OBJETIVOS_EXECUTADOS.has(fatos.objetivo) && afirmaExecucao(texto, fatos)) {
     return { aprovado: false, motivo: 'execucao_nao_autorizada' };
+  }
+
+  // CHECAGEM DE HORARIO/DATA -- so roda quando o objetivo afirma um fato
+  // operacional concreto (specs/guarda-redatora-fiscal-conversa-v1.md secao
+  // 3.2). Fora deste conjunto, a redatora tem liberdade total para reconhecer
+  // preferencias, explicar limitacoes e responder duvidas sem que um regex de
+  // horario decida se ela "podia" dizer aquilo -- nenhuma fonte nova, nenhuma
+  // segunda rede de protecao implicita.
+  if (!OBJETIVOS_COM_HORARIO_DATA_FISCALIZADOS.has(fatos.objetivo)) {
+    return { aprovado: true };
   }
 
   const minutosAutorizados = coletarMinutosAutorizados(fatos);

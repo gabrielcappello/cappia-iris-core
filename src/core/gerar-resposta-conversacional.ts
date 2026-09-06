@@ -38,6 +38,14 @@ export interface ResultadoRespostaConversacional {
   resposta: string;
   /** Nunca exposto ao paciente -- so para log/telemetria interna. */
   motivo_fallback: MotivoFallbackResposta | null;
+  /**
+   * Texto original da redatora, SOMENTE quando a guarda o reprovou por um
+   * motivo com conteudo real (horario_nao_autorizado, data_nao_autorizada,
+   * execucao_nao_autorizada). `null` para texto_vazio (nao ha conteudo util)
+   * e para qualquer outro desfecho. Nunca exposto ao paciente -- so para
+   * auditoria (specs/guarda-redatora-fiscal-conversa-v1.md secao 5).
+   */
+  resposta_rejeitada_pelo_fiscal: string | null;
 }
 
 import type { ClinicaConhecida } from './clinica-conhecida.ts';
@@ -148,7 +156,11 @@ export async function gerarRespostaConversacional(
   const historicoParaEnvio = historicoValidoParaEnvio(entrada.historicoConversa, Date.now());
 
   if (clienteRedator === null) {
-    return { resposta: gerarRespostaPaciente(entrada.decisao), motivo_fallback: 'redator_nao_configurado' };
+    return {
+      resposta: gerarRespostaPaciente(entrada.decisao),
+      motivo_fallback: 'redator_nao_configurado',
+      resposta_rejeitada_pelo_fiscal: null,
+    };
   }
 
   let textoRedigido: string;
@@ -166,13 +178,21 @@ export async function gerarRespostaConversacional(
       dataHoje: entrada.dataHoje,
     });
   } catch {
-    return { resposta: gerarRespostaPaciente(entrada.decisao), motivo_fallback: 'falha_redatora' };
+    return {
+      resposta: gerarRespostaPaciente(entrada.decisao),
+      motivo_fallback: 'falha_redatora',
+      resposta_rejeitada_pelo_fiscal: null,
+    };
   }
 
   const resultadoGuarda = verificarRespostaRedatora(textoRedigido, fatos);
   if (!resultadoGuarda.aprovado) {
-    return { resposta: gerarRespostaPaciente(entrada.decisao), motivo_fallback: resultadoGuarda.motivo };
+    return {
+      resposta: gerarRespostaPaciente(entrada.decisao),
+      motivo_fallback: resultadoGuarda.motivo,
+      resposta_rejeitada_pelo_fiscal: resultadoGuarda.motivo === 'texto_vazio' ? null : textoRedigido,
+    };
   }
 
-  return { resposta: textoRedigido.trim(), motivo_fallback: null };
+  return { resposta: textoRedigido.trim(), motivo_fallback: null, resposta_rejeitada_pelo_fiscal: null };
 }
