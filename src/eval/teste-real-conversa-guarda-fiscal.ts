@@ -30,7 +30,19 @@
 //
 // NAO EXIGIDO (fora de escopo, spec secao 1/8): resolver "ultimo dia do mes
 // disponivel" -- a IA pode continuar sem saber responder isso. O que este
-// runner prova e que ela para de repetir o MESMO fallback fixo cinco vezes.
+// runner prova estruturalmente e que ela para de repetir o MESMO fallback
+// fixo cinco vezes.
+//
+// AJUSTE (revisao do Codex apos a implementacao de pedido_temporal_ja_passou,
+// specs/guarda-redatora-fiscal-conversa-v1.md secao 8.1): este runner NAO
+// declara mais "APROVADO" so por ausencia do fallback fixo -- isso prova
+// apenas que a guarda parou de bloquear, nunca que a REDATORA respondeu bem.
+// O resumo final agora e uma verificacao ESTRUTURAL (guarda nao bloqueou +
+// o fato pedido_temporal_ja_passou chegou de fato ao payload da redatora nos
+// turnos "passado"), e as respostas desses turnos sao impressas a parte,
+// SEM veredito automatico, para revisao HUMANA contra dois criterios (nao
+// oferecer de volta o pedido passado; pedir uma alternativa futura) -- nunca
+// avaliadas por regex nem por uma segunda IA classificadora.
 //
 // SIMULADO (nunca rede real): banco (ClienteFalso), RPCs de cadastro/reserva
 // (ClienteRpcFalso) e a agenda derivada do catalogo sintetico. REAL: os dois
@@ -230,6 +242,10 @@ async function main(): Promise<void> {
   const clienteRpc = new ClienteRpcFalso({});
 
   const respostasFixasRepetidas: number[] = [];
+  // Turnos em que o Core resolveu resultado.tipo === 'passado' -- guardados
+  // para a checagem do fato na redatora e para a exibicao separada, para
+  // revisao humana, ao final (pontos 1 e 3 pedidos pelo Gabriel).
+  const turnosComDecisaoPassado: Array<{ numero: number; mensagem: string; resposta: string }> = [];
   let falhas = 0;
 
   for (const [indice, mensagem] of CONVERSA.entries()) {
@@ -349,10 +365,29 @@ async function main(): Promise<void> {
     if (resposta === FALLBACK_HORARIO_PASSADO || resposta === FALLBACK_PEDIR_DATA) {
       respostasFixasRepetidas.push(numero);
     }
+
+    // --- Verificacao ESTRUTURAL (ponto 1 pedido pelo Gabriel): nos turnos em
+    // que o Core resolveu resultado.tipo === 'passado', o payload REAL
+    // enviado a redatora precisa carregar fatos.pedido_temporal_ja_passou ===
+    // true -- prova de que o fato atravessou a fronteira do modelo neste
+    // turno especifico, nao so em teste sintetico. Isto NAO avalia o TEXTO da
+    // resposta (ponto 4: sem regex, sem segunda IA) -- so o fato estrutural.
+    if (resultado.decisao.tipo === 'aguardando_data_horario' && resultado.decisao.resultado.tipo === 'passado') {
+      const payloadRedatoraDesteTurno = payloadsRedatora[payloadsRedatora.length - 1];
+      const fatoChegou = payloadRedatoraDesteTurno?.fatos.pedido_temporal_ja_passou === true;
+      if (!fatoChegou) {
+        console.log('  ✖ FALHA (fatal): resultado.tipo === "passado" mas pedido_temporal_ja_passou NAO chegou true ao payload real da redatora');
+        console.log(`    fatos enviados a redatora: ${JSON.stringify(payloadRedatoraDesteTurno?.fatos ?? null)}`);
+        falhas++;
+      } else {
+        console.log('  ✔ CONFIRMADO no payload real: pedido_temporal_ja_passou chegou true a redatora neste turno');
+      }
+      turnosComDecisaoPassado.push({ numero, mensagem, resposta });
+    }
   }
 
   console.log('');
-  console.log('--- verificacao ---');
+  console.log('--- verificacao estrutural ---');
   console.log(`  turnos que caíram no MESMO fallback fixo do caso real: ${respostasFixasRepetidas.length} de ${CONVERSA.length}`);
   console.log(`  turnos: ${respostasFixasRepetidas.join(', ') || '(nenhum)'}`);
 
@@ -369,9 +404,36 @@ async function main(): Promise<void> {
     console.log('  ✔ o loop de fallback fixo do caso real NAO se repetiu');
   }
 
+  // --- Exibicao SEPARADA, para revisao HUMANA, dos turnos "passado" (ponto 3
+  // pedido pelo Gabriel) -- NENHUM veredito automatico aqui: nem regex, nem
+  // segunda IA (ponto 4). So a resposta e os dois criterios que a pessoa
+  // revisando precisa julgar por leitura. ---
+  console.log('');
+  console.log('--- turnos com resultado.tipo === "passado": REVISAO HUMANA, sem veredito automatico ---');
+  if (turnosComDecisaoPassado.length === 0) {
+    console.log('  nenhum turno desta conversa produziu resultado.tipo === "passado".');
+  } else {
+    console.log('  Para cada turno abaixo, julgue por leitura (nenhum destes criterios foi avaliado por codigo):');
+    console.log('    (a) a resposta NAO oferece de volta o pedido/horario que ja passou;');
+    console.log('    (b) a resposta PEDE uma alternativa futura (outra data/horario).');
+    console.log('');
+    for (const turno of turnosComDecisaoPassado) {
+      console.log(`  ── TURNO ${turno.numero} (resultado.tipo === "passado") ──`);
+      console.log(`    paciente: ${JSON.stringify(turno.mensagem)}`);
+      console.log(`    Iris:     ${JSON.stringify(turno.resposta)}`);
+      console.log(`    (a) nao oferece o pedido passado de volta? [revisar manualmente]`);
+      console.log(`    (b) pede alternativa futura?                [revisar manualmente]`);
+      console.log('');
+    }
+  }
+
   console.log('');
   console.log('--- resumo ---');
-  console.log(falhas === 0 ? 'APROVADO: conversa real sem o loop de fallback fixo original.' : `REPROVADO: ${falhas} falha(s).`);
+  console.log(
+    falhas === 0
+      ? 'Verificacao ESTRUTURAL sem falha: guarda nao repetiu o loop de fallback fixo, e pedido_temporal_ja_passou chegou true a redatora em todo turno "passado". Isto NAO avalia se o TEXTO da resposta atende aos dois criterios acima -- essa avaliacao e humana, ver secao anterior.'
+      : `REPROVADO na verificacao estrutural: ${falhas} falha(s).`
+  );
 
   process.exitCode = falhas === 0 ? 0 : 1;
 }
