@@ -457,3 +457,39 @@ test('configuracao realmente invalida CONTINUA sendo falha tecnica', () => {
   assert.equal(fatos.objetivo, 'informar_falha_tecnica');
   assert.equal(fatos.falha_tecnica, true);
 });
+
+// --- pedido_temporal_ja_passou (2026-09-06,
+// specs/guarda-redatora-fiscal-conversa-v1.md secao 8.1): achado da avaliacao
+// com IA real -- `aguardando_data_horario` colapsava os 6 tipos de
+// ResultadoResolucaoTemporal num unico objetivo generico, e a redatora, sem
+// saber que o pedido do paciente ja tinha passado, podia propor de volta o
+// mesmo horario que o Core ja havia rejeitado. ---
+
+test('aguardando_data_horario, resultado "passado": pedido_temporal_ja_passou:true, qualquer que seja o motivo', () => {
+  for (const motivo of [
+    'data_passada',
+    'horario_passado',
+    'inicio_ate_passado',
+    'termino_ate_passado',
+    'dia_semana_esta_passado',
+  ] as const) {
+    const fatos = derivarFatosAutorizados({ tipo: 'aguardando_data_horario', resultado: { tipo: 'passado', motivo } }, HOJE);
+    assert.equal(fatos.objetivo, 'pedir_data_ou_horario');
+    assert.equal(fatos.pedido_temporal_ja_passou, true, `motivo "${motivo}" deveria produzir o campo`);
+  }
+});
+
+test('aguardando_data_horario, os OUTROS CINCO tipos: pedido_temporal_ja_passou fica AUSENTE, nunca false', () => {
+  const casos: Array<{ tipo: string; resultado: Extract<DecisaoOrquestrador, { tipo: 'aguardando_data_horario' }>['resultado'] }> = [
+    { tipo: 'incompleto', resultado: { tipo: 'incompleto', motivo: 'intencao_ausente' } },
+    { tipo: 'ambiguo', resultado: { tipo: 'ambiguo', motivo: 'dia_semana_sem_qualificador' } },
+    { tipo: 'invalido', resultado: { tipo: 'invalido', motivo: 'data_impossivel' } },
+    { tipo: 'conflito', resultado: { tipo: 'conflito', motivo: 'multiplas_datas' } },
+    { tipo: 'erro_configuracao', resultado: { tipo: 'erro_configuracao', motivo: 'fuso_ausente' } },
+  ];
+  for (const caso of casos) {
+    const fatos = derivarFatosAutorizados({ tipo: 'aguardando_data_horario', resultado: caso.resultado }, HOJE);
+    assert.equal(fatos.objetivo, 'pedir_data_ou_horario');
+    assert.equal('pedido_temporal_ja_passou' in fatos, false, `tipo "${caso.tipo}" NAO deveria ter o campo, nem ausente nem false`);
+  }
+});

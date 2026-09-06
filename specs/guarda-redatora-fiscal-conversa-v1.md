@@ -765,7 +765,81 @@ paridade com ele") se aplica, sem exceção nova, aos três primeiros.
     sem alteração — a suíte completa deve ser rodada e cada divergência explicada,
     nunca presumida.
 
-## 8. O que este documento NÃO decide
+## 8.1 Achado posterior à primeira aprovação: `passado` descartado na passagem
+Core → fatos (não é defeito da guarda nem da redatora)
+
+**Contexto.** Depois da primeira implementação desta spec, a avaliação com IA real
+(`src/eval/teste-real-conversa-guarda-fiscal.ts`) confirmou que a guarda parou de
+bloquear (0 dos 7 turnos caiu no fallback fixo original) — mas nos turnos 5 e 6 a
+redatora propôs "hoje, 16h" como se fosse uma oferta válida, exatamente o horário que
+o próprio Core já tinha classificado como passado. Diagnóstico dirigido (turnos 4-7,
+com `decisao`, `fatos`/`historicoRecente` enviados à redatora, resposta original,
+resultado do fiscal e resposta final, todos capturados do payload real) isolou a
+causa:
+
+- no turno 5, `decisao.resultado` era `{ tipo: 'passado', motivo: 'horario_passado' }`
+  — o Core **já sabia** que o horário pedido tinha passado;
+- `derivarFatosAutorizados`, `case 'aguardando_data_horario'`
+  (`fatos-autorizados.ts`, ~linha 715), **descarta `decisao.resultado` por completo** e
+  sempre produz `{ objetivo: 'pedir_data_ou_horario', dados_faltantes: ['data'], ... }`
+  — indistinguível entre "faltou a data" e "a data pedida já passou";
+- a redatora, sem receber esse fato, propôs de novo o horário que o Core já havia
+  rejeitado — não por má redação, e sim porque o fato correspondente nunca chegou até
+  ela. `motivo_fallback` era `null` nos quatro turnos diagnosticados: a guarda nunca
+  interveio, a perda é anterior a ela, na montagem dos fatos.
+
+**Confirmação adicional:** `gerar-resposta-paciente.ts` (`respostaAguardandoDataHorario`,
+~linha 214) já discrimina os 6 `tipo`s de `ResultadoResolucaoTemporal` (com `motivo`
+granular dentro de cada um) para montar o fallback determinístico — a informação
+sempre existiu no `resultado`, só nunca foi repassada à redatora.
+
+**Os turnos 4 e 7 da mesma avaliação NÃO servem de evidência de comportamento de
+produção** — o fixture sintético deste runner não define `horario_funcionamento` na
+clínica, e o turno 7 caiu em `configuracao_invalida`/`sem_jornada` (falha de fixture,
+não achado de comportamento real).
+
+**Correção aprovada pelo Gabriel — a menor possível, sem tocar em nenhum outro
+ponto:** `FatosAutorizados` ganha um campo novo, `pedido_temporal_ja_passou?: true`,
+preenchido **exclusivamente** quando `decisao.resultado.tipo === 'passado'` neste
+`case`. Os outros cinco tipos (`incompleto`, `ambiguo`, `invalido`, `conflito`,
+`erro_configuracao`) continuam **sem** o campo — nunca `false` (mesma disciplina do
+resto do projeto: ausência de fato, não valor negativo). O `motivo` interno
+(`horario_passado` vs `data_passada` etc.) permanece de fora — é vocabulário do Core,
+nunca da conversa; a redatora só precisa saber **que** passou, não **qual** dos cinco
+motivos de "passado" se aplica.
+
+**O que esta correção NÃO faz** (por instrução explícita): não cria objetivo novo
+(continua `pedir_data_ou_horario`); não cria frase fixa nem regex; não amplia o
+fiscal (`guarda-resposta-redatora.ts` não muda); não adiciona fonte de disponibilidade;
+não corrige o fixture de `horario_funcionamento` do runner (fica para rodada
+separada, com autorização própria).
+
+**Instrução da redatora (`redator-instrucoes.ts`), adicionada nesta mesma correção,
+por necessidade — não opcional:** sem uma linha explicando o que
+`pedido_temporal_ja_passou` significa, o campo chegaria aos fatos sem nenhum efeito
+prático — a IA não tem como inferir sozinha que um campo booleano novo pede uma
+reação específica. A instrução é curta e direta, no mesmo padrão do resto do
+arquivo: quando presente, dizer que passou e pedir uma data/horário futuro, nunca
+propor de volta o que o próprio Core já rejeitou.
+
+**Os 4 testes obrigatórios desta correção:**
+1. `resultado.tipo === 'passado'` (qualquer um dos 5 `motivo`s) produz
+   `pedido_temporal_ja_passou: true` — `fatos-autorizados.test.ts`.
+2. Os outros 5 tipos NÃO produzem o campo (ausente, nunca `false`) —
+   `fatos-autorizados.test.ts`.
+3. O payload real capturado da redatora (via `EntradaRedator`, sem chamada de rede)
+   recebe o campo quando presente, e não o recebe quando ausente —
+   `gerar-resposta-conversacional.test.ts`.
+4. **A redatora, com IA real, ao receber o fato, não volta a propor o horário
+   passado — explica que passou e pede uma alternativa futura.** Este teste exige
+   uma nova avaliação paga (`src/eval/teste-real-conversa-guarda-fiscal.ts` ou um
+   cenário equivalente, focado nos turnos 5-6 do caso real) e **não foi executado
+   nesta rodada** — instrução explícita do Gabriel de não rodar avaliação paga sem
+   nova autorização. Os testes 1-3 provam que o fato é produzido e transportado
+   corretamente; o teste 4 prova que a IA reage a ele como esperado, e permanece
+   pendente até a próxima autorização.
+
+## 9. O que este documento NÃO decide
 
 - Se `aguardando_data_horario` → `passado` deveria ganhar um fallback mais variado ou
   contextual — fora de escopo (seção 4.3).
@@ -778,6 +852,8 @@ paridade com ele") se aplica, sem exceção nova, aos três primeiros.
   frente).
 - Qualquer mudança na autenticação, paginação ou demais partes da rota/modal do
   portal além do requisito pontual da seção 5.5.
+- **A correção do fixture `horario_funcionamento` no runner de avaliação real**
+  (seção 8.1) — registrado como pendência separada, sem implementação nesta rodada.
 
 ## Aprovação
 

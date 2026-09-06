@@ -168,6 +168,26 @@ export interface FatosAutorizados {
   proposta_pendente?: { data: string; horario: string };
   dados_faltantes?: CampoFaltante[];
   /**
+   * A data/horario que o PACIENTE pediu neste turno ja passou -- o Core ja
+   * calculou isso (`ResultadoResolucaoTemporal`, tipo `'passado'`), mas ate
+   * aqui essa informacao nunca chegava a redatora: `aguardando_data_horario`
+   * colapsava todos os seis tipos possiveis (incompleto/ambiguo/invalido/
+   * passado/conflito/erro_configuracao) num unico objetivo generico
+   * (`pedir_data_ou_horario`), indistinguivel entre "faltou a data" e "a data
+   * pedida ja passou" (specs/guarda-redatora-fiscal-conversa-v1.md secao
+   * 8.1). Sem este fato, a redatora podia propor de volta o proprio horario
+   * que o Core ja tinha rejeitado -- nao por ma redacao, e sim por ausencia
+   * do fato correspondente.
+   *
+   * Presente (sempre `true`) SOMENTE quando `resultado.tipo === 'passado'`;
+   * ausente nos outros cinco tipos -- nunca `false` (ausencia de fato, nunca
+   * valor negativo, mesma disciplina do resto deste arquivo). O `motivo`
+   * interno (`horario_passado` vs `data_passada` etc.) fica de fora de
+   * proposito: e vocabulario do Core, a redatora so precisa saber QUE
+   * passou, nunca QUAL dos cinco motivos de "passado" se aplica.
+   */
+  pedido_temporal_ja_passou?: true;
+  /**
    * Cadastro JA CONHECIDO do paciente -- nome, CPF, data de nascimento,
    * e-mail (2026-08-17, decisao do Gabriel).
    *
@@ -722,6 +742,12 @@ function derivarPorDecisao(decisao: DecisaoOrquestrador, dataHoje: string): Fato
         ...(decisao.dentista_nome_exibido !== undefined
           ? { dentista_confirmado: decisao.dentista_nome_exibido }
           : {}),
+        // Achado posterior a avaliacao com IA real
+        // (specs/guarda-redatora-fiscal-conversa-v1.md secao 8.1): SOMENTE
+        // quando o Core ja calculou que o pedido do paciente e passado --
+        // nos outros cinco tipos de resultado o campo fica ausente, nunca
+        // `false`.
+        ...(decisao.resultado.tipo === 'passado' ? { pedido_temporal_ja_passou: true as const } : {}),
       };
 
     case 'horarios_disponiveis':

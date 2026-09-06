@@ -192,6 +192,33 @@ test('resposta_rejeitada_pelo_fiscal: falha_redatora -> null', async () => {
   assert.equal(resultado.resposta_rejeitada_pelo_fiscal, null);
 });
 
+// ── pedido_temporal_ja_passou chega ao PAYLOAD REAL da redatora (2026-09-06,
+// specs/guarda-redatora-fiscal-conversa-v1.md secao 8.1) -- teste 3 exigido
+// pelo Gabriel: prova que o fato atravessa gerarRespostaConversacional ate
+// EntradaRedator, nao so que derivarFatosAutorizados o produz. ──
+
+test('pedido_temporal_ja_passou (resultado "passado"): chega ao payload real da redatora', async () => {
+  const { cliente, capturada } = clienteQueCaptura();
+  const decisao: DecisaoOrquestrador = {
+    tipo: 'aguardando_data_horario',
+    resultado: { tipo: 'passado', motivo: 'horario_passado' },
+  };
+  await gerarRespostaConversacional(cliente, { decisao, mensagemPaciente: 'quero para hoje as 16h', ...BASE });
+  assert.equal(capturada[0].fatos.objetivo, 'pedir_data_ou_horario');
+  assert.equal(capturada[0].fatos.pedido_temporal_ja_passou, true);
+});
+
+test('pedido_temporal_ja_passou: AUSENTE do payload real quando o resultado nao e "passado"', async () => {
+  const { cliente, capturada } = clienteQueCaptura();
+  const decisao: DecisaoOrquestrador = {
+    tipo: 'aguardando_data_horario',
+    resultado: { tipo: 'incompleto', motivo: 'intencao_ausente' },
+  };
+  await gerarRespostaConversacional(cliente, { decisao, mensagemPaciente: 'quero marcar', ...BASE });
+  assert.equal(capturada[0].fatos.objetivo, 'pedir_data_ou_horario');
+  assert.equal('pedido_temporal_ja_passou' in capturada[0].fatos, false);
+});
+
 // --- a Iris nunca fica calada ---
 
 test('em qualquer cenario de falha, a resposta final e sempre uma string nao vazia', async () => {
