@@ -36,6 +36,16 @@ funcional divergente entre v111 e a `main` pré-merge são exatamente
 `guarda-resposta-redatora.ts`, `orquestrador.ts` e `redator-instrucoes.ts` — os três
 tocados por esta entrega.
 
+**CORREÇÃO (Gabriel, na sessão seguinte):** a sequência real de versões foi v109 (deploy
+anterior desta mesma sessão) → v110 (deploy próprio, não documentado nesta cadeia de
+ROLLBACK) → v111 (o Codex, por engano, repetiu o deploy de v110 sem alteração de
+conteúdo). Não houve deploy de outra frente/sessão entre 109 e 111 — foi repetição
+acidental do mesmo conteúdo, o que explica a paridade quase total encontrada na
+comparação acima. O registro anterior deste documento, que atribuía a diferença de
+versão a "um deploy intermediário feito por outra sessão/frente", estava incorreto nesse
+ponto — mantido abaixo sem edição para preservar o histórico da investigação, com esta
+nota como fonte de verdade sobre a causa real.
+
 ## Como reverter
 
 ```
