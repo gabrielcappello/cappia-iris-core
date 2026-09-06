@@ -89,7 +89,7 @@ test('agendamento_id FORA da lista oferecida: descartado, nunca persistido', asy
   assert.equal(resultado.aplicacao, null);
 });
 
-test('agendamento_id emitido SEM agendamentos_ativos no payload: descartado (nunca havia pergunta pendente)', async () => {
+test('agendamento_id emitido SEM agendamentos_ativos nem agendamentos_do_paciente no payload: descartado (nenhuma lista fresca para conferir)', async () => {
   const tabelas = criarTabelasFalsasVazias();
   const conversa = semearEstado(tabelas, { intencao: 'remarcacao' });
   const cliente = new ClienteFalso(tabelas);
@@ -97,11 +97,104 @@ test('agendamento_id emitido SEM agendamentos_ativos no payload: descartado (nun
   const resultado = await interpretarEAplicar(
     clienteModeloComResposta(respostaComAgendamentoId(AG_1)),
     cliente,
-    contexto(conversa.id, ['quero o primeiro']) // sem agendamentos_ativos
+    contexto(conversa.id, ['quero o primeiro']) // sem nenhuma das duas listas
   );
 
   assert.equal(resultado.alteracoes_aplicaveis.agendamento_id, undefined);
   assert.equal(resultado.aplicacao, null);
+});
+
+// --- CONTEXTO (agendamentos_do_paciente): identificacao ESPONTANEA, sem
+// pergunta pendente (2026-09-06, achado da investigacao continuada da guarda
+// fiscal -- specs/guarda-redatora-fiscal-conversa-v1.md). Medido contra a IA
+// real (src/eval/medicao-agendamento-do-paciente-espontaneo.ts, gpt-5.6-luna):
+// 9/9 -- 4/4 claros, 2/2 ambiguos corretamente omitidos, 3/3 falsos positivos
+// corretamente omitidos. Estes testes cobrem o GATE deterministico do Core,
+// nao a correlacao semantica da IA (essa e a medicao acima).
+
+const AGENDAMENTOS_DO_PACIENTE = [
+  { agendamento_id: AG_1, descricao: 'Limpeza com Dra. Ana em 15/08 às 14:00', data: '2026-08-15', horario: '14:00' },
+  { agendamento_id: AG_2, descricao: 'Canal com Dr. Bruno em 23/08 às 09:00', data: '2026-08-23', horario: '09:00' },
+];
+
+test('agendamento_id emitido a partir de agendamentos_do_paciente (SEM agendamentos_ativos, sem pergunta pendente): aceito', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const conversa = semearEstado(tabelas, { intencao: 'remarcacao' });
+  const cliente = new ClienteFalso(tabelas);
+
+  const resultado = await interpretarEAplicar(
+    clienteModeloComResposta(respostaComAgendamentoId(AG_2)),
+    cliente,
+    contexto(conversa.id, ['quero remarcar o canal do dia 23'], { agendamentos_do_paciente: AGENDAMENTOS_DO_PACIENTE })
+  );
+
+  assert.equal(resultado.alteracoes_aplicaveis.agendamento_id?.valor, AG_2);
+  assert.equal(resultado.aplicacao?.dados.agendamento_id, AG_2);
+});
+
+test('agendamento_id FORA de agendamentos_do_paciente (id inventado ou de outro paciente/clinica): descartado, nunca persistido', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const conversa = semearEstado(tabelas, { intencao: 'remarcacao' });
+  const cliente = new ClienteFalso(tabelas);
+
+  const idDeOutroPaciente = crypto.randomUUID();
+  const resultado = await interpretarEAplicar(
+    clienteModeloComResposta(respostaComAgendamentoId(idDeOutroPaciente)),
+    cliente,
+    contexto(conversa.id, ['quero remarcar o canal'], { agendamentos_do_paciente: AGENDAMENTOS_DO_PACIENTE })
+  );
+
+  assert.equal(resultado.alteracoes_aplicaveis.agendamento_id, undefined);
+  assert.equal(resultado.aplicacao, null);
+});
+
+test('agendamento_id valido em agendamentos_do_paciente MAS ausente de agendamentos_ativos (as duas fontes sao independentes, a uniao vale): aceito', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const conversa = semearEstado(tabelas, { intencao: 'remarcacao' });
+  const cliente = new ClienteFalso(tabelas);
+
+  // agendamentos_ativos presente (ha OUTRA pergunta pendente, de outro
+  // assunto), mas o id emitido so esta em agendamentos_do_paciente -- a
+  // uniao das duas fontes precisa aceitar, nao so a primeira que aparecer.
+  const resultado = await interpretarEAplicar(
+    clienteModeloComResposta(respostaComAgendamentoId(AG_2)),
+    cliente,
+    contexto(conversa.id, ['quero remarcar o canal do dia 23'], {
+      agendamentos_ativos: [{ agendamento_id: AG_1, descricao: 'Limpeza com Dra. Ana em 15/08 às 14:00' }],
+      agendamentos_do_paciente: AGENDAMENTOS_DO_PACIENTE,
+    })
+  );
+
+  assert.equal(resultado.alteracoes_aplicaveis.agendamento_id?.valor, AG_2);
+  assert.equal(resultado.aplicacao?.dados.agendamento_id, AG_2);
+});
+
+// PAR A/B OBRIGATORIO: mesmo id emitido, dentro vs fora de
+// agendamentos_do_paciente -- os dois lados PRECISAM diferir.
+test('par A/B do gate via agendamentos_do_paciente: mesmo id, dentro vs fora da lista, resultados diferentes', async () => {
+  const idAlvo = crypto.randomUUID();
+
+  const tabelasDentro = criarTabelasFalsasVazias();
+  const conversaDentro = semearEstado(tabelasDentro, { intencao: 'remarcacao' });
+  const resultadoDentro = await interpretarEAplicar(
+    clienteModeloComResposta(respostaComAgendamentoId(idAlvo)),
+    new ClienteFalso(tabelasDentro),
+    contexto(conversaDentro.id, ['quero remarcar esse'], {
+      agendamentos_do_paciente: [{ agendamento_id: idAlvo, descricao: 'Limpeza em 20/08 às 10:00', data: '2026-08-20', horario: '10:00' }],
+    })
+  );
+
+  const tabelasFora = criarTabelasFalsasVazias();
+  const conversaFora = semearEstado(tabelasFora, { intencao: 'remarcacao' });
+  const resultadoFora = await interpretarEAplicar(
+    clienteModeloComResposta(respostaComAgendamentoId(idAlvo)),
+    new ClienteFalso(tabelasFora),
+    contexto(conversaFora.id, ['quero remarcar esse'], { agendamentos_do_paciente: AGENDAMENTOS_DO_PACIENTE }) // idAlvo nao esta aqui
+  );
+
+  assert.equal(resultadoDentro.alteracoes_aplicaveis.agendamento_id?.valor, idAlvo);
+  assert.equal(resultadoFora.alteracoes_aplicaveis.agendamento_id, undefined);
+  assert.notDeepEqual(resultadoDentro.aplicacao?.dados, resultadoFora.aplicacao?.dados);
 });
 
 // PAR A/B OBRIGATORIO: mesma entrada (mesmo id emitido), variando SO a

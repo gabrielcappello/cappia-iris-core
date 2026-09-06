@@ -351,7 +351,7 @@ function aplicarCandidatoUnicoDeDentista(
 }
 
 /**
- * Valida `agendamento_id` contra a lista OFICIALMENTE OFERECIDA neste turno
+ * Valida `agendamento_id` contra agendamentos REAIS e ATIVOS deste paciente
  * (specs/remarcacao-conversacional-v1.md secao 3, contrato fechado por
  * medicao 2026-08-11: 11/11 casos contra a IA real, sem evento, sem
  * `referencia_textual`). A IA correlaciona semanticamente e devolve o id
@@ -359,24 +359,39 @@ function aplicarCandidatoUnicoDeDentista(
  * conta propria, e o Core NUNCA interpreta essas referencias aqui (seria
  * recriar o parser textual que a medicao provou desnecessario).
  *
- * `agendamentos_ativos` so chega no payload quando ha uma escolha pendente
- * (orquestrador.ts) -- entao a AUSENCIA da chave ja e prova de que nao
- * havia pergunta em aberto, e qualquer `agendamento_id` emitido mesmo assim
- * e descartado.
+ * DUAS fontes validas, a UNIAO de ambas (2026-09-06, achado da investigacao
+ * continuada da guarda fiscal): `agendamentos_ativos` (ha uma escolha
+ * PENDENTE deste turno anterior, orquestrador.ts) e `agendamentos_do_paciente`
+ * (CONTEXTO, sempre enviado quando o paciente tem agendamento -- permite
+ * identificar de primeira, no proprio pedido espontaneo de remarcacao,
+ * "remarcar a cirurgia de implante do dia 9", sem depender de uma pergunta
+ * "qual desses?" ja feita). Medido contra a IA real
+ * (src/eval/medicao-agendamento-do-paciente-espontaneo.ts, gpt-5.6-luna):
+ * 9/9 -- 4/4 referencias claras identificadas corretamente, 2/2 ambiguas e
+ * 3/3 falsos positivos (pergunta sobre o procedimento, agendamento novo,
+ * pergunta de funcionamento) corretamente OMITIDOS. As duas fontes nunca
+ * mudam o comportamento uma da outra: a mesma checagem de integridade vale
+ * para as duas, e o `agendamento_id` so precisa estar em UMA delas.
  *
- * ID fora da lista tambem e descartado -- nunca usado para localizar
- * agendamento, mesmo que exista de fato no banco (poderia pertencer a outra
- * pergunta, outro turno, ou ser uma alucinacao do modelo). O campo continua
- * ausente, e o orquestrador mantem `aguardando_escolha_agendamento`.
+ * ID fora de AMBAS as listas e descartado -- nunca usado para localizar
+ * agendamento, mesmo que exista de fato no banco (poderia pertencer a outro
+ * paciente, outra clinica, outro turno, ou ser uma alucinacao do modelo). O
+ * campo continua ausente, e o orquestrador decide o proximo passo sem ele
+ * (mantem `aguardando_escolha_agendamento`, ou segue para a busca normal se
+ * so havia um agendamento).
  */
 function validarEscolhaAgendamento(
   alteracoes: AlteracoesDados,
-  agendamentosAtivos: { agendamento_id: string; descricao: string }[] | undefined
+  agendamentosAtivos: { agendamento_id: string; descricao: string }[] | undefined,
+  agendamentosDoPaciente: { agendamento_id: string }[] | undefined
 ): AlteracoesDados {
   const alteracao = alteracoes.agendamento_id;
   if (alteracao === undefined || alteracao.acao === 'remover') return alteracoes;
 
-  const idsValidos = new Set((agendamentosAtivos ?? []).map((item) => item.agendamento_id));
+  const idsValidos = new Set([
+    ...(agendamentosAtivos ?? []).map((item) => item.agendamento_id),
+    ...(agendamentosDoPaciente ?? []).map((item) => item.agendamento_id),
+  ]);
   if (idsValidos.has(alteracao.valor as string)) return alteracoes;
 
   const { agendamento_id: _descartado, ...resto } = alteracoes;
@@ -753,12 +768,18 @@ export async function interpretarEAplicar(
   // texto -- ver guarda-nome-escolha-dentista.ts.
   const guardaNome = descartarNomeDeEscolhaDeDentista(alteracoesFinais, guardaLista.candidatos);
 
-  // 5c-bis. ESCOLHA DE AGENDAMENTO -- gate de integridade contra a lista
-  // oficialmente oferecida neste turno (specs/remarcacao-conversacional-v1.md
-  // secao 3). Id fora da lista (ou sem lista nenhuma) nunca e persistido.
+  // 5c-bis. ESCOLHA DE AGENDAMENTO -- gate de integridade contra agendamentos
+  // REAIS deste paciente: a lista oficialmente oferecida neste turno
+  // (`agendamentos_ativos`, specs/remarcacao-conversacional-v1.md secao 3) OU
+  // o contexto sempre presente (`agendamentos_do_paciente`, 2026-09-06,
+  // achado da investigacao continuada da guarda fiscal -- permite identificar
+  // o agendamento de origem ja no pedido espontaneo, sem exigir uma pergunta
+  // "qual desses?" anterior). Id fora de ambas as listas (ou sem lista
+  // nenhuma) nunca e persistido.
   const alteracoesComEscolhaAgendamento = validarEscolhaAgendamento(
     guardaNome.alteracoes,
-    entrada.agendamentos_ativos
+    entrada.agendamentos_ativos,
+    entrada.agendamentos_do_paciente
   );
 
   // 5c-ter. LIMPEZA DE CONFIRMACAO AO ENTRAR EM REMARCACAO/CANCELAMENTO -- um
