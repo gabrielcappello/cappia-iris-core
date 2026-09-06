@@ -97,6 +97,7 @@ test('gravarAuditoriaSucesso: insere exatamente uma linha, com resultado_turno =
     mensagemPaciente: 'Olá, bom dia',
     respostaIris: 'Olá! Como posso ajudar?',
     motivoFallback: null,
+    respostaRejeitadaPeloFiscal: null,
   });
 
   assert.equal(cliente.linhasInseridas.length, 1);
@@ -107,6 +108,7 @@ test('gravarAuditoriaSucesso: insere exatamente uma linha, com resultado_turno =
     resposta_iris: 'Olá! Como posso ajudar?',
     motivo_fallback: null,
     resultado_turno: 'sucesso',
+    resposta_rejeitada_pelo_fiscal: null,
   });
 });
 
@@ -118,10 +120,62 @@ test('gravarAuditoriaSucesso: motivo_fallback preservado quando o desfecho foi f
     mensagemPaciente: 'Quero remarcar',
     respostaIris: 'Vamos remarcar sua consulta...',
     motivoFallback: 'falha_redatora',
+    respostaRejeitadaPeloFiscal: null,
   });
 
   assert.equal(cliente.linhasInseridas[0].motivo_fallback, 'falha_redatora');
   assert.equal(cliente.linhasInseridas[0].resultado_turno, 'sucesso');
+});
+
+// ── CAMPO NOVO resposta_rejeitada_pelo_fiscal (2026-09-05/06,
+// specs/guarda-redatora-fiscal-conversa-v1.md secao 5) -- tres casos
+// distintos, nunca um teste generico (secao 7).
+
+test('gravarAuditoriaSucesso: guarda reprova por horario_nao_autorizado -> grava o texto original', async () => {
+  const cliente = new ClienteBancoDadosFalso();
+  await gravarAuditoriaSucesso(cliente, {
+    clinicaId: 'clinica-1',
+    telefoneNormalizado: '5521988046011',
+    mensagemPaciente: 'quero 16h',
+    respostaIris: 'Esse horário de hoje já passou. Prefere outro horário hoje, ou outro dia?',
+    motivoFallback: 'horario_nao_autorizado',
+    respostaRejeitadaPeloFiscal: 'Funcionamos das 8h às 18h. Já são 21:35, esse horário passou.',
+  });
+
+  assert.equal(
+    cliente.linhasInseridas[0].resposta_rejeitada_pelo_fiscal,
+    'Funcionamos das 8h às 18h. Já são 21:35, esse horário passou.'
+  );
+  assert.equal(cliente.linhasInseridas[0].motivo_fallback, 'horario_nao_autorizado');
+});
+
+test('gravarAuditoriaSucesso: guarda reprova por texto_vazio -> grava null, nunca string vazia', async () => {
+  const cliente = new ClienteBancoDadosFalso();
+  await gravarAuditoriaSucesso(cliente, {
+    clinicaId: 'clinica-1',
+    telefoneNormalizado: '5521988046011',
+    mensagemPaciente: 'oi',
+    respostaIris: 'Olá! Como posso te ajudar hoje?',
+    motivoFallback: 'texto_vazio',
+    respostaRejeitadaPeloFiscal: null,
+  });
+
+  assert.equal(cliente.linhasInseridas[0].resposta_rejeitada_pelo_fiscal, null);
+  assert.equal(cliente.linhasInseridas[0].motivo_fallback, 'texto_vazio');
+});
+
+test('gravarAuditoriaSucesso: turno aprovado (motivo_fallback null) -> grava null', async () => {
+  const cliente = new ClienteBancoDadosFalso();
+  await gravarAuditoriaSucesso(cliente, {
+    clinicaId: 'clinica-1',
+    telefoneNormalizado: '5521988046011',
+    mensagemPaciente: 'Olá, bom dia',
+    respostaIris: 'Olá! Como posso ajudar?',
+    motivoFallback: null,
+    respostaRejeitadaPeloFiscal: null,
+  });
+
+  assert.equal(cliente.linhasInseridas[0].resposta_rejeitada_pelo_fiscal, null);
 });
 
 test('gravarAuditoriaSucesso: nunca lança, mesmo com falha de escrita (best-effort, spec 1.2.2)', async () => {
@@ -135,6 +189,7 @@ test('gravarAuditoriaSucesso: nunca lança, mesmo com falha de escrita (best-eff
       mensagemPaciente: 'oi',
       respostaIris: 'oi!',
       motivoFallback: null,
+      respostaRejeitadaPeloFiscal: null,
     })
   );
   assert.equal(cliente.linhasInseridas.length, 0);

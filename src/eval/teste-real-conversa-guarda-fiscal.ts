@@ -11,6 +11,19 @@
 // escreve quando tem liberdade para reconhecer preferencia, explicar limitacao
 // e responder duvida.
 //
+// CORRIGIDO (revisao do Codex, apos a primeira versao deste runner): a
+// primeira versao comecava em "bora marcar os pendentes...", pulando a
+// ABERTURA da conversa real (a saudacao que lista os atendimentos pendentes,
+// incluindo a Restauracao). Sem essa abertura semeada no historico, o turno
+// seguinte ("bora marcar os pendentes... vamos fazer a restauração") nao
+// exercita o caso real -- a redatora nunca recebe o contexto de que a
+// Restauracao ja tinha sido oferecida por nome. Corrigido semeando a abertura
+// real no historico da conversa (mesmo padrao de
+// src/eval/teste-real-conversa-pedido-multiplo.ts), e capturando o payload
+// REAL enviado a interpretadora e a redatora para provar -- nao alegar -- que
+// o contexto relevante (procedimento pendente, preferencia de 16h, "hoje ja
+// passou") de fato atravessou a fronteira do modelo em cada turno que importa.
+//
 // NAO EXIGIDO (fora de escopo, spec secao 1/8): resolver "ultimo dia do mes
 // disponivel" -- a IA pode continuar sem saber responder isso. O que este
 // runner prova e que ela para de repetir o MESMO fallback fixo cinco vezes.
@@ -41,6 +54,39 @@ import { gerarRespostaConversacional } from '../core/gerar-resposta-conversacion
 import { gravarHistoricoConversa } from '../core/historico-conversa.ts';
 import { ClienteFalso, criarTabelasFalsasVazias, type TabelasFalsas } from '../core/teste-cliente-falso.ts';
 import { ClienteRpcFalso } from '../core/teste-cliente-rpc-falso.ts';
+import type { ClienteModeloEstruturado, EntradaInterpretacao } from '../core/interpretacao-tipos.ts';
+import type { ClienteModeloRedator, EntradaRedator } from '../core/cliente-modelo-redator-openai.ts';
+
+/**
+ * Envolve o cliente REAL so para CAPTURAR o payload de cada chamada -- nunca
+ * substitui, nunca altera o comportamento. Mesma razao de
+ * teste-real-conversa-pedido-multiplo.ts: um log que AFIRMA "o contexto foi
+ * enviado" nao e evidencia -- e uma alegacao. A unica prova e inspecionar o
+ * payload que de fato atravessou a fronteira do modelo.
+ */
+function comCapturaDeInterpretacao(
+  clienteReal: ClienteModeloEstruturado,
+  payloadsCapturados: EntradaInterpretacao[]
+): ClienteModeloEstruturado {
+  return {
+    async executar(entrada) {
+      payloadsCapturados.push(entrada.payload);
+      return clienteReal.executar(entrada);
+    },
+  };
+}
+
+function comCapturaDeRedacao(
+  clienteReal: ClienteModeloRedator,
+  payloadsCapturados: EntradaRedator[]
+): ClienteModeloRedator {
+  return {
+    async redigir(entrada) {
+      payloadsCapturados.push(entrada);
+      return clienteReal.redigir(entrada);
+    },
+  };
+}
 
 const PROVIDER = 'evolution';
 const INSTANCIA = 'clinica-teste';
@@ -84,7 +130,24 @@ function montarCenario(tabelas: TabelasFalsas): void {
     estado: 'atendimento',
     dados: {},
     paciente_id: null,
-    historico_conversa: [],
+    // HISTORICO SEMEADO com a ABERTURA REAL da conversa (spec secao 1,
+    // primeira linha): a saudacao que lista a Restauração como pendente. Sem
+    // isto, o turno 1 do paciente ("bora marcar os pendentes... vamos fazer a
+    // restauração") chega a IA como se fosse a PRIMEIRA mensagem da conversa,
+    // nunca uma continuacao -- exatamente o defeito que a primeira versao
+    // deste runner tinha (achado do Codex).
+    historico_conversa: [
+      {
+        mensagem_paciente: 'boa noite',
+        resposta_iris:
+          'Boa noite, Carlos! Também estão pendentes:\n\n* Restauração / Cárie (1 face) — dente 23 — Dr. Pablo Arruda\n\nVocê quer agendar esse atendimento?',
+        // RELATIVO AO MOMENTO DA EXECUCAO, sempre dentro da janela de 12h do
+        // filtro real (historico-conversa.ts, historicoValidoParaEnvio, que
+        // usa Date.now() -- o relogio real da maquina, nunca o instante_atual
+        // simulado). Mesmo cuidado do runner-irmao de pedido multiplo.
+        gerada_em: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+      },
+    ],
     atualizado_em: new Date('2026-08-08T00:00:00.000Z').toISOString(),
   });
   tabelas.procedimentos_catalogo.push({
@@ -133,18 +196,26 @@ async function main(): Promise<void> {
   console.log('banco, RPCs e agenda: SIMULADOS. IA: real nas duas pontas.');
   console.log('');
 
-  const clienteModelo = criarClienteModeloOpenAI({
-    chaveApi,
-    modelo: MODELO_IRIS_NOVA,
-    timeoutPorTentativaMs: TIMEOUT_POR_TENTATIVA_MS_APROVADO,
-    prazoTotalMs: PRAZO_TOTAL_MS_APROVADO,
-    esperaEntreTentativasMs: ESPERA_ENTRE_TENTATIVAS_MS_APROVADO,
-  });
-  const clienteRedator = criarClienteModeloRedatorOpenAI({
-    chaveApi,
-    modelo: MODELO_IRIS_NOVA,
-    timeoutMs: TIMEOUT_REDATOR_MS_APROVADO,
-  });
+  const payloadsInterpretadora: EntradaInterpretacao[] = [];
+  const payloadsRedatora: EntradaRedator[] = [];
+  const clienteModelo = comCapturaDeInterpretacao(
+    criarClienteModeloOpenAI({
+      chaveApi,
+      modelo: MODELO_IRIS_NOVA,
+      timeoutPorTentativaMs: TIMEOUT_POR_TENTATIVA_MS_APROVADO,
+      prazoTotalMs: PRAZO_TOTAL_MS_APROVADO,
+      esperaEntreTentativasMs: ESPERA_ENTRE_TENTATIVAS_MS_APROVADO,
+    }),
+    payloadsInterpretadora
+  );
+  const clienteRedator = comCapturaDeRedacao(
+    criarClienteModeloRedatorOpenAI({
+      chaveApi,
+      modelo: MODELO_IRIS_NOVA,
+      timeoutMs: TIMEOUT_REDATOR_MS_APROVADO,
+    }),
+    payloadsRedatora
+  );
 
   const tabelas = criarTabelasFalsasVazias();
   montarCenario(tabelas);
@@ -202,6 +273,52 @@ async function main(): Promise<void> {
       console.log(`  (fallback: ${motivo_fallback})`);
       if (resposta_rejeitada_pelo_fiscal !== null) {
         console.log(`  (texto original da redatora, reprovado pelo fiscal: ${JSON.stringify(resposta_rejeitada_pelo_fiscal)})`);
+      }
+    }
+
+    // --- Verificacao de CONTEXTO REAL no turno 1: prova, nao alegacao ---
+    // O payload de fato enviado a interpretadora precisa conter a abertura
+    // semeada (a Restauração pendente) -- senao o turno 1 nao esta exercitando
+    // uma CONTINUACAO da conversa real, e sim uma mensagem isolada.
+    if (numero === 1) {
+      const payloadDoTurno1 = payloadsInterpretadora[0];
+      const textoHistorico = JSON.stringify(payloadDoTurno1?.historico_recente ?? null).toLowerCase();
+      const contextoChegouNaInterpretadora = textoHistorico.includes('restaura');
+      if (!contextoChegouNaInterpretadora) {
+        console.log('  ✖ FALHA (fatal): a abertura semeada (Restauração pendente) NAO chegou ao payload real da interpretadora');
+        console.log(`    historico_recente enviado: ${JSON.stringify(payloadDoTurno1?.historico_recente ?? null)}`);
+        falhas++;
+      } else {
+        console.log('  ✔ CONFIRMADO no payload real: a interpretadora recebeu a abertura com a Restauração pendente');
+      }
+    }
+
+    // --- Verificacao de CONTEXTO REAL no turno 3: a preferencia de 16h e o
+    // pedido de "ultimo dia do mes" precisam ter chegado a REDATORA, pois e
+    // exatamente esse turno que produz o primeiro bloqueio no caso real. ---
+    if (numero === 3) {
+      const payloadRedatora = payloadsRedatora[payloadsRedatora.length - 1];
+      const contextoChegouNaRedatora = payloadRedatora?.mensagemPaciente.includes('16hrs') ?? false;
+      if (!contextoChegouNaRedatora) {
+        console.log('  ✖ FALHA (fatal): a mensagem com a preferencia de 16h NAO chegou ao payload real da redatora');
+        falhas++;
+      } else {
+        console.log('  ✔ CONFIRMADO no payload real: a redatora recebeu a mensagem com a preferencia de 16h');
+      }
+    }
+
+    // --- Verificacao de CONTEXTO REAL no turno 5: o pedido explicito "quero
+    // para hoje" precisa ter chegado a redatora -- e a mensagem que, no caso
+    // real, deveria acionar "esse horario ja passou" (aguardando_data_horario
+    // -> passado), nao ser ignorada. ---
+    if (numero === 5) {
+      const payloadRedatora = payloadsRedatora[payloadsRedatora.length - 1];
+      const contextoChegouNaRedatora = payloadRedatora?.mensagemPaciente.toLowerCase().includes('para hoje') ?? false;
+      if (!contextoChegouNaRedatora) {
+        console.log('  ✖ FALHA (fatal): o pedido "para hoje" NAO chegou ao payload real da redatora');
+        falhas++;
+      } else {
+        console.log('  ✔ CONFIRMADO no payload real: a redatora recebeu o pedido "para hoje"');
       }
     }
 
