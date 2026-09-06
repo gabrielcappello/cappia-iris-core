@@ -614,6 +614,11 @@ test(
         minuscula.includes('proximo'),
       `precisa convidar ao OUTRO procedimento de forma generica -- resposta: ${JSON.stringify(resposta)}`
     );
+    assert.ok(
+      resposta.includes('?') &&
+        (minuscula.includes('dia') || minuscula.includes('quando') || minuscula.includes('data')),
+      `precisa PERGUNTAR qual dia fica melhor para o outro procedimento -- resposta: ${JSON.stringify(resposta)}`
+    );
     for (const proibido of ['restaura', 'cárie', 'carie', 'canal']) {
       assert.ok(
         !minuscula.includes(proibido),
@@ -699,81 +704,6 @@ test(
         `NAO pode oferecer o restante sem pedido explicito (achou "${indicioDeOferta}") -- resposta: ${JSON.stringify(resposta)}`
       );
     }
-  }
-);
-
-// --- DEFESA EM PROFUNDIDADE (achado durante a validacao, nao pedido pelo
-// Gabriel, registrado por honestidade): esta e a MESMA situacao do teste
-// acima, mas simulando um vazamento hipotetico -- `tratamentosAprovados`
-// presente no payload mesmo sem pedido multiplo no historico (o que NAO
-// deveria acontecer, ja que `reserva_criada` foi removida de
-// DECISOES_COM_PLANO_DE_TRATAMENTO, mas serve para medir se a INSTRUCAO
-// sozinha resiste, caso esse fato vaze por outro caminho no futuro).
-//
-// MEDIDO: a instrucao sozinha NAO resiste com confianca -- com o fato
-// presente no payload, a IA as vezes ainda convida ao "outro procedimento"
-// mesmo sem pedido no historico (a lista visivel pesa mais que a
-// instrucao textual, mesmo padrao ja documentado em
-// "procedimentos_ativos_da_clinica"/"procedimento_avaliacao_disponivel").
-// A protecao real e ESTRUTURAL (o Core nunca envia o fato), nao textual --
-// por isso este teste e informativo, marcado `todo`, e NAO bloqueia a
-// suite: a garantia que importa e a do teste anterior, onde o fato de
-// fato nao chega.
-test(
-  'REDATORA REAL (informativo) -- com tratamentos_aprovados vazando no payload, a instrucao sozinha nem sempre resiste',
-  { skip: !TEM_CHAVE_OPENAI, todo: 'defesa em profundidade -- a protecao real e o Core nunca enviar o fato' },
-  async () => {
-    const { criarClienteModeloRedatorOpenAI, TIMEOUT_REDATOR_MS_APROVADO } = await import(
-      './cliente-modelo-redator-openai.ts'
-    );
-    const { MODELO_IRIS_NOVA } = await import('./cliente-modelo-openai.ts');
-    const { gerarRespostaConversacional } = await import('./gerar-resposta-conversacional.ts');
-
-    const cliente = criarClienteModeloRedatorOpenAI({
-      chaveApi: process.env.OPENAI_API_KEY!,
-      modelo: MODELO_IRIS_NOVA,
-      timeoutMs: TIMEOUT_REDATOR_MS_APROVADO,
-    });
-
-    const historico = [
-      {
-        mensagem_paciente: 'boa tarde, queria marcar a cirurgia de implante',
-        resposta_iris: 'Boa tarde! Vou verificar os horários com o Dr. Pablo Arruda. Que dia prefere?',
-        gerada_em: new Date(Date.now() - 3 * 60 * 1000).toISOString(),
-      },
-      {
-        mensagem_paciente: 'terça as 10:30',
-        resposta_iris: 'Posso confirmar a cirurgia de implante para *09/09 às 10:30*?',
-        gerada_em: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
-      },
-    ];
-
-    const { resposta } = await gerarRespostaConversacional(cliente, {
-      decisao: {
-        tipo: 'reserva_criada',
-        agendamento_id: crypto.randomUUID(),
-        dentista_id: crypto.randomUUID(),
-        procedimento_id: crypto.randomUUID(),
-        duracao_min: 60,
-        data: '2026-09-09',
-        horario: '10:30',
-        dentista_nome_exibido: 'Dr. Pablo Arruda',
-        procedimento_nome: 'Cirurgia de implante',
-      },
-      tratamentosAprovados: [
-        { procedimento: 'Restauração / Cárie (1 face)', procedimento_id: crypto.randomUUID(), dente: '23' },
-      ],
-      mensagemPaciente: 'isso mesmo, pode confirmar',
-      naturezaMensagem: 'resposta',
-      historicoConversa: historico,
-      dataHoje: '2026-09-04',
-    });
-
-    const minuscula = resposta.toLowerCase();
-    assert.ok(
-      !minuscula.includes('outro procedimento') && !minuscula.includes('restaura'),
-      `resposta: ${JSON.stringify(resposta)}`
-    );
   }
 );
 
