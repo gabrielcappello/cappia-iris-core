@@ -158,6 +158,53 @@ oferecida naquele turno. ID fora da lista é descartado — nunca é usado para 
 agendamento, nem mesmo se existir no banco. É a mesma conferência de integridade que o Core
 já faz com `procedimento_id` e `dentista_id`.
 
+**Exceção aprovada (2026-09-06, achado da investigação continuada da guarda fiscal —
+`specs/guarda-redatora-fiscal-conversa-v1.md`): identificação espontânea via
+`agendamentos_do_paciente`, sem exigir pergunta pendente.** A medição de 2026-08-11 acima
+provou apenas o cenário pós-pergunta ("qual desses você quer?"). Ela nunca cobriu o caso
+real medido depois: o paciente mencionar o agendamento espontaneamente, na própria frase
+que abre o pedido de remarcação ("remarcar a cirurgia de implante do dia 9"), sem que o
+Core tenha perguntado antes. Até esta exceção, esse caso sempre caía em
+`aguardando_escolha_agendamento` mesmo com dado suficiente na frase do paciente — e a
+redatora, sem instrução própria para o objetivo `escolher_entre_agendamentos`, apresentava
+os agendamentos existentes como se fossem horários disponíveis de destino (defeito
+separado, corrigido junto).
+
+`validarEscolhaAgendamento` (`interpretar-e-aplicar.ts`) passa a aceitar `agendamento_id`
+contra **duas fontes com regras diferentes, não uma união simétrica**:
+
+- `agendamentos_ativos` (esta seção): aceito sempre, **comportamento inalterado**. A
+  pergunta "qual desses?" já delimita o assunto, então a intenção no snapshot é irrelevante
+  aqui.
+- `agendamentos_do_paciente` (contexto, sempre enviado quando o paciente tem agendamento —
+  seção anterior desta spec): aceito **somente quando a intenção EFETIVA deste turno é
+  `remarcacao`** — a intenção já persistida no snapshot, **ou** emitida agora mesmo pela
+  IA (não removida). Sem essa restrição, uma consulta ao histórico ("quais atendimentos eu
+  tenho?"), um cancelamento, ou qualquer conversa comum que a IA confundisse poderia vazar
+  um `agendamento_id` que nunca deveria ter sido lido como pedido de remarcação. A
+  restrição limita o risco da fonte nova — nunca afeta `agendamentos_ativos`.
+
+Instrução equivalente foi acrescentada em `interpretacao-instrucoes.ts`, no mesmo padrão já
+usado para `tratamentos_pendentes` (prioridade de continuidade): quando a referência do
+paciente — procedimento, data, dia da semana, horário, ou combinação — identifica
+claramente UM ÚNICO item de `agendamentos_do_paciente`, a IA preenche `agendamento_id`; em
+dúvida real, ou quando a mensagem não é um pedido de remarcar aquele agendamento específico
+(pergunta sobre o procedimento, agendamento novo, pergunta de funcionamento), omite.
+
+Medido contra a IA real ANTES de implementar
+(`src/eval/medicao-agendamento-do-paciente-espontaneo.ts`, `gpt-5.6-luna`, modelo de
+produção): **9/9** — 4/4 referências claras identificadas corretamente (incluindo o caso
+real exato), 2/2 ambíguas e 3/3 falsos positivos corretamente **omitidos**. Verificação
+adicional de uma chamada com o prompt completo de produção (`interpretacao-instrucoes.ts`
+real, não a instrução reduzida da medição) confirmou o mesmo resultado no caso real e num
+falso positivo.
+
+Testes determinísticos em `interpretar-e-aplicar-remarcacao.test.ts`: aceito via
+`agendamentos_do_paciente` sozinho (com intenção já no snapshot, e com intenção emitida no
+mesmo turno — o caso real), ID fora de ambas as fontes descartado, união das duas fontes
+quando ambas presentes, e o par negativo obrigatório — mesmo ID real, sem nenhuma intenção
+de remarcação (nem snapshot, nem turno atual), descartado.
+
 ### Limite medido e aceito
 
 `natureza_mensagem` variou entre `pedido`, `resposta` e `correcao` para a **mesma frase**

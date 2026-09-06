@@ -69,6 +69,9 @@ export async function extrairAlteracoes(
     ...(entradaBruta.agendamentos_ativos !== undefined
       ? { agendamentos_ativos: [...entradaBruta.agendamentos_ativos] }
       : {}),
+    ...(entradaBruta.agendamentos_do_paciente !== undefined
+      ? { agendamentos_do_paciente: [...entradaBruta.agendamentos_do_paciente] }
+      : {}),
     ...(entradaBruta.tratamentos_pendentes !== undefined
       ? { tratamentos_pendentes: [...entradaBruta.tratamentos_pendentes] }
       : {}),

@@ -363,6 +363,45 @@ test('correcao1: payload enviado ao modelo contem exatamente as tres chaves do c
   ]);
 });
 
+// TESTE DE FRONTEIRA (2026-09-06, achado do Codex): `agendamentos_do_paciente`
+// estava presente em `entradaBruta` (aceito por `validarEntradaInterpretacao`)
+// mas o payload de `extrairAlteracoes` e reconstruido CAMPO A CAMPO (linha
+// 46-76) -- sem uma entrada explicita para `agendamentos_do_paciente`, a
+// chave desaparecia ANTES de chegar a `cliente.executar()`, mesmo com a
+// instrucao em interpretacao-instrucoes.ts referenciando-a corretamente.
+// Este teste captura o payload REAL entregue ao cliente (nao o que a funcao
+// RECEBEU) e prova que a lista completa atravessa a fronteira.
+test('agendamentos_do_paciente atravessa a fronteira: o payload REAL entregue ao cliente contem a lista completa', async () => {
+  const cliente = new ClienteModeloFalso([{ natureza_mensagem: 'pedido', alteracoes: {} }]);
+
+  const agendamentosDoPaciente = [
+    { agendamento_id: 'ag-1', descricao: 'Retratamento de canal — 07/09 às 08:00', procedimento_id: 'canal', data: '2026-09-07', horario: '08:00' },
+    { agendamento_id: 'ag-2', descricao: 'Cirurgia de implante — 09/09 às 10:30', procedimento_id: 'implante', data: '2026-09-09', horario: '10:30' },
+    { agendamento_id: 'ag-3', descricao: 'Restauração — 28/09 às 08:00', procedimento_id: 'restauracao', data: '2026-09-28', horario: '08:00' },
+  ];
+
+  await extrairAlteracoes(cliente, {
+    mensagens_atuais: ['poderia por favor remarcar a cirugia de implantes do dia 9?'],
+    dados_atuais: {},
+    campos_cadastrais_preenchidos: [],
+    agendamentos_do_paciente: agendamentosDoPaciente,
+  });
+
+  assert.deepEqual(cliente.chamadas[0].payload.agendamentos_do_paciente, agendamentosDoPaciente);
+});
+
+test('agendamentos_do_paciente AUSENTE na entrada: chave tambem ausente do payload (nunca `[]`, nunca `undefined` explicito)', async () => {
+  const cliente = new ClienteModeloFalso([{ natureza_mensagem: 'pedido', alteracoes: {} }]);
+
+  await extrairAlteracoes(cliente, {
+    mensagens_atuais: ['oi'],
+    dados_atuais: {},
+    campos_cadastrais_preenchidos: [],
+  });
+
+  assert.equal('agendamentos_do_paciente' in cliente.chamadas[0].payload, false);
+});
+
 // --- Correcao 3: nunca reproduzir chave bruta em erros ---
 
 test('correcao3: chave desconhecida contendo nome, CPF e e-mail no proprio nome nunca aparece no erro', async () => {

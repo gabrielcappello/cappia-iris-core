@@ -359,21 +359,34 @@ function aplicarCandidatoUnicoDeDentista(
  * conta propria, e o Core NUNCA interpreta essas referencias aqui (seria
  * recriar o parser textual que a medicao provou desnecessario).
  *
- * DUAS fontes validas, a UNIAO de ambas (2026-09-06, achado da investigacao
- * continuada da guarda fiscal): `agendamentos_ativos` (ha uma escolha
- * PENDENTE deste turno anterior, orquestrador.ts) e `agendamentos_do_paciente`
- * (CONTEXTO, sempre enviado quando o paciente tem agendamento -- permite
- * identificar de primeira, no proprio pedido espontaneo de remarcacao,
- * "remarcar a cirurgia de implante do dia 9", sem depender de uma pergunta
- * "qual desses?" ja feita). Medido contra a IA real
- * (src/eval/medicao-agendamento-do-paciente-espontaneo.ts, gpt-5.6-luna):
- * 9/9 -- 4/4 referencias claras identificadas corretamente, 2/2 ambiguas e
- * 3/3 falsos positivos (pergunta sobre o procedimento, agendamento novo,
- * pergunta de funcionamento) corretamente OMITIDOS. As duas fontes nunca
- * mudam o comportamento uma da outra: a mesma checagem de integridade vale
- * para as duas, e o `agendamento_id` so precisa estar em UMA delas.
+ * DUAS fontes validas (2026-09-06, achado da investigacao continuada da
+ * guarda fiscal), com regras DIFERENTES -- nao e uma uniao simetrica:
  *
- * ID fora de AMBAS as listas e descartado -- nunca usado para localizar
+ * - `agendamentos_ativos`: ha uma escolha PENDENTE deste turno anterior
+ *   (orquestrador.ts). Aceito sempre, comportamento INALTERADO desde
+ *   2026-08-11 -- a pergunta "qual desses?" ja delimita o assunto, entao a
+ *   intencao no snapshot e irrelevante aqui.
+ *
+ * - `agendamentos_do_paciente`: CONTEXTO, sempre enviado quando o paciente
+ *   tem agendamento -- permite identificar de primeira, no proprio pedido
+ *   espontaneo de remarcacao, "remarcar a cirurgia de implante do dia 9",
+ *   sem depender de uma pergunta "qual desses?" ja feita. Aceito SOMENTE
+ *   quando a intencao EFETIVA deste turno e 'remarcacao' -- a intencao ja
+ *   persistida no snapshot, OU emitida agora mesmo pela IA (nao removida).
+ *   Sem essa restricao, uma consulta ao histórico ("quais atendimentos eu
+ *   tenho?"), um cancelamento, ou qualquer conversa comum que a IA
+ *   confundisse poderia vazar um `agendamento_id` que nunca deveria ter sido
+ *   lido como pedido de remarcacao. Restringe o RISCO da fonte nova, nunca
+ *   `agendamentos_ativos`.
+ *
+ * Medido contra a IA real (src/eval/medicao-agendamento-do-paciente-
+ * espontaneo.ts, gpt-5.6-luna): 9/9 -- 4/4 referencias claras identificadas
+ * corretamente, 2/2 ambiguas e 3/3 falsos positivos (pergunta sobre o
+ * procedimento, agendamento novo, pergunta de funcionamento) corretamente
+ * OMITIDOS.
+ *
+ * ID fora de AMBAS as fontes validas (ou fora da janela de intencao, para
+ * `agendamentos_do_paciente`) e descartado -- nunca usado para localizar
  * agendamento, mesmo que exista de fato no banco (poderia pertencer a outro
  * paciente, outra clinica, outro turno, ou ser uma alucinacao do modelo). O
  * campo continua ausente, e o orquestrador decide o proximo passo sem ele
@@ -383,16 +396,24 @@ function aplicarCandidatoUnicoDeDentista(
 function validarEscolhaAgendamento(
   alteracoes: AlteracoesDados,
   agendamentosAtivos: { agendamento_id: string; descricao: string }[] | undefined,
-  agendamentosDoPaciente: { agendamento_id: string }[] | undefined
+  agendamentosDoPaciente: { agendamento_id: string }[] | undefined,
+  snapshotOficial: SnapshotOficialConversa
 ): AlteracoesDados {
   const alteracao = alteracoes.agendamento_id;
   if (alteracao === undefined || alteracao.acao === 'remover') return alteracoes;
 
-  const idsValidos = new Set([
-    ...(agendamentosAtivos ?? []).map((item) => item.agendamento_id),
-    ...(agendamentosDoPaciente ?? []).map((item) => item.agendamento_id),
-  ]);
-  if (idsValidos.has(alteracao.valor as string)) return alteracoes;
+  const idsAtivos = new Set((agendamentosAtivos ?? []).map((item) => item.agendamento_id));
+  if (idsAtivos.has(alteracao.valor as string)) return alteracoes;
+
+  const alteracaoIntencao = alteracoes.intencao;
+  const intencaoEmitidaAgora =
+    alteracaoIntencao !== undefined && alteracaoIntencao.acao !== 'remover' ? alteracaoIntencao.valor : undefined;
+  const intencaoEfetiva = intencaoEmitidaAgora ?? snapshotOficial.intencao;
+
+  if (intencaoEfetiva === 'remarcacao') {
+    const idsDoPaciente = new Set((agendamentosDoPaciente ?? []).map((item) => item.agendamento_id));
+    if (idsDoPaciente.has(alteracao.valor as string)) return alteracoes;
+  }
 
   const { agendamento_id: _descartado, ...resto } = alteracoes;
   return resto;
@@ -770,16 +791,18 @@ export async function interpretarEAplicar(
 
   // 5c-bis. ESCOLHA DE AGENDAMENTO -- gate de integridade contra agendamentos
   // REAIS deste paciente: a lista oficialmente oferecida neste turno
-  // (`agendamentos_ativos`, specs/remarcacao-conversacional-v1.md secao 3) OU
-  // o contexto sempre presente (`agendamentos_do_paciente`, 2026-09-06,
-  // achado da investigacao continuada da guarda fiscal -- permite identificar
-  // o agendamento de origem ja no pedido espontaneo, sem exigir uma pergunta
-  // "qual desses?" anterior). Id fora de ambas as listas (ou sem lista
-  // nenhuma) nunca e persistido.
+  // (`agendamentos_ativos`, specs/remarcacao-conversacional-v1.md secao 3,
+  // comportamento inalterado) OU o contexto sempre presente
+  // (`agendamentos_do_paciente`, 2026-09-06, achado da investigacao continuada
+  // da guarda fiscal -- permite identificar o agendamento de origem ja no
+  // pedido espontaneo, sem exigir uma pergunta "qual desses?" anterior, mas
+  // SO quando a intencao efetiva deste turno e 'remarcacao'). Id fora de
+  // ambas as fontes validas nunca e persistido.
   const alteracoesComEscolhaAgendamento = validarEscolhaAgendamento(
     guardaNome.alteracoes,
     entrada.agendamentos_ativos,
-    entrada.agendamentos_do_paciente
+    entrada.agendamentos_do_paciente,
+    snapshotOficial
   );
 
   // 5c-ter. LIMPEZA DE CONFIRMACAO AO ENTRAR EM REMARCACAO/CANCELAMENTO -- um

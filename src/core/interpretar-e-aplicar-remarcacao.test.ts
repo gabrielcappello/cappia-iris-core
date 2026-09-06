@@ -132,6 +132,68 @@ test('agendamento_id emitido a partir de agendamentos_do_paciente (SEM agendamen
   assert.equal(resultado.aplicacao?.dados.agendamento_id, AG_2);
 });
 
+function respostaComIntencaoRemarcacaoEAgendamentoId(id: string) {
+  return {
+    natureza_mensagem: 'pedido',
+    alteracoes: {
+      intencao: { acao: 'informar', valor: 'remarcacao' },
+      agendamento_id: { acao: 'informar', valor: id },
+    },
+    eventos_candidatos: [],
+    dentistas_candidatos: null,
+  };
+}
+
+// CASO REAL (2026-09-06, achado da investigacao continuada da guarda fiscal):
+// PRIMEIRO turno espontaneo -- snapshot ainda SEM intencao, a IA emite
+// intencao=remarcacao E agendamento_id no MESMO turno (nao ha intencao previa
+// persistida). A restricao por intencao efetiva (ponto 1 da revisao do
+// Codex) precisa aceitar esse caso -- e o cenario exato do defeito relatado
+// ("poderia por favor remarcar a cirugia de implantes do dia 9?").
+test('CASO REAL: intencao=remarcacao E agendamento_id emitidos no MESMO primeiro turno (snapshot ainda sem intencao): aceito', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const conversa = semearEstado(tabelas, {}); // snapshot SEM intencao ainda -- primeiro turno
+  const cliente = new ClienteFalso(tabelas);
+
+  const resultado = await interpretarEAplicar(
+    clienteModeloComResposta(respostaComIntencaoRemarcacaoEAgendamentoId(AG_2)),
+    cliente,
+    contexto(conversa.id, ['poderia por favor remarcar a cirugia de implantes do dia 9?'], {
+      agendamentos_do_paciente: AGENDAMENTOS_DO_PACIENTE,
+    })
+  );
+
+  assert.equal(resultado.alteracoes_aplicaveis.intencao?.valor, 'remarcacao');
+  assert.equal(resultado.alteracoes_aplicaveis.agendamento_id?.valor, AG_2);
+  assert.equal(resultado.aplicacao?.dados.agendamento_id, AG_2);
+});
+
+// Mesmo ID REAL (existe de fato na lista de agendamentos_do_paciente), mas
+// SEM nenhuma intencao de remarcacao -- nem no snapshot, nem emitida agora.
+// Precisa ser descartado: agendamentos_do_paciente e CONTEXTO para consulta,
+// cancelamento ou conversa comum tambem, e a restricao do ponto 1 existe
+// exatamente para essas fontes nao vazarem agendamento_id fora do fluxo de
+// remarcacao.
+test('mesmo ID REAL emitido SEM intencao de remarcacao (nem snapshot, nem turno atual): descartado', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const conversa = semearEstado(tabelas, {}); // sem intencao
+  const cliente = new ClienteFalso(tabelas);
+
+  const resultado = await interpretarEAplicar(
+    // A IA emite o agendamento_id (alucinacao ou correlacao indevida), mas
+    // NAO emite intencao=remarcacao -- ex.: o paciente so perguntou algo
+    // sobre o procedimento, e o campo vazou por engano.
+    clienteModeloComResposta(respostaComAgendamentoId(AG_2)),
+    cliente,
+    contexto(conversa.id, ['quanto custa a cirurgia de implante?'], {
+      agendamentos_do_paciente: AGENDAMENTOS_DO_PACIENTE,
+    })
+  );
+
+  assert.equal(resultado.alteracoes_aplicaveis.agendamento_id, undefined);
+  assert.equal(resultado.aplicacao?.dados.agendamento_id, undefined);
+});
+
 test('agendamento_id FORA de agendamentos_do_paciente (id inventado ou de outro paciente/clinica): descartado, nunca persistido', async () => {
   const tabelas = criarTabelasFalsasVazias();
   const conversa = semearEstado(tabelas, { intencao: 'remarcacao' });
