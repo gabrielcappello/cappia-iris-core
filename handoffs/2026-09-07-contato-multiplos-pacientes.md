@@ -1,8 +1,8 @@
 # Handoff — implementação de `specs/contato-multiplos-pacientes-v1.md`
 
-**Data:** 2026-09-07 (4ª rodada, após 3ª revisão do Codex)
-**Branch:** `feat/contato-multiplos-pacientes` (a partir de `main`) · último commit `5b53891`
-**Estado:** **escopo funcional da spec fechado.** Aguardando 4ª revisão do Codex.
+**Data:** 2026-09-07 (5ª rodada, após 4ª revisão do Codex)
+**Branch:** `feat/contato-multiplos-pacientes` (a partir de `main`)
+**Estado:** **escopo funcional da spec fechado.** Aguardando 5ª revisão do Codex.
 Nada aplicado em banco, nenhum push/merge/deploy, nenhuma chamada paga à IA.
 
 ## O que foi feito
@@ -37,6 +37,13 @@ V2 · remoção das 2 frases fixas · cabeçalho da migration.
 | 2 | `selecao_gravada === null` não prova que `dados` é da pessoa nova | No **primeiro turno** com `atendimento_para_terceiro` e um paciente resolvido (mesmo só pelo fallback "único paciente"), o snapshot anterior é limpo **agora** — mesmo que o desfecho do turno seja só `pedir_vinculo_paciente_novo`. Preserva o que o turno emitiu para o terceiro, **cadastral E operacional** (`camposEmitidosNoTurno` = união dos dois conjuntos; `limparSnapshotDoPacienteAnterior` recebe essa união). Limpeza **estrita**: se falha, propaga e a seleção não muda. Testes novos: multi-turno (Carlos tinha procedimento/data próprios → "é para minha mãe" → o snapshot dele sai já nesse turno) e preservação do que o turno emitiu para a mãe (`periodo` + `nome`). |
 | 3 | Falha ao limpar a seleção após concluir era silenciada (`catch {}`) | `catch` vazio **removido** de `finalizar`. `gravarSelecaoPaciente(..., null)` já tem o CAS próprio (lê `atualizado_em`, condiciona o UPDATE, relê+retenta até 5×, **falha fechada** com `ConflitoConcorrenteError` / `ConversaNaoEncontradaError`) — a exceção agora **propaga**, mesma disciplina de `limparSnapshotDoPacienteAnterior`. Sem camada nem fallback novo. Teste novo de **falha** da limpeza (dublê que faz o UPDATE de `paciente_id: null` retornar erro): a exceção propaga e a seleção **não** fica zerada (uma dependente do mesmo contato não sobrevive como interlocutora silenciosa). |
 
+### 5ª rodada — 2 bloqueadores da 4ª revisão
+
+| # | Bloqueador | Como ficou |
+|---|---|---|
+| 1 | Cadastro novo com número próprio perde dados acumulados em turnos anteriores | A segunda limpeza (`limparSnapshotDoPacienteAnterior` **dentro** de `decidirCadastroPacienteNumeroProprio`, que rodava **incondicionalmente** após criar o paciente e só preservava o que o turno atual emitiu) agora só roda quando ela ainda é **devida**: `limparPacienteAnterior = selecaoGravada !== null && !fluxoOutraPessoaJaAbertoAntesDoTurno`. Depois que o fluxo "outra pessoa" abriu, o `dados` acumulado (nome, cpf, nascimento, procedimento, data — que chegam em turnos diferentes) é da **própria pessoa nova** e **não** é apagado. A limpeza "upfront" também ganhou a guarda `!fluxoOutraPessoaJaAbertoAntesDoTurno` (novo ctx computado em `decidir`: campo em `dados` **e não** emitido neste turno) — só desacopla do paciente anterior **uma vez**, no turno em que o fluxo abre. Teste novo **realmente multi-turno**: `numero_proprio` com nome, nascimento, cpf, procedimento e data chegando em turnos separados → `reserva_criada` **sem repetir** procedimento/data/cadastro; `persistirPaciente` chamada **uma** vez (o INSERT), no contato de destino. |
+| 2 | O plano A/B/C não era executável (arquivo único; Fase A mantinha a UNIQUE de telefone) | A migration foi **fisicamente dividida em dois arquivos** (`..._fase_a.sql` aditiva, `..._fase_c.sql` destrutiva). O arquivo único `20260907120000_..._v1.sql` foi **removido**. Cada fase tem **rollback executável próprio** no rodapé, válido antes de qualquer dado novo. Deixado explícito: a **UNIQUE `(clinica_id, telefone_normalizado)` só sai na Fase C**, então **entre B e C a criação de dependente com telefone duplicado ainda não funciona** — a feature só fica pronta com a Fase C; nada regride no intervalo. Sequência A → B → C em janela controlada, **sem teste entre B e C**. Detalhe na seção "Caminho mínimo de deploy/rollback" abaixo. |
+
 ## Arquivos alterados
 
 ### 3ª rodada
@@ -48,89 +55,98 @@ teste da frente (teste 19 A/B + 3 testes) · Edge (paridade).
 | Arquivo | Mudança |
 |---|---|
 | `src/core/orquestrador.ts` | `ResultadoSelecaoPaciente` ganha `contatoDoSelecionado`/`telefoneDoSelecionado`, populados em cada ramo (A/B2/B3-reuso/D/`decidirCadastroPacienteNumeroProprio`). `decidir` recebe `contatoDaListaDeEscolha`/`telefoneDaListaDeEscolha` e repassa a identidade efetiva a `decidirConfirmacaoOuReserva` e `aplicarCorrecaoCadastro`. `camposCadastraisDoTurno` → `camposEmitidosNoTurno` (cadastral + operacional); nova const `CAMPOS_LIMPAVEIS_NA_TROCA`. Limpeza "upfront" do snapshot quando `atendimento_para_terceiro` no 1º turno destaca de um paciente não-gravado. `catch {}` da limpeza da seleção ao concluir **removido**. |
-| `src/core/orquestrador-contato-multiplos-pacientes.test.ts` | +4 testes (E2E número próprio c/ paciente existente + correção + reserva; multi-turno snapshot do Carlos sai no 1º turno; preservação do que o turno emitiu para a mãe; falha da limpeza da seleção ao concluir). **25 testes** no arquivo. |
+| `src/core/orquestrador-contato-multiplos-pacientes.test.ts` | +4 testes. |
+| `supabase/functions/iris-nova-mensagem/orquestrador.ts` | paridade — cópia byte a byte. |
+
+### 5ª rodada
+| Arquivo | Mudança |
+|---|---|
+| `src/core/orquestrador.ts` | `decidirCadastroPacienteNumeroProprio` recebe `limparPacienteAnterior: boolean` — a limpeza pós-criação só roda quando ainda devida (`selecaoGravada !== null && !fluxoOutraPessoaJaAbertoAntesDoTurno`). `resolverSelecaoDePaciente` recebe `fluxoOutraPessoaJaAbertoAntesDoTurno`; a limpeza "upfront" ganhou a mesma guarda. `decidir` computa `fluxoOutraPessoaJaAbertoAntesDoTurno` (campo em `dados` **e não** emitido neste turno). |
+| `src/core/orquestrador-contato-multiplos-pacientes.test.ts` | +1 teste (multi-turno real "número próprio", cadastro + operacional em turnos separados → `reserva_criada` sem repetição). **26 testes** no arquivo. |
+| `src/supabase/migrations/20260907120000_..._v1.sql` | **removido** — substituído por dois arquivos. |
+| `src/supabase/migrations/20260907120000_..._v1_fase_a.sql` | **novo** — migration aditiva (v114-compatível) + rollback executável no rodapé. |
+| `src/supabase/migrations/20260907130000_..._v1_fase_c.sql` | **novo** — migration destrutiva (janela controlada após deploy B) + rollback executável no rodapé. |
 | `supabase/functions/iris-nova-mensagem/orquestrador.ts` | paridade — cópia byte a byte. |
 
 ## Verificação
 
 - **Testes (suite completa):** `node --test "core/**/*.test.ts"` —
-  **1785 pass / 0 fail / 7 skip** (1792 testes; os 7 skip são `AGUARDA_MIGRATION`).
+  **1786 pass / 0 fail / 7 skip** (1793 testes; os 7 skip são `AGUARDA_MIGRATION`).
 - **Runner focado da frente:** `node --test core/orquestrador-contato-multiplos-pacientes.test.ts`
-  — **25 testes, 25 pass, 0 fail**.
+  — **26 testes, 26 pass, 0 fail**.
 - **Typecheck:** `npm run typecheck` (de `src/`, `tsc --noEmit`) —
-  **329 erros no total; 17 non-test, todos pré-existentes em `main`** (0 nos
-  arquivos de produção desta frente). Os erros no arquivo de teste da frente
-  (+2 vs. 3ª rodada) são da **mesma classe pré-existente** `ClienteFalso não é
-  atribuível a ClienteBancoDados` (origem: `teste-cliente-falso.ts` sem `insert`
-  no `from()`, que já afeta `aplicar-dados.test.ts` e todos os
+  **17 erros non-test, todos pré-existentes em `main`** (0 nos arquivos de
+  produção desta frente). Os erros no arquivo de teste da frente são da
+  **mesma classe pré-existente** `ClienteFalso não é atribuível a
+  ClienteBancoDados` (origem: `teste-cliente-falso.ts` sem `insert` no
+  `from()`, que já afeta `aplicar-dados.test.ts` e todos os
   `eval/teste-real-*.ts`). O `node --test` roda com strip-types e não é afetado.
 - **Paridade Core/Edge:** varredura de todos os arquivos com par —
   único divergente `cliente-modelo-redator-openai.ts`, que **já divergia em `main`**
   (não tocado nesta frente).
 
-## Caminho mínimo de deploy/rollback (NÃO executar — sequência reversível fechada)
+## Caminho mínimo de deploy/rollback (NÃO executar — duas migrations físicas)
 
-**Incompatibilidade real:** a migration atual **derruba** o que a v114 (código
-em produção hoje) usa —
+**Incompatibilidade real:** o modelo novo **derruba** o que a v114 (código em
+produção hoje) usa —
 - `DROP FUNCTION cappia_persistir_paciente(uuid,text,text,text,date,text)` (a de 6 params);
 - `DROP CONSTRAINT` das UNIQUEs de telefone de `pacientes`
-  (`pacientes_id_clinica_telefone_key`, `pacientes_clinica_id_telefone_normalizado_key`);
+  (`pacientes_id_clinica_telefone_key`, `pacientes_clinica_id_telefone_normalizado_key`).
+  A RPC de 6 params faz `INSERT ... ON CONFLICT (clinica_id, telefone_normalizado)`,
+  que **exige** essa UNIQUE — removê-la quebra a v114;
 - troca a FK `estado_conversa_paciente_clinica_telefone_fk` pela forma sem telefone.
 
-Portanto **código antigo + schema novo NÃO coexistem**: no instante em que a
-migration entra, qualquer chamada da v114 a `cappia_persistir_paciente` (assinatura
-antiga) falha com *function does not exist*. Não há como fazer "migra e depois
-faz deploy com calma".
+Como não dá para aplicar "partes" de um arquivo único com segurança, a
+migration foi **fisicamente dividida em duas**:
 
-### Sequência mínima reversível (3 passos, cada um revertível sozinho)
+| Arquivo | Papel |
+|---|---|
+| `src/supabase/migrations/20260907120000_iris_nova_contato_multiplos_pacientes_v1_fase_a.sql` | **Fase A — aditiva.** `contatos_whatsapp`; `pacientes.contato_id` (NULLABLE) + `vinculo`; backfill + guarda `RAISE`; `pacientes_id_clinica_key`; FK `pacientes_contato_clinica_fk`; índice `pacientes_contato_id_idx`; RPC de **9 params `CREATE OR REPLACE` AO LADO** da de 6 (nenhum `DROP`). Não remove nada — a v114 continua íntegra. |
+| `src/supabase/migrations/20260907130000_iris_nova_contato_multiplos_pacientes_v1_fase_c.sql` | **Fase C — destrutiva.** Troca a FK de `estado_conversa`; `DROP` das UNIQUEs de telefone de `pacientes`; `SET NOT NULL` em `contato_id`; `DROP FUNCTION` da RPC de 6 params. |
 
-1. **Migration aditiva primeiro (fase A) — schema tolera as DUAS versões de código.**
-   Aplicar só a parte que NÃO remove nada:
-   - `CREATE TABLE contatos_whatsapp` + backfill (passos 1–3);
-   - `ADD COLUMN pacientes.contato_id` (NULLABLE) `+ vinculo` (passos 1b);
-   - `ADD CONSTRAINT pacientes_id_clinica_key` + FK `pacientes_contato_clinica_fk` (passos 4, 1c);
-   - `CREATE OR REPLACE FUNCTION cappia_persistir_paciente(...9 params...)` **sem** o
-     `DROP` da de 6 params — as duas coexistem como overloads.
-   - **NÃO** aplicar ainda: passo 5 (troca da FK de `estado_conversa`), passo 6
-     (drop das UNIQUEs de telefone, `SET NOT NULL` em `contato_id`), nem o
-     `DROP FUNCTION` da de 6 params.
-   *Rollback da fase A:* `DROP` da função de 9 params, `DROP` das 2 constraints
-   novas, `DROP COLUMN contato_id, vinculo`, `DROP TABLE contatos_whatsapp`.
+### Sequência obrigatória: A → B → C, em janela controlada
+
+1. **Fase A** (`..._fase_a.sql`). A v114 continua funcionando; **nada regride**.
+   *Rollback da fase A* (bloco `-- ROLLBACK DA FASE A` no rodapé do arquivo,
+   executável): `DROP` da RPC de 9 params, `DROP` do índice e das 2 constraints
+   novas, `DROP COLUMN vinculo, contato_id`, `DROP TABLE contatos_whatsapp`.
    Nenhuma linha da v114 tocada — reversível sem downtime.
 
-2. **Deploy do código desta branch (fase B).** Core/Edge desta frente só chamam a
-   assinatura de 9 params e já assumem `contato_id`. Com a fase A aplicada, o
-   código novo funciona; o antigo (se precisar de rollback de código) também,
-   porque a função de 6 params ainda existe e as UNIQUEs de telefone continuam lá.
-   *Rollback da fase B:* redeploy da v114. Sem migration reversa — a fase A é
-   retrocompatível.
+2. **Deploy B** — código Core/Edge desta branch. A partir daqui o código novo
+   chama **só** a RPC de 9 params e assume `contato_id`.
+   **A funcionalidade "dependente / outra pessoa com o mesmo número" AINDA NÃO
+   funciona entre B e C:** o INSERT de um segundo paciente com o telefone do
+   titular colide com a UNIQUE `(clinica_id, telefone_normalizado)` que só a
+   fase C remove. **Nada regride** nesse intervalo — a feature é nova.
+   *Rollback da fase B:* redeploy da v114 (a fase A é retrocompatível — a RPC
+   de 6 params e as UNIQUEs ainda existem).
 
-3. **Migration destrutiva por último (fase C), só depois da fase B estável.**
-   Aplicar o restante: `DROP FUNCTION` da de 6 params, passo 5 (FK de
-   `estado_conversa`), passo 6 (drop das UNIQUEs de telefone + `SET NOT NULL`),
-   índice `pacientes_contato_id_idx`.
-   *Rollback da fase C:* o bloco `-- ROLLBACK` no rodapé da migration
-   (recriar a de 6 params a partir de `20260809120000_...`, recriar as UNIQUEs
-   de telefone, reverter a FK de `estado_conversa`). **Só é seguro enquanto
-   nenhum paciente novo tiver nascido com `contato_id` de outro telefone e
-   nenhuma seleção cross-contato tiver sido gravada** — depois disso a fase C
-   é ponto sem retorno e o rollback é o da fase A+B (redeploy v114 exige
-   reverter fase C antes).
+3. **Fase C** (`..._fase_c.sql`) — aplicar **imediatamente após B, SEM TESTE
+   ENTRE B E C** (o teste da sequência inteira já foi feito no branch
+   descartável). Só depois de C a funcionalidade está pronta.
+   *Rollback da fase C* (bloco `-- ROLLBACK DA FASE C` no rodapé do arquivo,
+   executável): recriar a RPC de 6 params (colar de
+   `20260809120000_iris_nova_persistencia_paciente_v1.sql`), `SET NOT NULL`
+   revertido, recriar as UNIQUEs de telefone, reverter a FK de `estado_conversa`.
+   **Válido apenas enquanto nenhum dado novo do modelo multi-paciente existir**
+   (nenhum dependente com telefone duplicado, nenhuma seleção cross-contato
+   gravada) — depois disso haverá linhas que violam as UNIQUEs recriadas, e o
+   rollback deixa de ser seguro.
 
 **Pré-condição já verificada (spec seção 2.2):** os pacientes atuais têm
 `telefone_normalizado` — o backfill não encontra `contato_id` nulo. O `RAISE`
-de guarda no passo 3 cobre o caso futuro.
+de guarda na fase A cobre o caso futuro.
 
-**Nada disso foi executado.** A migration segue como um único arquivo
-`20260907120000_...sql`; a divisão em fases A/C acima é o **plano**, não uma
-segunda migration criada. A execução depende de autorização explícita por ação
-e de teste prévio num branch descartável do Supabase de dev.
+**Nada disso foi executado.** Os dois arquivos são candidatos locais; a
+aplicação depende de autorização explícita por ação e de teste prévio da
+sequência A→B→C num branch descartável do Supabase de dev.
 
 ## O que continua pendente (NÃO são requisitos funcionais da spec)
 
-1. **Aplicar a migration.** Candidata local. Antes de aplicar: rodar num
-   **branch descartável** do Supabase de dev, conferir o backfill contra dados
-   reais, e autorização explícita do Gabriel por ação.
+1. **Aplicar as migrations (Fase A e Fase C).** Candidatas locais. Antes de
+   aplicar: rodar a sequência A → B → C num **branch descartável** do Supabase
+   de dev, conferir o backfill contra dados reais, e autorização explícita do
+   Gabriel por ação. Fase C só depois do deploy B, sem teste entre B e C.
 2. **Testes de integração** (`identificacao.integration.test.ts`,
    `persistir-paciente` contra banco real): `AGUARDA_MIGRATION` força skip até o
    schema novo estar em dev.
@@ -159,19 +175,25 @@ e de teste prévio num branch descartável do Supabase de dev.
   medição com IA real mostrar falta de contexto, um marcador no payload é a
   extensão aditiva natural.
 
-## Para o Codex revisar (4ª rodada)
+## Para o Codex revisar (5ª rodada)
 
-- Bloqueador 1: `contatoDoSelecionado`/`telefoneDoSelecionado` chegam a
-  `decidirConfirmacaoOuReserva` **e** a `aplicarCorrecaoCadastro`; no ramo
-  "número próprio" são os do contato de destino. Teste E2E confere os params
-  reais das duas RPCs.
-- Bloqueador 2: no 1º turno `atendimento_para_terceiro`, o snapshot do
-  paciente anterior sai já nesse turno (mesmo com desfecho
-  `pedir_vinculo_paciente_novo`); o que o turno emitiu para o terceiro
-  (cadastral + operacional) é preservado. Limpeza estrita.
-- Bloqueador 3: `catch {}` removido; `gravarSelecaoPaciente(..., null)`
-  propaga (CAS próprio, falha fechada). Teste de falha da limpeza cobre isso.
-- Sequência de deploy/rollback fases A/B/C acima: confirmar que é reversível
-  e que a fase A é retrocompatível com a v114.
+- Bloqueador 1 (número próprio multi-turno): a segunda limpeza em
+  `decidirCadastroPacienteNumeroProprio` só roda quando `selecaoGravada !== null
+  && !fluxoOutraPessoaJaAbertoAntesDoTurno`; a limpeza "upfront" ganhou a mesma
+  guarda. Depois que o fluxo "outra pessoa" abriu, o `dados` acumulado é da
+  pessoa nova e não é apagado. Teste novo dirige nome/nascimento/cpf/
+  procedimento/data em turnos separados → `reserva_criada` sem repetição,
+  1 chamada de `persistirPaciente` no contato de destino.
+- Bloqueador 2 (plano A/B/C executável): dois arquivos físicos
+  (`..._fase_a.sql` / `..._fase_c.sql`); o único foi removido. A UNIQUE
+  `(clinica_id, telefone_normalizado)` sai só na Fase C — a feature de
+  dependente com telefone duplicado só fica pronta com a Fase C; nada regride
+  entre B e C. Rollback executável no rodapé de cada arquivo, válido antes de
+  qualquer dado novo. Sequência A → B → C sem teste entre B e C.
+- Rodadas anteriores (mantidas): identidade efetiva
+  (`contatoDoSelecionado`/`telefoneDoSelecionado`) até persistência/reserva/
+  correção cadastral; snapshot do paciente anterior limpo no 1º turno
+  `atendimento_para_terceiro`; `catch {}` da limpeza da seleção ao concluir
+  removido (propaga).
 - As pendências abaixo: confirmar que são de execução (banco/IA/tipagem de
   dublê), não de spec.
