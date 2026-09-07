@@ -122,6 +122,16 @@ export interface InterpretarEAplicarInput extends ContextoConversa {
     horario: string;
   }[];
   /**
+   * Pacientes vinculados ao contato de WhatsApp desta conversa
+   * (specs/contato-multiplos-pacientes-v1.md secao 3.1). SO passado pelo
+   * orquestrador quando ha MAIS DE UM. Contexto de interpretacao E lista de
+   * integridade: `validarEscolhaPaciente`, mais abaixo, so aceita um
+   * `paciente_id` emitido pela IA se ele estiver dentro desta lista FRESCA
+   * -- fora dela (outro contato, outra clinica, alucinacao), o campo e
+   * descartado, nunca aceito.
+   */
+  pacientes_do_contato?: { paciente_id: string; nome: string; vinculo: 'titular' | 'dependente' }[];
+  /**
    * Carregador PREGUICOSO dos `dentista_id` distintos do historico de
    * atendimento passado elegivel (dentistas-historicos.ts, 2026-08-31).
    *
@@ -429,6 +439,45 @@ function validarEscolhaAgendamento(
 }
 
 /**
+ * Valida `paciente_id` contra a lista FRESCA de pacientes do contato
+ * (specs/contato-multiplos-pacientes-v1.md secao 3.3). Mesma funcao-molde de
+ * `validarEscolhaAgendamento`, aplicada a pacientes em vez de agendamentos:
+ *
+ * - a IA correlaciona semanticamente ("minha mae Marta" -> o item cujo nome
+ *   bate) e devolve `paciente_id` direto -- ela NUNCA resolve um ordinal ou
+ *   nome para indice/id por conta propria, e o Core NUNCA interpreta essas
+ *   referencias aqui;
+ * - `paciente_id` emitido e conferido contra `pacientes_do_contato` (a lista
+ *   oficialmente oferecida neste turno, montada pelo orquestrador a partir
+ *   de uma busca fresca escopada por `clinica_id` + `contato_id`);
+ * - fora da lista (ou de outro contato/clinica, ou alucinacao do modelo): o
+ *   campo e descartado, nunca usado para localizar paciente -- mesma
+ *   garantia ja provada para `agendamento_id`. O orquestrador decide o
+ *   proximo passo sem ele (pergunta, ou resolve sozinho quando o contato so
+ *   tem um paciente).
+ *
+ * SEM a precedencia de intencao que `validarEscolhaAgendamento` tem: nao ha
+ * uma segunda fonte (equivalente a `agendamentos_do_paciente`) para
+ * `paciente_id`. So existe `pacientes_do_contato`, que ja e a lista fresca
+ * do contato -- entao a regra e simples: dentro dela, aceita; fora, descarta.
+ * Quando `pacientes_do_contato` esta ausente (contato com 0 ou 1 paciente),
+ * qualquer `paciente_id` emitido e descartado -- nao ha escolha a fazer.
+ */
+function validarEscolhaPaciente(
+  alteracoes: AlteracoesDados,
+  pacientesDoContato: { paciente_id: string }[] | undefined
+): AlteracoesDados {
+  const alteracao = alteracoes.paciente_id;
+  if (alteracao === undefined || alteracao.acao === 'remover') return alteracoes;
+
+  const idsDoContato = new Set((pacientesDoContato ?? []).map((item) => item.paciente_id));
+  if (idsDoContato.has(alteracao.valor as string)) return alteracoes;
+
+  const { paciente_id: _descartado, ...resto } = alteracoes;
+  return resto;
+}
+
+/**
  * Intencoes cujo fluxo executa uma acao sobre um agendamento JA EXISTENTE e
  * portanto exige confirmacao explicita nova ao ser iniciado. Novo agendamento
  * nao entra: ele nunca escreve `intencao` e nao tem agendamento previo a
@@ -575,6 +624,9 @@ const CHAVES_OPCIONAIS_INTEGRADA = [
   'troca_telefone_pendente',
   'agendamentos_ativos',
   'agendamentos_do_paciente',
+  // specs/contato-multiplos-pacientes-v1.md (2026-09-07). Contexto +
+  // lista de integridade de `validarEscolhaPaciente`.
+  'pacientes_do_contato',
   'cadastro_paciente',
   'data_referencia',
   // 2026-08-19: FALTAVA AQUI. O campo foi acrescentado ao payload sem entrar
@@ -652,7 +704,8 @@ export async function interpretarEAplicar(
       entrada.troca_telefone_pendente,
       entrada.agendamentos_ativos,
       entrada.agendamentos_do_paciente,
-      entrada.tratamentos_pendentes
+      entrada.tratamentos_pendentes,
+      entrada.pacientes_do_contato
     )
   );
 
@@ -814,11 +867,21 @@ export async function interpretarEAplicar(
     snapshotOficial
   );
 
+  // 5c-quater. ESCOLHA DE PACIENTE -- gate de integridade contra a lista
+  // FRESCA de pacientes do contato (specs/contato-multiplos-pacientes-v1.md
+  // secao 3.3). Um `paciente_id` fora de `pacientes_do_contato` (outro
+  // contato, outra clinica, alucinacao) nunca e persistido -- mesma
+  // garantia de `validarEscolhaAgendamento` para `agendamento_id`.
+  const alteracoesComEscolhaPaciente = validarEscolhaPaciente(
+    alteracoesComEscolhaAgendamento,
+    entrada.pacientes_do_contato
+  );
+
   // 5c-ter. LIMPEZA DE CONFIRMACAO AO ENTRAR EM REMARCACAO/CANCELAMENTO -- um
   // "sim" de outro fluxo, na mesma conversa, nunca autoriza uma operacao sobre
   // agendamento existente que ninguem confirmou.
   const alteracoesComRemarcacao = limparConfirmacaoAoEntrarEmFluxoDeAgendamentoExistente(
-    alteracoesComEscolhaAgendamento,
+    alteracoesComEscolhaPaciente,
     snapshotOficial
   );
 
@@ -904,6 +967,11 @@ export async function interpretarEAplicar(
     // daqui para o orquestrador e nunca e gravado em `dados`
     // (specs/multiplos-procedimentos-mesmo-turno-v1.md secao 3.2).
     pedido_multiplo_detectado: lerPedidoMultiplo(saida.eventos_candidatos),
+    // Sinais do turno para o orquestrador decidir a escolha de paciente
+    // (specs/contato-multiplos-pacientes-v1.md secao 4.5). NUNCA gravados em
+    // `dados` -- recalculados a cada turno pela interpretadora.
+    atendimento_para_terceiro: saida.atendimento_para_terceiro,
+    outra_pessoa_alem_das_listadas: saida.outra_pessoa_alem_das_listadas,
   };
 }
 

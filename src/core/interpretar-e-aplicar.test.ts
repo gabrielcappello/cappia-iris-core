@@ -339,6 +339,8 @@ test('correcao4c: divergencia durante a execucao gera conflito, remove o campo d
         // raiz obrigatorios por conta propria.
         eventos_candidatos: [],
         dentistas_candidatos: null,
+        atendimento_para_terceiro: false,
+        outra_pessoa_alem_das_listadas: false,
       };
     },
   };
@@ -486,6 +488,8 @@ function corpoRespostaCompleta(alteracoesPortatil: unknown[], naturezaMensagem =
               alteracoes: alteracoesPortatil,
               eventos_candidatos: [],
               dentistas_candidatos: null,
+              atendimento_para_terceiro: false,
+              outra_pessoa_alem_das_listadas: false,
             }),
           },
         ],

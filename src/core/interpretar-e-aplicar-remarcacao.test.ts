@@ -9,6 +9,7 @@ import { test } from 'node:test';
 import { interpretarEAplicar } from './interpretar-e-aplicar.ts';
 import type { ClienteModeloEstruturado } from './interpretacao-tipos.ts';
 import { ClienteFalso, criarTabelasFalsasVazias, type TabelasFalsas } from './teste-cliente-falso.ts';
+import { completarEventosCandidatos } from './teste-cliente-modelo-falso.ts';
 
 const CLINICA_ID = crypto.randomUUID();
 const TELEFONE = '5511999999999';
@@ -37,9 +38,15 @@ function contexto(conversaId: string, mensagensAtuais: string[], overrides: Reco
   };
 }
 
-/** Devolve exatamente a resposta configurada, ignorando o payload recebido. */
+/**
+ * Devolve a resposta configurada, ignorando o payload recebido -- passando
+ * pelo mesmo completador de campos raiz obrigatorios que `ClienteModeloFalso`
+ * usa (eventos_candidatos, dentistas_candidatos, atendimento_para_terceiro,
+ * outra_pessoa_alem_das_listadas), para as fixtures nao precisarem declarar
+ * todos.
+ */
 function clienteModeloComResposta(resposta: unknown): ClienteModeloEstruturado {
-  return { async executar() { return resposta; } };
+  return { async executar() { return completarEventosCandidatos(resposta); } };
 }
 
 const AG_1 = crypto.randomUUID();

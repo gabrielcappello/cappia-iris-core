@@ -153,8 +153,21 @@ export const SCHEMA_PORTATIL_APROVADO = {
       type: ['array', 'null'],
       items: { type: 'string' },
     },
+    // 5o e 6o campos raiz (specs/contato-multiplos-pacientes-v1.md secao
+    // 4.5). Booleanos do turno -- "para minha mae" -> atendimento_para_terceiro;
+    // "nao e nenhum desses" -> outra_pessoa_alem_das_listadas. Sempre em
+    // `required` (Structured Outputs estrito).
+    atendimento_para_terceiro: { type: 'boolean' },
+    outra_pessoa_alem_das_listadas: { type: 'boolean' },
   },
-  required: ['natureza_mensagem', 'alteracoes', 'eventos_candidatos', 'dentistas_candidatos'],
+  required: [
+    'natureza_mensagem',
+    'alteracoes',
+    'eventos_candidatos',
+    'dentistas_candidatos',
+    'atendimento_para_terceiro',
+    'outra_pessoa_alem_das_listadas',
+  ],
   additionalProperties: false,
 } as const;
 
@@ -547,6 +560,13 @@ async function processarTentativa(
           ...(contexto.entrada.payload.agendamentos_do_paciente !== undefined
             ? { agendamentos_do_paciente: contexto.entrada.payload.agendamentos_do_paciente }
             : {}),
+          // specs/contato-multiplos-pacientes-v1.md secao 3.1 -- pacientes
+          // vinculados ao contato, quando ha mais de um. Mesma disciplina de
+          // copia campo-a-campo das demais chaves opcionais (a guarda de
+          // fronteira cobra esta linha).
+          ...(contexto.entrada.payload.pacientes_do_contato !== undefined
+            ? { pacientes_do_contato: contexto.entrada.payload.pacientes_do_contato }
+            : {}),
           // CORRECAO 2026-08-08: `historico_recente` existia em
           // EntradaInterpretacao desde specs/historico-conversacional-v1.md,
           // mas NUNCA era copiado para o corpo HTTP -- este objeto e montado
@@ -699,6 +719,8 @@ function classificarEConverter(
   alteracoes: AlteracoesDados;
   eventos_candidatos: EventoCandidatoIA[];
   dentistas_candidatos: string[] | null;
+  atendimento_para_terceiro: boolean;
+  outra_pessoa_alem_das_listadas: boolean;
 } {
   if (textoCorpo === '') {
     // Corpo HTTP com zero bytes: unico caso, junto com output_text vazio
@@ -809,6 +831,8 @@ function classificarEConverter(
   let alteracoesInternas: AlteracoesDados;
   let eventosCandidatos: EventoCandidatoIA[];
   let dentistasCandidatos: string[] | null;
+  let atendimentoParaTerceiro: boolean;
+  let outraPessoaAlemDasListadas: boolean;
   try {
     if (objetoPortatil === null || typeof objetoPortatil !== 'object' || Array.isArray(objetoPortatil)) {
       throw new ErroConversaoPortatil('raiz_invalida');
@@ -816,23 +840,47 @@ function classificarEConverter(
     const chavesRaizPortatil = Object.keys(objetoPortatil as Record<string, unknown>).sort();
     if (
       JSON.stringify(chavesRaizPortatil) !==
-      JSON.stringify(['alteracoes', 'dentistas_candidatos', 'eventos_candidatos', 'natureza_mensagem'])
+      JSON.stringify([
+        'alteracoes',
+        'atendimento_para_terceiro',
+        'dentistas_candidatos',
+        'eventos_candidatos',
+        'natureza_mensagem',
+        'outra_pessoa_alem_das_listadas',
+      ])
     ) {
       throw new ErroConversaoPortatil('propriedade_extra');
     }
-    const { natureza_mensagem, alteracoes, eventos_candidatos, dentistas_candidatos } = objetoPortatil as {
+    const {
+      natureza_mensagem,
+      alteracoes,
+      eventos_candidatos,
+      dentistas_candidatos,
+      atendimento_para_terceiro,
+      outra_pessoa_alem_das_listadas,
+    } = objetoPortatil as {
       natureza_mensagem: unknown;
       alteracoes: unknown;
       eventos_candidatos: unknown;
       dentistas_candidatos: unknown;
+      atendimento_para_terceiro: unknown;
+      outra_pessoa_alem_das_listadas: unknown;
     };
     if (typeof natureza_mensagem !== 'string' || !NATUREZAS_MENSAGEM_PERMITIDAS.includes(natureza_mensagem as NaturezaMensagem)) {
       throw new ErroConversaoPortatil('natureza_mensagem_invalida');
+    }
+    if (typeof atendimento_para_terceiro !== 'boolean') {
+      throw new ErroConversaoPortatil('atendimento_para_terceiro_invalido');
+    }
+    if (typeof outra_pessoa_alem_das_listadas !== 'boolean') {
+      throw new ErroConversaoPortatil('outra_pessoa_alem_das_listadas_invalido');
     }
     naturezaMensagem = natureza_mensagem as NaturezaMensagem;
     alteracoesInternas = converterParaContratoInterno({ alteracoes });
     eventosCandidatos = converterEventosCandidatos(eventos_candidatos);
     dentistasCandidatos = converterDentistasCandidatos(dentistas_candidatos);
+    atendimentoParaTerceiro = atendimento_para_terceiro;
+    outraPessoaAlemDasListadas = outra_pessoa_alem_das_listadas;
   } catch (erroConversao) {
     const codigo = erroConversao instanceof ErroConversaoPortatil ? erroConversao.codigo : 'objeto_portatil_invalido';
     throw new ErroClienteModeloOpenAI('resposta_invalida', codigo, tentativa, duracao(), modelo, statusHttpResposta);
@@ -843,6 +891,8 @@ function classificarEConverter(
     alteracoes: alteracoesInternas,
     eventos_candidatos: eventosCandidatos,
     dentistas_candidatos: dentistasCandidatos,
+    atendimento_para_terceiro: atendimentoParaTerceiro,
+    outra_pessoa_alem_das_listadas: outraPessoaAlemDasListadas,
   };
 }
 

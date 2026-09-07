@@ -44,7 +44,12 @@ function respostaSucesso(
   usage: Record<string, number> = { input_tokens: 1, output_tokens: 1 },
   naturezaMensagem: string = 'pedido',
   eventosCandidatos: unknown[] = [],
-  dentistasCandidatos: unknown = null
+  dentistasCandidatos: unknown = null,
+  // 5o/6o campos raiz portateis (specs/contato-multiplos-pacientes-v1.md
+  // secao 4.5) -- o schema estrito os exige, default `false` reproduz o
+  // turno que nao trata de paciente do contato.
+  atendimentoParaTerceiro: boolean = false,
+  outraPessoaAlemDasListadas: boolean = false
 ) {
   const corpo = {
     status: 'completed',
@@ -59,6 +64,8 @@ function respostaSucesso(
               alteracoes: alteracoesPortatil,
               eventos_candidatos: eventosCandidatos,
               dentistas_candidatos: dentistasCandidatos,
+              atendimento_para_terceiro: atendimentoParaTerceiro,
+              outra_pessoa_alem_das_listadas: outraPessoaAlemDasListadas,
             }),
           },
         ],
@@ -393,7 +400,7 @@ test('5: corpo HTTP realmente vazio gera resposta_vazia e permite no maximo um r
     const { fetchFalso, chamadas } = criarFetchFalso([() => respostaZeroBytes(), () => respostaSucesso([])]);
     const cliente = criarCliente({ fetch: fetchFalso });
     const resultado = await cliente.executar(entradaValida());
-    assert.deepEqual(resultado, { natureza_mensagem: 'pedido', alteracoes: {}, eventos_candidatos: [], dentistas_candidatos: null });
+    assert.deepEqual(resultado, { natureza_mensagem: 'pedido', alteracoes: {}, eventos_candidatos: [], dentistas_candidatos: null, atendimento_para_terceiro: false, outra_pessoa_alem_das_listadas: false });
     assert.equal(chamadas.length, 2);
   }
   // caso B: vazio duas vezes -> falha apos exatamente 2 chamadas
@@ -1134,6 +1141,8 @@ test('extra: executar() bem-sucedido devolve o mapa interno pronto para validarS
     },
     eventos_candidatos: [],
     dentistas_candidatos: null,
+    atendimento_para_terceiro: false,
+    outra_pessoa_alem_das_listadas: false,
   });
 });
 
@@ -1255,7 +1264,7 @@ test('correcao1b: com orcamento generoso, a revalidacao apos a espera nao bloque
   const { fetchFalso, chamadas } = criarFetchFalso([() => respostaErroHttp(503, {}), () => respostaSucesso([])]);
   const cliente = criarCliente({ fetch: fetchFalso, timeoutPorTentativaMs: 40, esperaEntreTentativasMs: 5, prazoTotalMs: 5000 });
   const resultado = await cliente.executar(entradaValida());
-  assert.deepEqual(resultado, { natureza_mensagem: 'pedido', alteracoes: {}, eventos_candidatos: [], dentistas_candidatos: null });
+  assert.deepEqual(resultado, { natureza_mensagem: 'pedido', alteracoes: {}, eventos_candidatos: [], dentistas_candidatos: null, atendimento_para_terceiro: false, outra_pessoa_alem_das_listadas: false });
   assert.equal(chamadas.length, 2);
 });
 
@@ -1384,6 +1393,8 @@ test('correcao3c: resposta rapida dentro do prazo continua sendo aceita normalme
     alteracoes: { nome: { acao: 'informar', valor: 'Joao' } },
     eventos_candidatos: [],
     dentistas_candidatos: null,
+    atendimento_para_terceiro: false,
+    outra_pessoa_alem_das_listadas: false,
   });
 });
 
@@ -1557,6 +1568,8 @@ test('INT-20: primeira resposta truncada, segunda completa -- uma unica repetica
     alteracoes: { procedimento_id: { acao: 'informar', valor: 'limpeza' } },
     eventos_candidatos: [],
     dentistas_candidatos: null,
+    atendimento_para_terceiro: false,
+    outra_pessoa_alem_das_listadas: false,
   });
 });
 
@@ -1594,6 +1607,8 @@ test('INT-22: fragmento de acao dentro de uma resposta truncada e integralmente 
     alteracoes: {},
     eventos_candidatos: [],
     dentistas_candidatos: null,
+    atendimento_para_terceiro: false,
+    outra_pessoa_alem_das_listadas: false,
   });
   assert.equal(chamadas.length, 2);
 });
@@ -2230,6 +2245,12 @@ test('fronteira: GUARDA GERAL -- toda chave opcional do payload precisa aparecer
         horario: '14:00',
       },
     ],
+    // Pacientes vinculados ao contato, quando ha mais de um
+    // (specs/contato-multiplos-pacientes-v1.md secao 3.1).
+    pacientes_do_contato: [
+      { paciente_id: 'pac-1', nome: 'Carlos', vinculo: 'titular' as const },
+      { paciente_id: 'pac-2', nome: 'Marta', vinculo: 'dependente' as const },
+    ],
     // Procedimentos que o dentista ja planejou e a Iris anunciou. Entrou no
     // contrato depois desta fixture, e a assercao logo abaixo -- que cobra
     // toda chave opcional -- acusou a ausencia. A chave ja atravessava
@@ -2415,6 +2436,8 @@ test('resposta com aceitar_opcao e referencia_textual null atravessa ate o resul
     alteracoes: {},
     eventos_candidatos: [{ tipo: 'aceitar_opcao', referencia_textual: null }],
     dentistas_candidatos: null,
+    atendimento_para_terceiro: false,
+    outra_pessoa_alem_das_listadas: false,
   });
 });
 

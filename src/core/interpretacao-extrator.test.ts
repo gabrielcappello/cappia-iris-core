@@ -23,10 +23,14 @@ test('teste2: varios campos em uma saida valida sao aceitos', async () => {
       cpf: { acao: 'informar', valor: '11122233344' },
       periodo: { acao: 'informar', valor: 'manha' },
     },
-    // Campos raiz obrigatorios desde 2026-08-09 -- declarados aqui porque este
-    // teste compara o resultado com a fixture inteira, por identidade.
+    // Campos raiz obrigatorios -- declarados aqui porque este teste compara o
+    // resultado com a fixture inteira, por identidade
+    // (specs/eventos-conversacionais-v1.md;
+    // specs/contato-multiplos-pacientes-v1.md secao 4.5).
     eventos_candidatos: [],
     dentistas_candidatos: null,
+    atendimento_para_terceiro: false,
+    outra_pessoa_alem_das_listadas: false,
   };
   const cliente = new ClienteModeloFalso([saida]);
 

@@ -47,14 +47,23 @@ test('a frase estrutural existe EXATAMENTE uma vez em INSTRUCOES_EXTRATOR', () =
 });
 
 test('a contradicao aparente com o schema e ESPERADA -- os dois formatos convivem', () => {
-  // O schema INTERNO exige quatro campos raiz; a frase cita dois. Isso NAO e
-  // defeito: a IA recebe a versao substituida pelo adaptador, que descreve o
-  // formato de transporte. Este teste registra a divergencia como
+  // O schema INTERNO exige seis campos raiz (2026-09-07:
+  // atendimento_para_terceiro e outra_pessoa_alem_das_listadas entraram por
+  // specs/contato-multiplos-pacientes-v1.md secao 4.5); a frase cita dois.
+  // Isso NAO e defeito: a IA recebe a versao substituida pelo adaptador, que
+  // descreve o formato de transporte. Este teste registra a divergencia como
   // intencional, para que uma leitura futura nao a trate como bug.
   const raizDoSchema = (SCHEMA_SAIDA_INTERPRETACAO as { required?: readonly string[] }).required ?? [];
   assert.deepEqual(
     [...raizDoSchema].sort(),
-    ['alteracoes', 'dentistas_candidatos', 'eventos_candidatos', 'natureza_mensagem'],
+    [
+      'alteracoes',
+      'atendimento_para_terceiro',
+      'dentistas_candidatos',
+      'eventos_candidatos',
+      'natureza_mensagem',
+      'outra_pessoa_alem_das_listadas',
+    ],
     'o schema interno mudou -- reveja se a frase estrutural e a substituicao do adaptador ainda fazem sentido'
   );
   assert.ok(

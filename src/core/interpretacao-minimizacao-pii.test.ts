@@ -358,7 +358,19 @@ function criarFetchCapturador() {
         output: [
           {
             type: 'message',
-            content: [{ type: 'output_text', text: JSON.stringify({ natureza_mensagem: 'pedido', alteracoes: [], eventos_candidatos: [], dentistas_candidatos: null }) }],
+            content: [
+              {
+                type: 'output_text',
+                text: JSON.stringify({
+                  natureza_mensagem: 'pedido',
+                  alteracoes: [],
+                  eventos_candidatos: [],
+                  dentistas_candidatos: null,
+                  atendimento_para_terceiro: false,
+                  outra_pessoa_alem_das_listadas: false,
+                }),
+              },
+            ],
           },
         ],
         usage: { input_tokens: 1, output_tokens: 1 },

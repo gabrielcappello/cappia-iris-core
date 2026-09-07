@@ -9,19 +9,18 @@ export interface ChamadaModeloFalso {
 }
 
 /**
- * `eventos_candidatos` e `dentistas_candidatos` sao campos raiz OBRIGATORIOS
- * desde 2026-08-09
- * (specs/eventos-conversacionais-v1.md, fatia minima). O modelo real SEMPRE o
- * devolve -- o schema estrito o exige --, entao um dublê que o preenche
- * quando a fixture nao se importa com eventos e MAIS fiel a producao, nao
- * menos: evita reescrever ~100 fixtures para acrescentar `[]` em todas.
+ * `eventos_candidatos`, `dentistas_candidatos`, `atendimento_para_terceiro` e
+ * `outra_pessoa_alem_das_listadas` sao campos raiz OBRIGATORIOS
+ * (specs/eventos-conversacionais-v1.md; specs/contato-multiplos-pacientes-v1.md
+ * secao 4.5). O modelo real SEMPRE os devolve -- o schema estrito os exige --,
+ * entao um dublê que os preenche quando a fixture nao se importa e MAIS fiel a
+ * producao, nao menos: evita reescrever ~100 fixtures.
  *
- * Fixtures que se importam com eventos declaram o campo, e este completador
- * nao toca nelas. A validacao do campo em si (ausencia, tipo desconhecido,
- * evento repetido) tem testes proprios que chamam `validarSaidaInterpretacao`
- * diretamente, sem passar por aqui.
+ * Fixtures que se importam declaram o campo, e este completador nao toca
+ * nelas. A validacao do campo em si tem testes proprios que chamam
+ * `validarSaidaInterpretacao` diretamente, sem passar por aqui.
  */
-function completarEventosCandidatos(resposta: unknown): unknown {
+export function completarEventosCandidatos(resposta: unknown): unknown {
   if (resposta === null || typeof resposta !== 'object' || Array.isArray(resposta)) return resposta;
   const objeto = resposta as Record<string, unknown>;
   if (!('natureza_mensagem' in objeto)) return resposta;
@@ -31,6 +30,10 @@ function completarEventosCandidatos(resposta: unknown): unknown {
     // `null` = o paciente nao mencionou profissional -- o default correto
     // para toda fixture que nao trata de dentista.
     ...('dentistas_candidatos' in objeto ? {} : { dentistas_candidatos: null }),
+    // `false` = o turno nao trata de paciente do contato -- o default para
+    // toda fixture que nao se importa.
+    ...('atendimento_para_terceiro' in objeto ? {} : { atendimento_para_terceiro: false }),
+    ...('outra_pessoa_alem_das_listadas' in objeto ? {} : { outra_pessoa_alem_das_listadas: false }),
   };
 }
 
