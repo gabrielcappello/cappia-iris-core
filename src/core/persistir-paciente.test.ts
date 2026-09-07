@@ -1,11 +1,13 @@
 // Testes do adaptador de public.cappia_persistir_paciente.
 //
-// Contrato da RPC: src/supabase/migrations/20260809120000_iris_nova_persistencia_paciente_v1.sql
-// (aplicada nos dois projetos em 2026-08-09).
+// Contrato da RPC: src/supabase/migrations/20260907120000_iris_nova_contato_multiplos_pacientes_v1.sql
+// (assinatura nova, com p_contato_id e p_paciente_id -- NAO aplicada em
+// banco algum no momento desta escrita).
 //
 // Nenhum acesso a rede ou banco real -- o dublê ClienteRpcFalso registra os
 // parametros enviados, o que e o unico jeito de PROVAR a traducao
-// `cpf -> p_documento`. Todos os valores sao SINTETICOS.
+// `cpf -> p_documento` e o roteamento INSERT vs UPDATE. Todos os valores sao
+// SINTETICOS.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { EntradaInvalidaError, ErroRpcTecnico } from './erros.ts';
@@ -17,6 +19,7 @@ const PACIENTE_ID = crypto.randomUUID();
 
 const ENTRADA = {
   clinica_id: crypto.randomUUID(),
+  contato_id: crypto.randomUUID(),
   telefone_normalizado: '5511999999999',
   nome: 'Teodolinda Sampaio Vilhena',
   cpf: '52998224725',
@@ -49,26 +52,62 @@ test('traducao: `cpf` do dominio vira `p_documento` na RPC, e `p_cpf` nunca e en
 
   // Os demais seguem sem traducao nenhuma.
   assert.equal(parametros.p_clinica_id, ENTRADA.clinica_id);
+  assert.equal(parametros.p_contato_id, ENTRADA.contato_id);
   assert.equal(parametros.p_telefone_normalizado, ENTRADA.telefone_normalizado);
   assert.equal(parametros.p_nome, ENTRADA.nome);
   assert.equal(parametros.p_data_nascimento, ENTRADA.data_nascimento);
   assert.equal(parametros.p_email, ENTRADA.email);
 });
 
+test('INSERT: sem paciente_id, envia contato_id e (quando dado) vinculo; nunca p_paciente_id', async () => {
+  const cliente = clienteComSucesso();
+  await persistirPaciente(cliente, { ...ENTRADA, vinculo: 'dependente' });
+
+  const { parametros } = cliente.chamadas[0];
+  assert.equal(parametros.p_contato_id, ENTRADA.contato_id);
+  assert.equal(parametros.p_vinculo, 'dependente');
+  assert.ok(
+    !Object.prototype.hasOwnProperty.call(parametros, 'p_paciente_id'),
+    'INSERT nunca manda p_paciente_id'
+  );
+});
+
+test('UPDATE: com paciente_id, envia p_paciente_id (o alvo do UPDATE por (id, contato_id))', async () => {
+  const cliente = clienteComSucesso();
+  const alvo = crypto.randomUUID();
+  await persistirPaciente(cliente, { ...ENTRADA, paciente_id: alvo });
+
+  const { parametros } = cliente.chamadas[0];
+  assert.equal(parametros.p_paciente_id, alvo);
+  assert.equal(parametros.p_contato_id, ENTRADA.contato_id);
+});
+
+test('vinculo ausente e OMITIDO do payload (a RPC aplica o default)', async () => {
+  const cliente = clienteComSucesso();
+  await persistirPaciente(cliente, ENTRADA);
+
+  assert.ok(
+    !Object.prototype.hasOwnProperty.call(cliente.chamadas[0].parametros, 'p_vinculo'),
+    'p_vinculo ausente quando o chamador nao passa vinculo'
+  );
+});
+
 test('opcional ausente e OMITIDO do payload, nunca enviado como null', async () => {
   const cliente = clienteComSucesso();
   await persistirPaciente(cliente, {
     clinica_id: ENTRADA.clinica_id,
+    contato_id: ENTRADA.contato_id,
     telefone_normalizado: ENTRADA.telefone_normalizado,
     nome: ENTRADA.nome,
   });
 
   const { parametros } = cliente.chamadas[0];
-  for (const chave of ['p_documento', 'p_data_nascimento', 'p_email']) {
+  for (const chave of ['p_documento', 'p_data_nascimento', 'p_email', 'p_vinculo', 'p_paciente_id']) {
     assert.ok(!Object.prototype.hasOwnProperty.call(parametros, chave), `${chave} deveria estar ausente`);
   }
   // Os obrigatorios continuam la.
   assert.equal(parametros.p_nome, ENTRADA.nome);
+  assert.equal(parametros.p_contato_id, ENTRADA.contato_id);
 });
 
 test('cpf_ja_cadastrado tem tipo proprio -- nunca cai em `falhou`', async () => {
@@ -83,7 +122,14 @@ test('cpf_ja_cadastrado tem tipo proprio -- nunca cai em `falhou`', async () => 
 });
 
 test('motivos estruturais previstos viram falhou tipado', async () => {
-  for (const motivo of ['clinica_id_ausente', 'telefone_normalizado_ausente', 'nome_ausente']) {
+  for (const motivo of [
+    'clinica_id_ausente',
+    'contato_id_ausente',
+    'telefone_normalizado_ausente',
+    'nome_ausente',
+    'vinculo_invalido',
+    'paciente_nao_encontrado',
+  ]) {
     const cliente = new ClienteRpcFalso({ [NOME_RPC]: { data: { sucesso: false, motivo }, error: null } });
     const resultado = await persistirPaciente(cliente, ENTRADA);
     assert.deepEqual(resultado, { tipo: 'falhou', motivo });
@@ -130,9 +176,12 @@ test('falha fechado: sucesso=true sem paciente_id valido e rejeitado', async () 
 test('entrada invalida e rejeitada ANTES de qualquer chamada a RPC', async () => {
   const invalidas: Record<string, unknown>[] = [
     { ...ENTRADA, clinica_id: 'nao-e-uuid' },
+    { ...ENTRADA, contato_id: 'nao-e-uuid' },
     { ...ENTRADA, telefone_normalizado: '   ' },
     { ...ENTRADA, nome: '' },
     { ...ENTRADA, nome: '   ' },
+    { ...ENTRADA, vinculo: 'primo' },
+    { ...ENTRADA, paciente_id: 'nao-e-uuid' },
     { ...ENTRADA, cpf: '' },
     { ...ENTRADA, data_nascimento: '19/03/1974' },
     { ...ENTRADA, email: '   ' },

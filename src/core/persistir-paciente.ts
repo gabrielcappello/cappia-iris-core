@@ -1,7 +1,7 @@
-// Adaptador fino para a RPC public.cappia_persistir_paciente (Postgres),
-// aplicada em 2026-08-09 nos dois projetos -- ver
-// src/supabase/migrations/20260809120000_iris_nova_persistencia_paciente_v1.sql
-// e a irma em migrations-legado/.
+// Adaptador fino para a RPC public.cappia_persistir_paciente (Postgres) --
+// ver src/supabase/migrations/20260907120000_iris_nova_contato_multiplos_pacientes_v1.sql
+// (assinatura nova, com p_contato_id e p_paciente_id) e a base em
+// 20260809120000_iris_nova_persistencia_paciente_v1.sql.
 //
 // Mesmo padrao de reservar-agendamento.ts: uma unica chamada, sem retry,
 // validacao estrita de entrada e saida, nunca vaza error.message nem o
@@ -12,13 +12,21 @@
 // UNICA TRADUCAO: `cpf` (dominio) -> `p_documento` (coluna fisica). Nao
 // existe coluna `cpf` no banco e nao existe conceito `documento` no dominio;
 // este arquivo e o unico ponto de ESCRITA onde os dois se encontram (o unico
-// ponto de LEITURA correspondente e buscarPaciente, em identificacao.ts).
+// ponto de LEITURA correspondente e listarPacientesDoContato, em
+// identificacao.ts).
 //
-// NAO e chamada automaticamente em nenhum turno nesta subetapa -- a peca fica
-// pronta e testada, o ponto de invocacao vem com o fluxo de cadastro.
+// CONTRATO NOVO (specs/contato-multiplos-pacientes-v1.md secao 5.2):
+//   - `contato_id` e OBRIGATORIO -- a persistencia nunca resolve o contato
+//     implicitamente por "telefone desta conversa";
+//   - `paciente_id` e OPCIONAL: presente = UPDATE daquele paciente (por
+//     (id, contato_id), nunca por telefone); ausente = INSERT de paciente
+//     novo vinculado a `contato_id`, com `vinculo` explicito.
+// A RPC nunca faz `ON CONFLICT` por telefone -- essa constraint nao existe
+// mais em `pacientes`.
 
 import { EntradaInvalidaError, ErroRpcTecnico } from './erros.ts';
 import type { ClienteRpc } from './mensagens-recebidas-tipos.ts';
+import type { VinculoPaciente } from './tipos.ts';
 
 const NOME_RPC = 'cappia_persistir_paciente';
 
@@ -28,26 +36,53 @@ const NOME_RPC = 'cappia_persistir_paciente';
 // resolve conversando com o paciente, nunca um erro tecnico a reportar.
 const MOTIVOS_ERRO: readonly string[] = [
   'clinica_id_ausente',
+  'contato_id_ausente',
   'telefone_normalizado_ausente',
   'nome_ausente',
+  'vinculo_invalido',
+  // Retornado quando `p_paciente_id` foi informado mas nao existe naquele
+  // contato/clinica -- e falha estrutural, nunca situacao do paciente.
+  'paciente_nao_encontrado',
 ];
 
 export type MotivoErroPersistirPaciente = (typeof MOTIVOS_ERRO)[number];
 
 const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 const DATA_REGEX = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
+const VINCULOS_VALIDOS: readonly VinculoPaciente[] = ['titular', 'dependente'];
 
 export interface PersistirPacienteEntrada {
   clinica_id: string;
+  /**
+   * Contato de WhatsApp ao qual o paciente pertence (novo ou ja existente).
+   * OBRIGATORIO -- resolvido por identificacao.ts (`ResultadoIdentificacao.contato_id`)
+   * ou, no ramo "numero proprio", pelo contato do telefone informado
+   * (spec secao 4.5, passo 4).
+   */
+  contato_id: string;
+  /**
+   * Telefone de contato do paciente -- gravado na linha de `pacientes`. Deixa
+   * de ser CHAVE de conflito (isso agora e o contato), nunca deixa de ser
+   * dado da ficha.
+   */
   telefone_normalizado: string;
   /**
    * Obrigatorio em TODA chamada, criacao ou atualizacao. O chamador envia o
    * estado cadastral atual conhecido (a visao efetiva), nao apenas o campo
-   * digitado no turno -- decisao do Gabriel em 2026-08-09, que evita
-   * subconsulta interna, corrida especial e distincao criacao/atualizacao
-   * dentro da RPC.
+   * digitado no turno -- decisao do Gabriel em 2026-08-09.
    */
   nome: string;
+  /**
+   * `titular` (paciente com telefone proprio) ou `dependente` (administrado
+   * por outro contato). Usado somente no INSERT -- num UPDATE o vinculo ja
+   * esta decidido e nao muda por aqui. Default `titular` quando ausente.
+   */
+  vinculo?: VinculoPaciente;
+  /**
+   * Quando presente: UPDATE deste paciente (o ja selecionado). Quando
+   * ausente: INSERT de paciente novo vinculado a `contato_id`.
+   */
+  paciente_id?: string;
   /** Vira `p_documento` na RPC. Ausente = nao altera o valor ja gravado. */
   cpf?: string;
   /** YYYY-MM-DD. Ausente = nao altera o valor ja gravado. */
@@ -73,8 +108,11 @@ export async function persistirPaciente(
   // `undefined` serializado vire string "undefined" em algum cliente.
   const { data, error } = await cliente.rpc(NOME_RPC, {
     p_clinica_id: entrada.clinica_id,
+    p_contato_id: entrada.contato_id,
     p_telefone_normalizado: entrada.telefone_normalizado,
     p_nome: entrada.nome,
+    ...(entrada.vinculo !== undefined ? { p_vinculo: entrada.vinculo } : {}),
+    ...(entrada.paciente_id !== undefined ? { p_paciente_id: entrada.paciente_id } : {}),
     ...(entrada.cpf !== undefined ? { p_documento: entrada.cpf } : {}),
     ...(entrada.data_nascimento !== undefined ? { p_data_nascimento: entrada.data_nascimento } : {}),
     ...(entrada.email !== undefined ? { p_email: entrada.email } : {}),
@@ -92,16 +130,31 @@ function validarEntrada(entrada: PersistirPacienteEntrada): void {
   if (typeof entrada.clinica_id !== 'string' || !UUID_REGEX.test(entrada.clinica_id)) {
     throw new EntradaInvalidaError('clinica_id', 'clinica_id deve estar no formato UUID valido');
   }
+  if (typeof entrada.contato_id !== 'string' || !UUID_REGEX.test(entrada.contato_id)) {
+    throw new EntradaInvalidaError('contato_id', 'contato_id deve estar no formato UUID valido');
+  }
   if (typeof entrada.telefone_normalizado !== 'string' || entrada.telefone_normalizado.trim() === '') {
     throw new EntradaInvalidaError('telefone_normalizado', 'telefone_normalizado deve ser uma string nao vazia');
   }
   if (typeof entrada.nome !== 'string' || entrada.nome.trim() === '') {
     throw new EntradaInvalidaError('nome', 'nome deve ser uma string nao vazia');
   }
-  // Os tres opcionais so sao checados quando presentes. NENHUMA validacao de
-  // CONTEUDO aqui (digito verificador de CPF, data plausivel, formato de
-  // e-mail) -- isso e regra de produto, fora do escopo desta subetapa. O
-  // adaptador so garante que o que sai daqui e do tipo certo.
+  if (
+    entrada.vinculo !== undefined &&
+    !VINCULOS_VALIDOS.includes(entrada.vinculo)
+  ) {
+    throw new EntradaInvalidaError('vinculo', "vinculo, quando presente, deve ser 'titular' ou 'dependente'");
+  }
+  if (
+    entrada.paciente_id !== undefined &&
+    (typeof entrada.paciente_id !== 'string' || !UUID_REGEX.test(entrada.paciente_id))
+  ) {
+    throw new EntradaInvalidaError('paciente_id', 'paciente_id, quando presente, deve estar no formato UUID valido');
+  }
+  // Os tres opcionais cadastrais so sao checados quando presentes. NENHUMA
+  // validacao de CONTEUDO aqui (digito verificador de CPF, data plausivel,
+  // formato de e-mail) -- isso e regra de produto, fora do escopo desta
+  // subetapa. O adaptador so garante que o que sai daqui e do tipo certo.
   if (entrada.cpf !== undefined && (typeof entrada.cpf !== 'string' || entrada.cpf.trim() === '')) {
     throw new EntradaInvalidaError('cpf', 'cpf, quando presente, deve ser uma string nao vazia');
   }
