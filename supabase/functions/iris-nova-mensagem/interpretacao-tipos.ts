@@ -19,6 +19,11 @@ export type CampoOperacionalInterpretacao = Extract<
   | 'procedimento_id'
   | 'dentista_id'
   | 'agendamento_id'
+  // specs/contato-multiplos-pacientes-v1.md (2026-09-07). Operacionais:
+  // seguem por valor como contexto e podem ser persistidos em `dados`.
+  | 'paciente_id'
+  | 'vinculo_novo_paciente'
+  | 'telefone_novo_paciente'
   | 'data_texto'
   | 'periodo'
   | 'horario_texto'
@@ -35,11 +40,18 @@ export const CAMPOS_OPERACIONAIS_INTERPRETACAO: readonly CampoOperacionalInterpr
   'procedimento_id',
   'dentista_id',
   'agendamento_id',
+  'paciente_id',
+  'vinculo_novo_paciente',
+  'telefone_novo_paciente',
   'data_texto',
   'periodo',
   'horario_texto',
   'confirmacao',
 ];
+
+/** Valores fechados de `vinculo_novo_paciente` (spec secao 4.5). */
+export const VINCULOS_NOVO_PACIENTE_PERMITIDOS = ['dependente', 'numero_proprio'] as const;
+export type VinculoNovoPaciente = (typeof VINCULOS_NOVO_PACIENTE_PERMITIDOS)[number];
 
 export const CAMPOS_CADASTRAIS_INTERPRETACAO: readonly CampoCadastralInterpretacao[] = [
   'nome',
@@ -210,6 +222,24 @@ export interface EntradaInterpretacao {
     horario: string;
   }[];
   /**
+   * Pacientes vinculados ao contato de WhatsApp desta conversa
+   * (specs/contato-multiplos-pacientes-v1.md secao 3.1). SO chega no payload
+   * quando o contato tem MAIS DE UM paciente vinculado -- e CONTEXTO, nunca
+   * pergunta em aberto (mesmo espirito de `agendamentos_do_paciente`).
+   * Quando o contato tem 0 ou 1 paciente, este campo fica AUSENTE (nunca
+   * `[]`) e o fluxo segue como hoje, sem pergunta nova.
+   *
+   * EXATAMENTE tres campos por item: `paciente_id` (opaco), `nome` (para a IA
+   * correlacionar "minha mae Marta" -> o item certo) e `vinculo` (rotulo
+   * estrutural fechado -- nunca grau de parentesco livre). NUNCA planos,
+   * agendamentos, CPF ou data de nascimento -- mesma minimizacao de
+   * `dentistas_disponiveis`/`procedimentos_disponiveis`.
+   *
+   * A IA correlaciona semanticamente e devolve `paciente_id` direto em
+   * `alteracoes` (mesmo contrato de `agendamento_id`); em duvida real, omite.
+   */
+  pacientes_do_contato?: { paciente_id: string; nome: string; vinculo: 'titular' | 'dependente' }[];
+  /**
    * Ultimos turnos da conversa (specs/historico-conversacional-v1.md secao
    * 6), do mais antigo para o mais recente, ja filtrados por validade (12h)
    * -- permite entender mensagens curtas ou dependentes de contexto ("sim",
@@ -335,6 +365,30 @@ export interface SaidaInterpretacao {
    * emite `dentista_id`.
    */
   dentistas_candidatos: string[] | null;
+  /**
+   * A mensagem expressa claramente que o atendimento e para alguem que NAO E
+   * quem esta conversando (specs/contato-multiplos-pacientes-v1.md secao
+   * 4.5, passo 1). "para minha mae", "e pro meu filho", "nao e pra mim".
+   *
+   * SOZINHO so significa "nao e para quem esta falando" -- NUNCA "e uma
+   * pessoa nova" nem "e outra pessoa alem das listadas". A pessoa pode ser
+   * qualquer um dos pacientes ja vinculados ao contato. Campo raiz (sinal do
+   * turno, nao acumulado), sempre presente (`false` quando nao se aplica) --
+   * mesma disciplina de `pedido_multiplo_detectado`.
+   */
+  atendimento_para_terceiro: boolean;
+  /**
+   * A mensagem expressa claramente que o atendimento NAO e para nenhum dos
+   * pacientes hoje vinculados a este contato (spec secao 4.5, passo 1).
+   * "nao e a Marta nem o Joao", "e outra pessoa", ou resposta a
+   * `aguardando_escolha_paciente` dizendo "nenhum desses".
+   *
+   * NAO afirma nem nega que a pessoa ja tenha cadastro na clinica -- so diz
+   * "nao esta na lista deste contato". A existencia de cadastro e descoberta
+   * DEPOIS, pela busca do Core no telefone informado (spec secao 4.5, passo
+   * 4). Campo raiz, sempre presente (`false` quando nao se aplica).
+   */
+  outra_pessoa_alem_das_listadas: boolean;
 }
 
 // Dependencia injetavel de modelo estruturado.
@@ -425,4 +479,18 @@ export interface ResultadoInterpretacao {
    * o Core perguntar qual vem primeiro, sem nomear nenhum.
    */
   pedido_multiplo_detectado: boolean;
+  /**
+   * O atendimento e para alguem que nao e quem esta conversando
+   * (specs/contato-multiplos-pacientes-v1.md secao 4.5). Repassado ao
+   * orquestrador. NAO E "pessoa nova": so "nao e para quem esta falando".
+   * Sinal do turno -- nunca gravado em `dados`.
+   */
+  atendimento_para_terceiro: boolean;
+  /**
+   * O atendimento nao e para nenhum dos pacientes hoje vinculados ao contato
+   * (spec secao 4.5). NAO afirma nada sobre existir cadastro na clinica --
+   * isso e descoberto pela busca do Core no telefone informado. Sinal do
+   * turno -- nunca gravado em `dados`.
+   */
+  outra_pessoa_alem_das_listadas: boolean;
 }

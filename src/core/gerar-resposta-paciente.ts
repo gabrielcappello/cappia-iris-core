@@ -194,6 +194,17 @@ export function gerarRespostaPaciente(decisao: DecisaoOrquestrador): string {
       // ele escolheu, mesmo perguntando, e o comportamento que esta spec
       // existe para eliminar.
       return `Não consigo agendar esse atendimento com ${decisao.dentista_nome_exibido}. Quer tentar outro procedimento com ${decisao.dentista_nome_exibido}?`;
+    // ESCOLHA DE PACIENTE (2026-09-07,
+    // specs/contato-multiplos-pacientes-v1.md secao 4.5). Fallback
+    // deterministico -- a redatora e quem escreve a pergunta natural. Aqui
+    // so uma frase honesta que nao inventa nome nem assume qual paciente e.
+    case 'aguardando_escolha_paciente': {
+      const nomes = decisao.pacientes.map((p) => p.nome);
+      const lista = nomes.length > 0 ? ` (${nomes.join(', ')})` : '';
+      return `Esse atendimento é para uma das pessoas já vinculadas a este número${lista}, ou para outra pessoa?`;
+    }
+    case 'pedir_vinculo_paciente_novo':
+      return 'Essa pessoa vai usar um número de WhatsApp próprio, ou prefere deixar este número como o contato dela também?';
     // --- Os cinco estados de falha tecnica real ---
     case 'clinica_sem_catalogo':
     case 'erro_catalogo_dentista':

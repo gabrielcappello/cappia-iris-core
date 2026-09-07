@@ -10,7 +10,9 @@ import type {
   EstadoConversa,
   HistoricoConversa,
   IdentificarConversaInput,
+  PacienteDoContato,
   ResultadoIdentificacao,
+  VinculoPaciente,
 } from './tipos.ts';
 
 // Colunas lidas de estado_conversa por este modulo. `atualizado_em` e
@@ -97,10 +99,21 @@ function validarLinhaEstadoConversa(valor: Record<string, unknown>): LinhaEstado
 }
 
 /**
- * Etapa 1 do roadmap (docs/06-roadmap.md): identifica clinica e paciente a
- * partir do transporte ja normalizado, e garante a existencia de um unico
- * estado de conversa oficial. Nao registra mensagem, nao cria paciente, nao
- * decide nada alem de identificacao.
+ * Etapa 1 do roadmap (docs/06-roadmap.md): identifica clinica e contato a
+ * partir do transporte ja normalizado, lista os pacientes vinculados ao
+ * contato, e garante a existencia de um unico estado de conversa oficial.
+ * Nao registra mensagem, nao cria paciente, nao decide nada alem de
+ * identificacao.
+ *
+ * MUDANCA (specs/contato-multiplos-pacientes-v1.md secao 5.1): a resolucao
+ * e em duas etapas -- primeiro o `contato_whatsapp` por `(clinica_id,
+ * telefone_normalizado)`, depois a LISTA de pacientes vinculados a esse
+ * `contato_id` (0, 1 ou N). O paciente RESOLVIDO do turno sai de duas
+ * fontes, nesta ordem: (a) a selecao ja gravada em
+ * `estado_conversa.paciente_id`, quando ela ainda aponta para um vinculo
+ * valido deste contato; (b) o unico paciente do contato, quando ha
+ * exatamente um. Fora disso, `paciente.id` fica `null` e o orquestrador
+ * pergunta.
  */
 export async function identificarConversa(
   cliente: ClienteBancoDados,
@@ -113,21 +126,34 @@ export async function identificarConversa(
     throw new ClinicaNaoEncontradaError(entrada.provider, entrada.instancia_whatsapp);
   }
 
-  const paciente = await buscarPaciente(cliente, clinica.id, entrada.telefone_normalizado);
+  const contatoId = await obterOuCriarContato(cliente, clinica.id, entrada.telefone_normalizado);
+  const pacientesDoContato = await listarPacientesDoContato(cliente, clinica.id, contatoId);
 
+  // O estado de conversa e chaveado por (clinica_id, telefone_normalizado),
+  // que representa a conversa com o CONTATO -- chave inalterada (spec secao
+  // 2.1). Nao propagamos nenhum paciente_id na criacao: a selecao agora e
+  // decidida DEPOIS, contra a lista fresca do contato (podendo mudar entre
+  // assuntos, spec secao 4.4). Um estado recem-criado nasce sem selecao.
   const conversa = await obterOuCriarEstadoConversa(
     cliente,
     clinica.id,
-    entrada.telefone_normalizado,
-    paciente?.id ?? null
+    entrada.telefone_normalizado
   );
+
+  const resolvido = resolverPacienteSelecionado(pacientesDoContato, conversa.paciente_id);
 
   return {
     clinica_id: clinica.id,
+    contato_id: contatoId,
+    pacientes: pacientesDoContato.map((p) => ({
+      paciente_id: p.id,
+      nome: p.nome,
+      vinculo: p.vinculo,
+    })),
     paciente: {
-      encontrado: paciente !== null,
-      id: paciente?.id ?? null,
-      cadastro: paciente?.cadastro ?? {},
+      encontrado: resolvido !== null,
+      id: resolvido?.id ?? null,
+      cadastro: resolvido?.cadastro ?? {},
     },
     conversa: {
       id: conversa.id,
@@ -181,11 +207,16 @@ async function buscarClinica(
 // dele, e a Iris pedia de novo dado que ja estava na ficha.
 //
 // `documento` e a coluna fisica; no dominio ela se chama `cpf`. Este SELECT e
-// o unico ponto de leitura onde a traducao acontece.
-const COLUNAS_PACIENTE = 'id, nome, documento, data_nascimento, email';
+// o unico ponto de leitura onde a traducao acontece. `vinculo` entrou em
+// 2026-09-07 (specs/contato-multiplos-pacientes-v1.md).
+const COLUNAS_PACIENTE = 'id, nome, documento, data_nascimento, email, vinculo';
+
+const VINCULOS_VALIDOS: readonly VinculoPaciente[] = ['titular', 'dependente'];
 
 interface LinhaPaciente {
   id: string;
+  nome: string;
+  vinculo: VinculoPaciente;
   cadastro: CadastroPaciente;
 }
 
@@ -203,50 +234,145 @@ function campoCadastral(valor: unknown): string | undefined {
   return limpo === '' ? undefined : limpo;
 }
 
-async function buscarPaciente(
+/**
+ * Resolve (ou cria) o `contato_whatsapp` desta conversa por `(clinica_id,
+ * telefone_normalizado)` -- a mesma chave que antes identificava o paciente,
+ * agora movida para onde semanticamente pertence (spec secao 2.1). Mesma
+ * disciplina de concorrencia de `obterOuCriarEstadoConversa`: upsert com
+ * `ignoreDuplicates` e reconsulta quando outra chamada venceu a corrida.
+ */
+async function obterOuCriarContato(
   cliente: ClienteBancoDados,
   clinicaId: string,
   telefoneNormalizado: string
-): Promise<LinhaPaciente | null> {
-  const { data, error } = await cliente
-    .from('pacientes')
-    .select(COLUNAS_PACIENTE)
-    // Isolamento por clinica: as duas igualdades precisam casar na MESMA
-    // linha. Um paciente com o mesmo telefone em outra clinica nunca e
-    // carregado aqui.
+): Promise<string> {
+  const { data: existente, error: erroSelect } = await cliente
+    .from('contatos_whatsapp')
+    .select('id')
     .eq('clinica_id', clinicaId)
     .eq('telefone_normalizado', telefoneNormalizado)
     .maybeSingle();
 
-  if (error) throw new Error(`falha ao buscar paciente: ${error.message}`);
-  if (!data) return null;
-
-  const bruto = data as Record<string, unknown>;
-  if (typeof bruto.id !== 'string' || bruto.id.trim() === '') {
-    throw new Error('pacientes retornou id em formato invalido');
+  if (erroSelect) throw new Error(`falha ao buscar contato: ${erroSelect.message}`);
+  if (existente) {
+    const id = (existente as Record<string, unknown>).id;
+    if (typeof id !== 'string' || id.trim() === '') {
+      throw new Error('contatos_whatsapp retornou id em formato invalido');
+    }
+    return id;
   }
 
-  // Montagem campo a campo a partir de chaves FECHADAS -- nunca por spread da
-  // linha crua. Mesmo que o SELECT mudasse, nenhuma coluna inesperada (nem
-  // uma PII nova) entraria no cadastro de dominio por acidente.
-  const cadastro: CadastroPaciente = {};
-  const nome = campoCadastral(bruto.nome);
-  if (nome !== undefined) cadastro.nome = nome;
-  const cpf = campoCadastral(bruto.documento);
-  if (cpf !== undefined) cadastro.cpf = cpf;
-  const dataNascimento = campoCadastral(bruto.data_nascimento);
-  if (dataNascimento !== undefined) cadastro.data_nascimento = dataNascimento;
-  const email = campoCadastral(bruto.email);
-  if (email !== undefined) cadastro.email = email;
+  const { data: inserida, error: erroInsert } = await cliente
+    .from('contatos_whatsapp')
+    .upsert(
+      { clinica_id: clinicaId, telefone_normalizado: telefoneNormalizado },
+      { onConflict: 'clinica_id,telefone_normalizado', ignoreDuplicates: true }
+    )
+    .select('id')
+    .maybeSingle();
 
-  return { id: bruto.id, cadastro };
+  if (erroInsert) throw new Error(`falha ao criar contato: ${erroInsert.message}`);
+  if (inserida) {
+    const id = (inserida as Record<string, unknown>).id;
+    if (typeof id !== 'string' || id.trim() === '') {
+      throw new Error('contatos_whatsapp retornou id em formato invalido');
+    }
+    return id;
+  }
+
+  const { data: concorrente, error: erroReconsulta } = await cliente
+    .from('contatos_whatsapp')
+    .select('id')
+    .eq('clinica_id', clinicaId)
+    .eq('telefone_normalizado', telefoneNormalizado)
+    .maybeSingle();
+
+  if (erroReconsulta) throw new Error(`falha ao reconsultar contato: ${erroReconsulta.message}`);
+  const id = (concorrente as Record<string, unknown> | null)?.id;
+  if (typeof id !== 'string' || id.trim() === '') {
+    throw new Error('contatos_whatsapp nao encontrado apos insercao concorrente');
+  }
+  return id;
+}
+
+/**
+ * Lista os pacientes vinculados a um contato (spec secao 5.1). `.maybeSingle()`
+ * de antes some: a query devolve 0, 1 ou N linhas. Escopada por `clinica_id`
+ * TAMBEM (nao so `contato_id`): a FK composta ja garante que um contato
+ * pertence a uma clinica, mas a igualdade dupla mantem o mesmo padrao de
+ * isolamento de toda leitura do Core.
+ */
+async function listarPacientesDoContato(
+  cliente: ClienteBancoDados,
+  clinicaId: string,
+  contatoId: string
+): Promise<LinhaPaciente[]> {
+  const { data, error } = await cliente
+    .from('pacientes')
+    .select(COLUNAS_PACIENTE)
+    .eq('clinica_id', clinicaId)
+    .eq('contato_id', contatoId);
+
+  if (error) throw new Error(`falha ao listar pacientes do contato: ${error.message}`);
+  const linhas = (data ?? []) as Record<string, unknown>[];
+
+  return linhas.map((bruto) => {
+    if (typeof bruto.id !== 'string' || bruto.id.trim() === '') {
+      throw new Error('pacientes retornou id em formato invalido');
+    }
+    const nome = campoCadastral(bruto.nome);
+    // `vinculo` e NOT NULL no schema com default 'titular' -- um valor fora
+    // do vocabulario e schema inesperado, falha fechado.
+    const vinculo = typeof bruto.vinculo === 'string' && VINCULOS_VALIDOS.includes(bruto.vinculo as VinculoPaciente)
+      ? (bruto.vinculo as VinculoPaciente)
+      : (() => {
+          throw new Error('pacientes retornou vinculo fora do vocabulario aprovado');
+        })();
+
+    // Montagem campo a campo a partir de chaves FECHADAS -- nunca por spread
+    // da linha crua. Mesmo que o SELECT mudasse, nenhuma coluna inesperada
+    // (nem uma PII nova) entraria no cadastro de dominio por acidente.
+    const cadastro: CadastroPaciente = {};
+    if (nome !== undefined) cadastro.nome = nome;
+    const cpf = campoCadastral(bruto.documento);
+    if (cpf !== undefined) cadastro.cpf = cpf;
+    const dataNascimento = campoCadastral(bruto.data_nascimento);
+    if (dataNascimento !== undefined) cadastro.data_nascimento = dataNascimento;
+    const email = campoCadastral(bruto.email);
+    if (email !== undefined) cadastro.email = email;
+
+    return { id: bruto.id, nome: nome ?? '', vinculo, cadastro };
+  });
+}
+
+/**
+ * Decide o paciente RESOLVIDO do turno a partir da lista fresca do contato e
+ * da selecao ja gravada (spec secao 4.4/5.1):
+ *
+ *   1. `pacienteSelecionadoId` presente E ainda aponta para um vinculo desta
+ *      lista -> esse. (A revalidacao contra a lista fresca e o que impede
+ *      uma selecao obsoleta -- ou de outro contato -- de sobreviver.)
+ *   2. exatamente 1 paciente no contato -> esse (comportamento de hoje, 1
+ *      telefone = 1 paciente, preservado para todos os dados ja existentes).
+ *   3. caso contrario (0, ou >1 sem selecao valida) -> `null`: o orquestrador
+ *      pergunta.
+ */
+function resolverPacienteSelecionado(
+  pacientes: readonly LinhaPaciente[],
+  pacienteSelecionadoId: string | null
+): LinhaPaciente | null {
+  if (pacienteSelecionadoId !== null) {
+    const selecionado = pacientes.find((p) => p.id === pacienteSelecionadoId);
+    if (selecionado !== undefined) return selecionado;
+  }
+  if (pacientes.length === 1) return pacientes[0];
+  return null;
 }
 
 async function obterOuCriarEstadoConversa(
   cliente: ClienteBancoDados,
   clinicaId: string,
-  telefoneNormalizado: string,
-  pacienteId: string | null
+  telefoneNormalizado: string
 ): Promise<LinhaEstadoConversa> {
   const { data: existente, error: erroSelect } = await cliente
     .from('estado_conversa')
@@ -258,14 +384,12 @@ async function obterOuCriarEstadoConversa(
   if (erroSelect) throw new Error(`falha ao buscar estado da conversa: ${erroSelect.message}`);
 
   if (existente) {
-    const linha = validarLinhaEstadoConversa(existente);
-    // O estado ja existe: nunca alteramos seu campo `estado` aqui. So
-    // vinculamos o paciente se ele foi encontrado agora e o estado ainda
-    // nao tinha paciente_id -- nunca sobrescrevemos um vinculo existente.
-    if (pacienteId && linha.paciente_id === null) {
-      return await vincularPacienteAoEstado(cliente, clinicaId, telefoneNormalizado, pacienteId, linha);
-    }
-    return linha;
+    // O estado ja existe: nunca alteramos seu campo `estado` nem a selecao
+    // de paciente aqui. A selecao (`paciente_id`) passou a ser MUTAVEL e a
+    // ser escrita pelo orquestrador, contra a lista fresca do contato --
+    // spec secao 4.4. A protecao write-once (`.is('paciente_id', null)`)
+    // que existia aqui foi removida por esse motivo.
+    return validarLinhaEstadoConversa(existente);
   }
 
   // Insercao segura sob concorrencia: o conflito e resolvido pela unique
@@ -274,14 +398,14 @@ async function obterOuCriarEstadoConversa(
   // chamada venceu a corrida entre o select acima e este upsert, o upsert
   // com ignoreDuplicates nao retorna linha e reconsultamos o estado ja
   // criado — nunca duas linhas para a mesma conversa. Um estado so nasce
-  // como 'atendimento' quando e realmente criado aqui.
+  // como 'atendimento' quando e realmente criado aqui, sem selecao de
+  // paciente (spec secao 4.4).
   const { data: inserida, error: erroInsert } = await cliente
     .from('estado_conversa')
     .upsert(
       {
         clinica_id: clinicaId,
         telefone_normalizado: telefoneNormalizado,
-        paciente_id: pacienteId,
         estado: 'atendimento',
         dados: {},
       },
@@ -305,37 +429,32 @@ async function obterOuCriarEstadoConversa(
   return validarLinhaEstadoConversa(concorrente);
 }
 
-async function vincularPacienteAoEstado(
+/**
+ * Escreve (ou limpa) a SELECAO de paciente em `estado_conversa.paciente_id`
+ * (specs/contato-multiplos-pacientes-v1.md secao 4.4). A coluna existente e
+ * reutilizada como "o paciente selecionado para esta conversa" -- MUTAVEL
+ * entre assuntos, `null` ao concluir/desistir de um fluxo.
+ *
+ * `pacienteId = null` limpa a selecao. Qualquer outro valor grava a nova
+ * selecao. Nao ha protecao write-once: a spec exige que a selecao possa
+ * mudar de um assunto para outro. O isolamento por clinica na FK composta
+ * `(paciente_id, clinica_id) references pacientes(id, clinica_id)` e a
+ * segunda camada de defesa -- a primeira e `validarEscolhaPaciente`
+ * (interpretar-e-aplicar.ts), que so oferece IDs da lista fresca do contato.
+ */
+export async function gravarSelecaoPaciente(
   cliente: ClienteBancoDados,
   clinicaId: string,
   telefoneNormalizado: string,
-  pacienteId: string,
-  estadoAtual: LinhaEstadoConversa
-): Promise<LinhaEstadoConversa> {
-  // A condicao paciente_id IS NULL faz parte do WHERE da propria atualizacao:
-  // sob concorrencia, so a primeira chamada encontra a linha (paciente_id
-  // ainda nulo) e a atualiza; a segunda nao encontra nenhuma linha (o
-  // paciente_id ja deixou de ser nulo) e cai na reconsulta abaixo — nunca
-  // sobrescrevendo o vinculo que a primeira acabou de criar.
-  const { data: atualizada, error: erroUpdate } = await cliente
+  pacienteId: string | null
+): Promise<void> {
+  const { error } = await cliente
     .from('estado_conversa')
     .update({ paciente_id: pacienteId })
     .eq('clinica_id', clinicaId)
     .eq('telefone_normalizado', telefoneNormalizado)
-    .is('paciente_id', null)
-    .select(COLUNAS_ESTADO_CONVERSA)
+    .select('id')
     .maybeSingle();
 
-  if (erroUpdate) throw new Error(`falha ao vincular paciente ao estado da conversa: ${erroUpdate.message}`);
-  if (atualizada) return validarLinhaEstadoConversa(atualizada);
-
-  const { data: reconsultada, error: erroReconsulta } = await cliente
-    .from('estado_conversa')
-    .select(COLUNAS_ESTADO_CONVERSA)
-    .eq('clinica_id', clinicaId)
-    .eq('telefone_normalizado', telefoneNormalizado)
-    .maybeSingle();
-
-  if (erroReconsulta) throw new Error(`falha ao reconsultar estado da conversa apos vinculo: ${erroReconsulta.message}`);
-  return reconsultada ? validarLinhaEstadoConversa(reconsultada) : estadoAtual;
+  if (error) throw new Error(`falha ao gravar selecao de paciente: ${error.message}`);
 }

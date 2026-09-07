@@ -160,10 +160,51 @@ export interface CadastroPaciente {
   email?: string;
 }
 
+/**
+ * Vinculo ESTRUTURAL do paciente com o contato de WhatsApp
+ * (specs/contato-multiplos-pacientes-v1.md secao 3.4). Vocabulario fechado,
+ * decidido no cadastro -- nunca inferido de texto, nunca um grau de
+ * parentesco livre.
+ *
+ * - `titular`: paciente com telefone proprio, e o contato de si mesmo (o
+ *   caso comum, 1 contato = 1 paciente). Todo paciente migrado nasce assim.
+ * - `dependente`: paciente sem telefone proprio, administrado por outro
+ *   contato (o caso da Marta agendada pelo Carlos).
+ */
+export type VinculoPaciente = 'titular' | 'dependente';
+
+/** Um paciente vinculado a um contato -- item de `ResultadoIdentificacao.pacientes`. */
+export interface PacienteDoContato {
+  paciente_id: string;
+  nome: string;
+  vinculo: VinculoPaciente;
+}
+
 export interface ResultadoIdentificacao {
   clinica_id: string;
+  /**
+   * Contato de WhatsApp desta conversa
+   * (specs/contato-multiplos-pacientes-v1.md secao 5.1). Resolvido/criado
+   * por `(clinica_id, telefone_normalizado)`. Um contato pode ter 0, 1 ou N
+   * pacientes vinculados.
+   */
+  contato_id: string;
+  /**
+   * Todos os pacientes vinculados a `contato_id`, na ordem retornada pelo
+   * banco. `[]` quando o contato ainda nao tem nenhum paciente. Contexto
+   * para a interpretadora escolher "para quem e o atendimento" quando ha
+   * mais de um (nunca pergunta em aberto por si so).
+   */
+  pacientes: readonly PacienteDoContato[];
   paciente: {
     encontrado: boolean;
+    /**
+     * Paciente RESOLVIDO para este turno: preenchido quando o contato tem
+     * exatamente 1 paciente, OU quando `estado_conversa.paciente_id`
+     * (reutilizado como selecao, spec secao 4.4) ja aponta para um vinculo
+     * valido deste contato. `null` quando ha ambiguidade (0 ou >1 sem
+     * selecao) -- o orquestrador decide o proximo passo.
+     */
     id: string | null;
     /**
      * Cadastro oficial ja persistido. `{}` quando o paciente nao existe ou
@@ -279,6 +320,28 @@ export type CampoDadosConversa =
   // fora da lista oficialmente oferecida neste turno (interpretar-e-
   // aplicar.ts) -- nunca adivinha, nunca interpreta referencia textual.
   | 'agendamento_id'
+  // Paciente que o contato quer atender, quando o contato tem mais de um
+  // vinculado (specs/contato-multiplos-pacientes-v1.md secao 3.2). AO
+  // CONTRARIO de `dentista_id`, a IA emite este campo DIRETAMENTE -- mesmo
+  // contrato de `agendamento_id`. O Core NUNCA aceita um valor fora da lista
+  // fresca de pacientes do contato (validarEscolhaPaciente,
+  // interpretar-e-aplicar.ts) -- nunca adivinha, nunca interpreta referencia
+  // textual. Escrito em `dados` e lido pelo orquestrador para gravar a
+  // selecao em `estado_conversa.paciente_id`; limpo ao concluir o fluxo.
+  | 'paciente_id'
+  // Resposta a pergunta "numero proprio vs. vinculado ao contato atual" para
+  // uma pessoa que nao esta na lista do contato (spec secao 4.5). Vocabulario
+  // FECHADO ('dependente' | 'numero_proprio'), mesmo padrao de
+  // `confirmacao`/`intencao`. PERSISTE entre turnos (como `intencao`): a
+  // resposta pode vir num turno e o telefone no seguinte. Limpo ao concluir
+  // ou desistir do fluxo de "outra pessoa".
+  | 'vinculo_novo_paciente'
+  // Telefone informado para a pessoa nova, quando `vinculo_novo_paciente =
+  // 'numero_proprio'` (spec secao 4.5). NUNCA confundido com troca de
+  // telefone de paciente existente (`troca_telefone_pendente`). Mesmo
+  // formato E.164 ja exigido no cadastro. PERSISTE entre turnos; limpo com
+  // `vinculo_novo_paciente`.
+  | 'telefone_novo_paciente'
   | 'data_texto'
   | 'periodo'
   | 'horario_texto'

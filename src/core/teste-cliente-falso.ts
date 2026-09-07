@@ -252,7 +252,7 @@ export class ClienteFalso implements ClienteBancoDados {
           nome === 'estado_conversa'
             ? { atualizado_em: new Date().toISOString(), paciente_id: null }
             : {};
-        const nova = { id: crypto.randomUUID(), ...padroes, ...valores };
+        const nova: Record<string, unknown> = { id: crypto.randomUUID(), ...padroes, ...valores };
         linhas.push(nova);
 
         // CONVENIENCIA DE TESTE (2026-09-07, spec contato-multiplos-pacientes):
