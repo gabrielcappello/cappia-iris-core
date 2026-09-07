@@ -1,8 +1,10 @@
 # Handoff — implementação de `specs/contato-multiplos-pacientes-v1.md`
 
-**Data:** 2026-09-07 (5ª rodada, após 4ª revisão do Codex)
+**Data:** 2026-09-07 (6ª rodada, após 5ª revisão do Codex)
 **Branch:** `feat/contato-multiplos-pacientes` (a partir de `main`)
-**Estado:** **escopo funcional da spec fechado.** Aguardando 5ª revisão do Codex.
+**Estado:** **escopo funcional da spec fechado e aprovado na 5ª revisão** (código
+de produção **congelado**). 6ª rodada mexeu **apenas** nas migrations. Aguardando
+revisão final do Codex.
 Nada aplicado em banco, nenhum push/merge/deploy, nenhuma chamada paga à IA.
 
 ## O que foi feito
@@ -42,7 +44,17 @@ V2 · remoção das 2 frases fixas · cabeçalho da migration.
 | # | Bloqueador | Como ficou |
 |---|---|---|
 | 1 | Cadastro novo com número próprio perde dados acumulados em turnos anteriores | A segunda limpeza (`limparSnapshotDoPacienteAnterior` **dentro** de `decidirCadastroPacienteNumeroProprio`, que rodava **incondicionalmente** após criar o paciente e só preservava o que o turno atual emitiu) agora só roda quando ela ainda é **devida**: `limparPacienteAnterior = selecaoGravada !== null && !fluxoOutraPessoaJaAbertoAntesDoTurno`. Depois que o fluxo "outra pessoa" abriu, o `dados` acumulado (nome, cpf, nascimento, procedimento, data — que chegam em turnos diferentes) é da **própria pessoa nova** e **não** é apagado. A limpeza "upfront" também ganhou a guarda `!fluxoOutraPessoaJaAbertoAntesDoTurno` (novo ctx computado em `decidir`: campo em `dados` **e não** emitido neste turno) — só desacopla do paciente anterior **uma vez**, no turno em que o fluxo abre. Teste novo **realmente multi-turno**: `numero_proprio` com nome, nascimento, cpf, procedimento e data chegando em turnos separados → `reserva_criada` **sem repetir** procedimento/data/cadastro; `persistirPaciente` chamada **uma** vez (o INSERT), no contato de destino. |
-| 2 | O plano A/B/C não era executável (arquivo único; Fase A mantinha a UNIQUE de telefone) | A migration foi **fisicamente dividida em dois arquivos** (`..._fase_a.sql` aditiva, `..._fase_c.sql` destrutiva). O arquivo único `20260907120000_..._v1.sql` foi **removido**. Cada fase tem **rollback executável próprio** no rodapé, válido antes de qualquer dado novo. Deixado explícito: a **UNIQUE `(clinica_id, telefone_normalizado)` só sai na Fase C**, então **entre B e C a criação de dependente com telefone duplicado ainda não funciona** — a feature só fica pronta com a Fase C; nada regride no intervalo. Sequência A → B → C em janela controlada, **sem teste entre B e C**. Detalhe na seção "Caminho mínimo de deploy/rollback" abaixo. |
+| 2 | O plano A/B/C não era executável (arquivo único; Fase A mantinha a UNIQUE de telefone) | A migration foi **fisicamente dividida em dois arquivos** (`..._fase_a.sql` aditiva, `..._fase_c.sql` destrutiva). O arquivo único `20260907120000_..._v1.sql` foi **removido**. Deixado explícito: a **UNIQUE `(clinica_id, telefone_normalizado)` só sai na Fase C**, então **entre B e C a criação de dependente com telefone duplicado ainda não funciona** — a feature só fica pronta com a Fase C; nada regride no intervalo. Sequência A → B → C em janela controlada, **sem teste entre B e C**. *(A 6ª rodada endereçou o restante — ver abaixo.)* |
+
+### 6ª rodada — 3 bloqueadores operacionais de migration (5ª revisão)
+
+**Código de produção NÃO tocado** (aprovado na 5ª revisão). Só migrations + handoff.
+
+| # | Bloqueador | Como ficou |
+|---|---|---|
+| 1 | A CLI (`supabase db push`) aplica **todas** as pendentes — não dá para parar após a Fase A | A Fase C **saiu de `src/supabase/migrations/`** para `src/supabase/migrations-pendentes-fase-c/` (fora do path escaneado pela CLI). Sequência real: `db push` aplica **só a Fase A**; depois do deploy B, um **comando único não-interativo** promove a Fase C — `git mv src/supabase/migrations-pendentes-fase-c/*.sql src/supabase/migrations/` — e um novo `db push` a aplica como **única** pendente. Sem seleção manual arriscada. |
+| 2 | Entre A e B a v114 ainda insere paciente sem `contato_id` | A **Fase C repete o backfill** imediatamente antes do `SET NOT NULL`: `INSERT` das linhas de contato que faltarem + `UPDATE` dos pacientes órfãos, e uma **guarda `RAISE` que aborta a transação se restar algum `contato_id IS NULL`**. |
+| 3 | O rollback da Fase C não era executável ("colar o `CREATE OR REPLACE`") | Rollbacks agora são **arquivos dedicados, diretamente executáveis**: `src/supabase/rollbacks/20260907120000_..._v1_fase_a_rollback.sql` e `src/supabase/migrations-pendentes-fase-c/20260907130000_..._v1_fase_c_rollback.sql`. O da Fase C **contém a definição COMPLETA da RPC de 6 params** (corpo idêntico ao de `20260809120000_...`), na ordem correta (UNIQUEs de telefone → FK de `estado_conversa` → `DROP NOT NULL` → RPC de 6 → drop da de 9). Os blocos comentados de rollback no rodapé das migrations foram substituídos por um ponteiro para esses arquivos. |
 
 ## Arquivos alterados
 
@@ -63,13 +75,21 @@ teste da frente (teste 19 A/B + 3 testes) · Edge (paridade).
 |---|---|
 | `src/core/orquestrador.ts` | `decidirCadastroPacienteNumeroProprio` recebe `limparPacienteAnterior: boolean` — a limpeza pós-criação só roda quando ainda devida (`selecaoGravada !== null && !fluxoOutraPessoaJaAbertoAntesDoTurno`). `resolverSelecaoDePaciente` recebe `fluxoOutraPessoaJaAbertoAntesDoTurno`; a limpeza "upfront" ganhou a mesma guarda. `decidir` computa `fluxoOutraPessoaJaAbertoAntesDoTurno` (campo em `dados` **e não** emitido neste turno). |
 | `src/core/orquestrador-contato-multiplos-pacientes.test.ts` | +1 teste (multi-turno real "número próprio", cadastro + operacional em turnos separados → `reserva_criada` sem repetição). **26 testes** no arquivo. |
-| `src/supabase/migrations/20260907120000_..._v1.sql` | **removido** — substituído por dois arquivos. |
-| `src/supabase/migrations/20260907120000_..._v1_fase_a.sql` | **novo** — migration aditiva (v114-compatível) + rollback executável no rodapé. |
-| `src/supabase/migrations/20260907130000_..._v1_fase_c.sql` | **novo** — migration destrutiva (janela controlada após deploy B) + rollback executável no rodapé. |
+| `src/supabase/migrations/20260907120000_..._v1.sql` | **removido** — substituído por Fase A + Fase C. |
 | `supabase/functions/iris-nova-mensagem/orquestrador.ts` | paridade — cópia byte a byte. |
+
+### 6ª rodada — só migrations
+| Arquivo | Mudança |
+|---|---|
+| `src/supabase/migrations/20260907120000_..._v1_fase_a.sql` | **atualizado** — cabeçalho descreve o esquema de dois diretórios; bloco de rollback comentado no rodapé substituído por ponteiro para o arquivo dedicado. |
+| `src/supabase/rollbacks/20260907120000_..._v1_fase_a_rollback.sql` | **novo** — rollback da Fase A, diretamente executável. |
+| `src/supabase/migrations-pendentes-fase-c/20260907130000_..._v1_fase_c.sql` | **movido** de `migrations/` para cá (fora do path da CLI) + **re-backfill + guarda `RAISE`** antes do `SET NOT NULL`; rollback comentado substituído por ponteiro. |
+| `src/supabase/migrations-pendentes-fase-c/20260907130000_..._v1_fase_c_rollback.sql` | **novo** — rollback da Fase C, diretamente executável, **com a RPC de 6 params completa**. |
 
 ## Verificação
 
+- **Código de produção da 6ª rodada:** nenhuma mudança (congelado após a
+  aprovação da 5ª revisão). Os números abaixo são os da 5ª rodada, inalterados.
 - **Testes (suite completa):** `node --test "core/**/*.test.ts"` —
   **1786 pass / 0 fail / 7 skip** (1793 testes; os 7 skip são `AGUARDA_MIGRATION`).
 - **Runner focado da frente:** `node --test core/orquestrador-contato-multiplos-pacientes.test.ts`
@@ -96,50 +116,67 @@ produção hoje) usa —
   que **exige** essa UNIQUE — removê-la quebra a v114;
 - troca a FK `estado_conversa_paciente_clinica_telefone_fk` pela forma sem telefone.
 
-Como não dá para aplicar "partes" de um arquivo único com segurança, a
-migration foi **fisicamente dividida em duas**:
+Como não dá para aplicar "partes" de um arquivo único com segurança, **e a
+CLI Supabase (≥ 2.111.0) não tem opção de parar após a primeira migration
+pendente** (`supabase db push` aplica todas as pendentes em
+`src/supabase/migrations/`), a migration foi **dividida em dois arquivos, em
+diretórios diferentes**:
 
-| Arquivo | Papel |
-|---|---|
-| `src/supabase/migrations/20260907120000_iris_nova_contato_multiplos_pacientes_v1_fase_a.sql` | **Fase A — aditiva.** `contatos_whatsapp`; `pacientes.contato_id` (NULLABLE) + `vinculo`; backfill + guarda `RAISE`; `pacientes_id_clinica_key`; FK `pacientes_contato_clinica_fk`; índice `pacientes_contato_id_idx`; RPC de **9 params `CREATE OR REPLACE` AO LADO** da de 6 (nenhum `DROP`). Não remove nada — a v114 continua íntegra. |
-| `src/supabase/migrations/20260907130000_iris_nova_contato_multiplos_pacientes_v1_fase_c.sql` | **Fase C — destrutiva.** Troca a FK de `estado_conversa`; `DROP` das UNIQUEs de telefone de `pacientes`; `SET NOT NULL` em `contato_id`; `DROP FUNCTION` da RPC de 6 params. |
+| Arquivo | Diretório | Papel |
+|---|---|---|
+| `20260907120000_..._v1_fase_a.sql` | `src/supabase/migrations/` (já no path que a CLI escaneia) | **Fase A — aditiva.** `contatos_whatsapp`; `pacientes.contato_id` (NULLABLE) + `vinculo`; backfill + guarda `RAISE`; `pacientes_id_clinica_key`; FK `pacientes_contato_clinica_fk`; índice `pacientes_contato_id_idx`; RPC de **9 params `CREATE OR REPLACE` AO LADO** da de 6 (nenhum `DROP`). Não remove nada — a v114 continua íntegra. |
+| `20260907130000_..._v1_fase_c.sql` + seu rollback | `src/supabase/migrations-pendentes-fase-c/` (**fora** do path da CLI) | **Fase C — destrutiva.** Re-backfill + guarda `RAISE` antes do `SET NOT NULL`; troca a FK de `estado_conversa`; `SET NOT NULL` em `contato_id`; `DROP` das UNIQUEs de telefone de `pacientes`; `DROP FUNCTION` da RPC de 6 params. |
 
-### Sequência obrigatória: A → B → C, em janela controlada
+Rollbacks — **arquivos dedicados, diretamente executáveis** (nada a colar):
+- `src/supabase/rollbacks/20260907120000_..._v1_fase_a_rollback.sql`;
+- `src/supabase/migrations-pendentes-fase-c/20260907130000_..._v1_fase_c_rollback.sql`
+  (acompanha a migration da Fase C; **contém a definição COMPLETA da RPC de
+  6 params**).
 
-1. **Fase A** (`..._fase_a.sql`). A v114 continua funcionando; **nada regride**.
-   *Rollback da fase A* (bloco `-- ROLLBACK DA FASE A` no rodapé do arquivo,
-   executável): `DROP` da RPC de 9 params, `DROP` do índice e das 2 constraints
-   novas, `DROP COLUMN vinculo, contato_id`, `DROP TABLE contatos_whatsapp`.
-   Nenhuma linha da v114 tocada — reversível sem downtime.
+### Sequência obrigatória: A → B → C (janela controlada, sem seleção manual)
+
+1. **Fase A** — `supabase db push`. A Fase C nem está no diretório escaneado,
+   então **só a Fase A é aplicada**. A v114 continua funcionando; **nada
+   regride**. *Rollback:* aplicar
+   `src/supabase/rollbacks/20260907120000_..._v1_fase_a_rollback.sql`
+   (executável; nenhuma linha da v114 tocada — reversível sem downtime).
 
 2. **Deploy B** — código Core/Edge desta branch. A partir daqui o código novo
    chama **só** a RPC de 9 params e assume `contato_id`.
    **A funcionalidade "dependente / outra pessoa com o mesmo número" AINDA NÃO
    funciona entre B e C:** o INSERT de um segundo paciente com o telefone do
    titular colide com a UNIQUE `(clinica_id, telefone_normalizado)` que só a
-   fase C remove. **Nada regride** nesse intervalo — a feature é nova.
-   *Rollback da fase B:* redeploy da v114 (a fase A é retrocompatível — a RPC
+   Fase C remove. **Nada regride** nesse intervalo — a feature é nova.
+   *Rollback da fase B:* redeploy da v114 (a Fase A é retrocompatível — a RPC
    de 6 params e as UNIQUEs ainda existem).
 
-3. **Fase C** (`..._fase_c.sql`) — aplicar **imediatamente após B, SEM TESTE
-   ENTRE B E C** (o teste da sequência inteira já foi feito no branch
-   descartável). Só depois de C a funcionalidade está pronta.
-   *Rollback da fase C* (bloco `-- ROLLBACK DA FASE C` no rodapé do arquivo,
-   executável): recriar a RPC de 6 params (colar de
-   `20260809120000_iris_nova_persistencia_paciente_v1.sql`), `SET NOT NULL`
-   revertido, recriar as UNIQUEs de telefone, reverter a FK de `estado_conversa`.
-   **Válido apenas enquanto nenhum dado novo do modelo multi-paciente existir**
-   (nenhum dependente com telefone duplicado, nenhuma seleção cross-contato
-   gravada) — depois disso haverá linhas que violam as UNIQUEs recriadas, e o
-   rollback deixa de ser seguro.
+3. **Fase C** — promover o arquivo para o path da CLI com **um comando único e
+   não-interativo** e aplicar, **imediatamente após B, SEM TESTE ENTRE B E C**
+   (o teste da sequência inteira já foi feito no branch descartável):
+   ```
+   git mv src/supabase/migrations-pendentes-fase-c/*.sql src/supabase/migrations/
+   supabase db push
+   ```
+   Nesse momento a Fase C é a **única** migration pendente — não há seleção
+   manual. O rollback da Fase C (`..._fase_c_rollback.sql`, mover junto para
+   `src/supabase/rollbacks/`) é **diretamente executável** e recria a RPC de
+   6 params por inteiro. **Válido apenas enquanto nenhum dado novo do modelo
+   multi-paciente existir** (nenhum dependente com telefone duplicado, nenhuma
+   seleção cross-contato gravada) — depois disso haverá linhas que violam as
+   UNIQUEs recriadas, e o rollback deixa de ser seguro.
+
+**Entre A e B a v114 ainda insere paciente sem `contato_id`** (a RPC de 6
+params não preenche a coluna). Por isso a **Fase C repete o backfill** —
+`INSERT` dos contatos que faltarem + `UPDATE` dos pacientes órfãos — e roda
+uma **guarda `RAISE` que aborta se restar algum `contato_id IS NULL`**,
+imediatamente antes do `SET NOT NULL`.
 
 **Pré-condição já verificada (spec seção 2.2):** os pacientes atuais têm
-`telefone_normalizado` — o backfill não encontra `contato_id` nulo. O `RAISE`
-de guarda na fase A cobre o caso futuro.
+`telefone_normalizado`.
 
-**Nada disso foi executado.** Os dois arquivos são candidatos locais; a
-aplicação depende de autorização explícita por ação e de teste prévio da
-sequência A→B→C num branch descartável do Supabase de dev.
+**Nada disso foi executado.** Os arquivos são candidatos locais; a aplicação
+depende de autorização explícita por ação e de teste prévio da sequência
+A→B→C num branch descartável do Supabase de dev.
 
 ## O que continua pendente (NÃO são requisitos funcionais da spec)
 
@@ -175,25 +212,25 @@ sequência A→B→C num branch descartável do Supabase de dev.
   medição com IA real mostrar falta de contexto, um marcador no payload é a
   extensão aditiva natural.
 
-## Para o Codex revisar (5ª rodada)
+## Para o Codex revisar (6ª rodada — só migrations)
 
-- Bloqueador 1 (número próprio multi-turno): a segunda limpeza em
-  `decidirCadastroPacienteNumeroProprio` só roda quando `selecaoGravada !== null
-  && !fluxoOutraPessoaJaAbertoAntesDoTurno`; a limpeza "upfront" ganhou a mesma
-  guarda. Depois que o fluxo "outra pessoa" abriu, o `dados` acumulado é da
-  pessoa nova e não é apagado. Teste novo dirige nome/nascimento/cpf/
-  procedimento/data em turnos separados → `reserva_criada` sem repetição,
-  1 chamada de `persistirPaciente` no contato de destino.
-- Bloqueador 2 (plano A/B/C executável): dois arquivos físicos
-  (`..._fase_a.sql` / `..._fase_c.sql`); o único foi removido. A UNIQUE
-  `(clinica_id, telefone_normalizado)` sai só na Fase C — a feature de
-  dependente com telefone duplicado só fica pronta com a Fase C; nada regride
-  entre B e C. Rollback executável no rodapé de cada arquivo, válido antes de
-  qualquer dado novo. Sequência A → B → C sem teste entre B e C.
-- Rodadas anteriores (mantidas): identidade efetiva
-  (`contatoDoSelecionado`/`telefoneDoSelecionado`) até persistência/reserva/
-  correção cadastral; snapshot do paciente anterior limpo no 1º turno
-  `atendimento_para_terceiro`; `catch {}` da limpeza da seleção ao concluir
-  removido (propaga).
+- **Bloqueador 1** (seleção manual arriscada): a Fase C está em
+  `src/supabase/migrations-pendentes-fase-c/`, **fora** do path que
+  `supabase db push` escaneia. `db push` aplica só a Fase A. Depois do deploy
+  B, `git mv src/supabase/migrations-pendentes-fase-c/*.sql
+  src/supabase/migrations/` + `db push` — Fase C é a única pendente. Um comando
+  não-interativo, sem seleção.
+- **Bloqueador 2** (v114 insere sem `contato_id` entre A e B): a Fase C
+  **repete o backfill** (INSERT dos contatos faltantes + UPDATE dos órfãos) e
+  roda uma **guarda `RAISE` que aborta se restar `contato_id IS NULL`**,
+  imediatamente antes do `SET NOT NULL`.
+- **Bloqueador 3** (rollback da Fase C não-executável): rollbacks são
+  **arquivos dedicados diretamente executáveis**
+  (`src/supabase/rollbacks/..._fase_a_rollback.sql`,
+  `src/supabase/migrations-pendentes-fase-c/..._fase_c_rollback.sql`). O da
+  Fase C tem a **RPC de 6 params por inteiro** e a ordem correta (UNIQUEs de
+  telefone → FK de `estado_conversa` → `DROP NOT NULL` → recria RPC de 6 →
+  drop da de 9).
+- Código de produção **não foi tocado** nesta rodada (aprovado na 5ª revisão).
 - As pendências abaixo: confirmar que são de execução (banco/IA/tipagem de
   dublê), não de spec.

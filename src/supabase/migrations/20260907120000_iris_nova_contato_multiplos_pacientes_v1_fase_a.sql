@@ -9,40 +9,54 @@
 --   1. teste real num BRANCH descartavel do Supabase de dev (bcmuqautblvjdqzhjfbw);
 --   2. autorizacao explicita do Gabriel, por acao, antes de aplicar em QUALQUER projeto.
 --
--- ── POR QUE DUAS FASES FISICAS (A e C) ──────────────────────────────────
+-- ── POR QUE DUAS FASES, EM DIRETORIOS DIFERENTES ───────────────────────
 -- A migration original era um arquivo unico que, no MESMO commit de schema,
 -- (a) adicionava contatos_whatsapp/contato_id/vinculo E (b) removia a RPC de
 -- 6 params e as UNIQUEs de telefone de `pacientes` -- constraints das quais o
 -- codigo em producao (v114) DEPENDE (a RPC antiga faz `INSERT ... ON CONFLICT
 -- (clinica_id, telefone_normalizado)`, que exige a UNIQUE). Aplicar "partes"
--- de um arquivo unico nao e seguro; por isso: dois arquivos.
+-- de um arquivo unico nao e seguro.
 --
---   FASE A (este arquivo) -- ADITIVA, retrocompativel com a v114:
---     cria contatos_whatsapp; adiciona pacientes.contato_id (NULLABLE) e
---     pacientes.vinculo; backfill; UNIQUE pacientes (id, clinica_id); FK
---     composta de contato_id; indice; e CRIA a RPC de 9 params AO LADO da de
---     6 params (nenhum DROP). NADA que a v114 usa e removido -- as UNIQUEs de
---     telefone e a FK de estado_conversa continuam intactas.
+-- A CLI Supabase (>= 2.111.0) NAO tem opcao de "parar apos a primeira":
+-- `supabase db push` aplica TODAS as migrations pendentes em
+-- src/supabase/migrations/. Para forcar A -> deploy B -> C fisicamente:
 --
---   FASE C (20260907130000_..._v1_fase_c.sql) -- DESTRUTIVA, janela controlada:
---     troca a FK de estado_conversa; remove as UNIQUEs de telefone de
---     pacientes; aplica NOT NULL em contato_id; DROP da RPC de 6 params.
+--   FASE A (este arquivo, JA em src/supabase/migrations/) -- ADITIVA,
+--     retrocompativel com a v114: cria contatos_whatsapp; adiciona
+--     pacientes.contato_id (NULLABLE) e pacientes.vinculo; backfill; UNIQUE
+--     pacientes (id, clinica_id); FK composta de contato_id; indice; e CRIA a
+--     RPC de 9 params AO LADO da de 6 params (nenhum DROP). NADA que a v114
+--     usa e removido -- as UNIQUEs de telefone e a FK de estado_conversa
+--     continuam intactas. `db push` aplica SO esta fase (a fase C ainda nem
+--     esta no diretorio scaneado).
+--
+--   FASE C -- DESTRUTIVA. Fica em src/supabase/migrations-pendentes-fase-c/
+--     (fora do diretorio que a CLI escaneia). So entra em
+--     src/supabase/migrations/ DEPOIS do deploy B, por um comando unico e
+--     nao-interativo:
+--       git mv src/supabase/migrations-pendentes-fase-c/*.sql src/supabase/migrations/
+--     e so entao um novo `supabase db push` a aplica -- e ela e a unica
+--     pendente nesse momento. Sem selecao manual arriscada.
 --
 -- ── SEQUENCIA OBRIGATORIA: A -> B -> C, em JANELA CONTROLADA ─────────────
---   A. aplicar esta fase (v114 continua funcionando; nada regride);
+--   A. `supabase db push` -> aplica SO esta fase (v114 continua funcionando;
+--      nada regride);
 --   B. deploy do codigo desta frente (Core + Edge). A partir daqui o codigo
 --      novo chama SO a RPC de 9 params. A funcionalidade de "dependente /
 --      outra pessoa" que INSERE paciente com telefone ja usado por outro
 --      AINDA NAO funciona -- ela colide com a UNIQUE (clinica_id,
 --      telefone_normalizado) que so a fase C remove. Nada REGRIDE nesse
 --      intervalo (a feature e nova);
---   C. aplicar a fase C IMEDIATAMENTE apos B, sem teste entre B e C
---      (o teste ja foi feito no branch descartavel). So depois de C a
---      funcionalidade esta pronta.
+--   C. `git mv` a fase C para src/supabase/migrations/ e `supabase db push`
+--      de novo, IMEDIATAMENTE apos B, sem teste entre B e C (o teste da
+--      sequencia inteira ja foi feito no branch descartavel). So depois de C
+--      a funcionalidade esta pronta.
 --
--- Rollback de cada fase: bloco -- ROLLBACK no rodape do respectivo arquivo,
--- executavel, valido ENQUANTO nenhum dado novo do modelo multi-paciente
--- existir (nenhum dependente criado, nenhuma selecao cross-contato gravada).
+-- Rollback de cada fase: arquivo dedicado, diretamente executavel, em
+-- src/supabase/rollbacks/ (fase A) e
+-- src/supabase/migrations-pendentes-fase-c/ (fase C, ao lado da migration).
+-- Valido ENQUANTO nenhum dado novo do modelo multi-paciente existir (nenhum
+-- dependente criado, nenhuma selecao cross-contato gravada).
 --
 -- ── PRE-CONDICAO VERIFICADA (leitura de producao, 2026-09-07 -- spec 2.2) ──
 -- Os 21 pacientes hoje em udizowyfjnhuhgxkeayk tem todos telefone_normalizado
@@ -258,17 +272,6 @@ grant execute on function public.cappia_persistir_paciente(uuid, uuid, text, tex
 
 commit;
 
--- ── ROLLBACK DA FASE A (executavel; valido ENQUANTO nenhum dado novo do
---    modelo multi-paciente existir: nenhum registro em contatos_whatsapp
---    alem do backfill, nenhum pacientes.vinculo = 'dependente', nenhuma
---    escrita de pacientes.contato_id fora do backfill) ────────────────────
--- Ordem inversa. Nao toca a v114 (nada dela foi removido pela FASE A).
---
--- begin;
---   drop function if exists public.cappia_persistir_paciente(uuid, uuid, text, text, text, uuid, text, date, text);
---   drop index if exists public.pacientes_contato_id_idx;
---   alter table public.pacientes drop constraint pacientes_contato_clinica_fk;
---   alter table public.pacientes drop constraint pacientes_id_clinica_key;
---   alter table public.pacientes drop column vinculo, drop column contato_id;
---   drop table public.contatos_whatsapp;
--- commit;
+-- ── ROLLBACK: arquivo dedicado, diretamente executavel, em
+--    src/supabase/rollbacks/20260907120000_iris_nova_contato_multiplos_pacientes_v1_fase_a_rollback.sql
+--    (valido enquanto nenhum dado novo do modelo multi-paciente existir).
