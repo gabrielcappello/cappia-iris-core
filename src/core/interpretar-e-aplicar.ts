@@ -405,10 +405,19 @@ function validarEscolhaAgendamento(
   const idsAtivos = new Set((agendamentosAtivos ?? []).map((item) => item.agendamento_id));
   if (idsAtivos.has(alteracao.valor as string)) return alteracoes;
 
+  // Precedencia de tres vias, nunca duas (achado do Codex): ausente ->
+  // snapshot decide; informada/corrigida -> o novo valor decide; REMOVIDA
+  // explicitamente -> ausente de verdade, sem cair de volta no snapshot. Um
+  // `??` simples confundia "nao mencionada agora" com "removida agora" --
+  // as duas colapsavam no mesmo `undefined`, e a remocao explicita acabava
+  // recuperando a intencao antiga do snapshot por engano.
   const alteracaoIntencao = alteracoes.intencao;
-  const intencaoEmitidaAgora =
-    alteracaoIntencao !== undefined && alteracaoIntencao.acao !== 'remover' ? alteracaoIntencao.valor : undefined;
-  const intencaoEfetiva = intencaoEmitidaAgora ?? snapshotOficial.intencao;
+  const intencaoEfetiva =
+    alteracaoIntencao === undefined
+      ? snapshotOficial.intencao
+      : alteracaoIntencao.acao === 'remover'
+        ? undefined
+        : alteracaoIntencao.valor;
 
   if (intencaoEfetiva === 'remarcacao') {
     const idsDoPaciente = new Set((agendamentosDoPaciente ?? []).map((item) => item.agendamento_id));

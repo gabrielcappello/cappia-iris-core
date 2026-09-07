@@ -194,6 +194,39 @@ test('mesmo ID REAL emitido SEM intencao de remarcacao (nem snapshot, nem turno 
   assert.equal(resultado.aplicacao?.dados.agendamento_id, undefined);
 });
 
+// BLOQUEADOR CORRIGIDO (achado do Codex): a precedencia antiga era so DUAS
+// vias (intencao emitida agora ?? snapshot), e um `??` simples confundia
+// "intencao nao mencionada agora" com "intencao REMOVIDA agora" -- as duas
+// colapsavam no mesmo `undefined`, entao remover a intencao explicitamente
+// recuperava por engano a 'remarcacao' antiga do snapshot. Precisa ser TRES
+// vias: ausente -> snapshot decide; informada/corrigida -> o novo valor
+// decide; REMOVIDA -> intencao efetiva ausente, SEM fallback para o
+// snapshot.
+test('snapshot com intencao=remarcacao, turno REMOVE intencao e emite ID real de agendamentos_do_paciente: descartado (nao recupera a intencao antiga)', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const conversa = semearEstado(tabelas, { intencao: 'remarcacao' }); // snapshot JA era remarcacao
+  const cliente = new ClienteFalso(tabelas);
+
+  const resultado = await interpretarEAplicar(
+    clienteModeloComResposta({
+      natureza_mensagem: 'correcao',
+      alteracoes: {
+        intencao: { acao: 'remover' },
+        agendamento_id: { acao: 'informar', valor: AG_2 },
+      },
+      eventos_candidatos: [],
+      dentistas_candidatos: null,
+    }),
+    cliente,
+    contexto(conversa.id, ['na verdade deixa quieto, so queria saber o preco'], {
+      agendamentos_do_paciente: AGENDAMENTOS_DO_PACIENTE,
+    })
+  );
+
+  assert.equal(resultado.alteracoes_aplicaveis.agendamento_id, undefined);
+  assert.equal(resultado.aplicacao?.dados.agendamento_id, undefined);
+});
+
 test('agendamento_id FORA de agendamentos_do_paciente (id inventado ou de outro paciente/clinica): descartado, nunca persistido', async () => {
   const tabelas = criarTabelasFalsasVazias();
   const conversa = semearEstado(tabelas, { intencao: 'remarcacao' });
