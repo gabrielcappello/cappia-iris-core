@@ -82,7 +82,8 @@ export type ObjetivoResposta =
   | 'informar_correcao_cadastro_invalida' // 2026-09-01 -- idem, valor rejeitado.
   | 'pedir_um_procedimento_por_vez' // 2026-09-05 -- specs/multiplos-procedimentos-mesmo-turno-v1.md.
   | 'escolher_entre_pacientes' // 2026-09-07 -- specs/contato-multiplos-pacientes-v1.md secao 4.5.
-  | 'pedir_vinculo_paciente_novo'; // 2026-09-07 -- idem, pergunta numero proprio vs. vinculado.
+  | 'pedir_vinculo_paciente_novo' // 2026-09-07 -- idem, pergunta numero proprio vs. vinculado.
+  | 'pedir_telefone_paciente_novo'; // 2026-09-07 -- idem, pede o numero da pessoa nova.
 
 export interface FatosAutorizados {
   objetivo: ObjetivoResposta;
@@ -684,6 +685,11 @@ function derivarPorDecisao(decisao: DecisaoOrquestrador, dataHoje: string): Fato
     // mesma e nenhum dado da pessoa entra aqui.
     case 'pedir_vinculo_paciente_novo':
       return { objetivo: 'pedir_vinculo_paciente_novo' };
+
+    // Pede o numero de WhatsApp da pessoa nova (spec secao 4.5, passo 4).
+    // SEM fato.
+    case 'pedir_telefone_paciente_novo':
+      return { objetivo: 'pedir_telefone_paciente_novo' };
 
     case 'aguardando_procedimento':
       // O OBJETIVO NAO MUDA (2026-08-30): o que esta resposta precisa alcancar

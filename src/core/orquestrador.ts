@@ -1,4 +1,9 @@
-import { identificarConversa, gravarSelecaoPaciente } from './identificacao.ts';
+import {
+  identificarConversa,
+  gravarSelecaoPaciente,
+  resolverContatoDeDestino,
+  resolverOuCriarContatoParaCadastro,
+} from './identificacao.ts';
 import { interpretarEAplicar } from './interpretar-e-aplicar.ts';
 import { resolverDentista } from './resolver-dentista.ts';
 import { resolverDuracao } from './resolver-duracao.ts';
@@ -585,6 +590,38 @@ export async function processarMensagem(
       );
     }
 
+    // SELECAO DE PACIENTE + FLUXO "OUTRA PESSOA": limpos no MESMO ponto que
+    // fecha o estado operacional (specs/contato-multiplos-pacientes-v1.md
+    // secao 4.4 "Quando a selecao e limpa" e secao 4.5 "sao limpos... quando
+    // o fluxo conclui"). `estado_conversa.paciente_id` volta a `null`; os
+    // campos do fluxo de "outra pessoa" saem de `dados`. Best-effort pelo
+    // mesmo motivo de `limparCamposDeEstadoConcluido`: um fluxo ja concluido
+    // nunca vira erro para o paciente por causa de uma limpeza auxiliar.
+    if (concluiuOuDesistiuDeFluxo(decisao)) {
+      try {
+        await gravarSelecaoPaciente(
+          clienteBanco,
+          identificacao.clinica_id,
+          entrada.telefone_normalizado,
+          null
+        );
+      } catch {
+        // Pior caso: o turno seguinte reencontra a selecao antiga -- a
+        // proxima resolucao de identificacao a revalida contra a lista fresca
+        // do contato, entao uma selecao obsoleta nao sobrevive.
+      }
+      atualizadoEmParaContexto = await limparCamposDeEstadoConcluido(
+        clienteBanco,
+        {
+          conversa_id: identificacao.conversa.id,
+          clinica_id: identificacao.clinica_id,
+          telefone_normalizado: entrada.telefone_normalizado,
+        },
+        CAMPOS_FLUXO_OUTRA_PESSOA,
+        atualizadoEmParaContexto
+      );
+    }
+
     const atualizadoEmFinal = await gravarContextoHorarios(clienteBanco, {
       conversa_id: identificacao.conversa.id,
       clinica_id: identificacao.clinica_id,
@@ -873,6 +910,8 @@ export async function processarMensagem(
     clienteRpc,
     identificacao.clinica_id,
     identificacao.contato_id,
+    identificacao.conversa.id,
+    atualizadoEmDaDecisao,
     identificacao.paciente.id,
     entrada.telefone_normalizado,
     dados,
@@ -1101,38 +1140,6 @@ async function aplicarCorrecaoCadastro(
 }
 
 /**
- * Decide, ANTES de qualquer fluxo de agendamento/cadastro, o que fazer com a
- * escolha de paciente (specs/contato-multiplos-pacientes-v1.md secao 4.4/4.5).
- * Puro -- nao le banco, nao escreve; quem grava a selecao e o chamador.
- *
- * Retorno:
- *   - `{ selecionar: id }`  -- a IA emitiu um `paciente_id` VALIDO neste turno
- *     (ja passou por `validarEscolhaPaciente`): o Core grava a selecao e o
- *     fluxo segue, sem pergunta. Caso "para minha mae Marta".
- *   - `{ decisao }`         -- e preciso perguntar (escolha entre os listados,
- *     ou vinculo de pessoa nova).
- *   - `null`                -- nada a fazer aqui; o fluxo segue com o
- *     `pacienteId` ja resolvido pela identificacao.
- *
- * Regra, nesta ordem:
- *   1. `pacienteIdEmitido` presente -> `{ selecionar }` (a IA identificou
- *      quem e; `validarEscolhaPaciente` ja garantiu que pertence ao contato).
- *   2. `outra_pessoa_alem_das_listadas` -> `pedir_vinculo_paciente_novo`
- *      (segue direto para a pergunta de vinculo, sem casar contra a lista).
- *   3. `atendimento_para_terceiro` e o turno NAO identificou quem
- *      (`pacienteIdEmitido` ausente):
- *        - ha paciente vinculado alem do proprio contato (a lista
- *          `pacientesDoContato` -- que so chega com >1 -- nao esta vazia) ->
- *          `aguardando_escolha_paciente` ("e um deles ou outra pessoa?");
- *        - so o titular -> `pedir_vinculo_paciente_novo`.
- *   4. caso contrario -> `null`.
- *
- * `atendimento_para_terceiro` NAO e curto-circuitado por `pacienteId`
- * resolvido: com contato de 1 paciente, a identificacao auto-resolve o
- * titular, mas "e pra minha mae" continua NAO sendo para o titular -- a
- * pergunta ainda precisa acontecer.
- */
-/**
  * O valor `informar`/`corrigir` de uma alteracao, quando presente e nao
  * vazio. `undefined` para ausente ou para `remover`.
  */
@@ -1142,46 +1149,273 @@ function lerAlteracaoStringInformada(alteracao: { acao: string; valor?: string }
   return typeof valor === 'string' && valor.trim() !== '' ? valor : undefined;
 }
 
-function decidirEscolhaPaciente(entrada: {
-  pacienteId: string | null;
+/**
+ * Campos que acompanham UM paciente e que precisam ser LIMPOS de
+ * `estado_conversa.dados` ao TROCAR a selecao de paciente
+ * (specs/contato-multiplos-pacientes-v1.md secao 4.4, "Troca de selecao
+ * nunca transporta dado acumulado"). Cadastrais + operacionais do novo
+ * agendamento -- exatamente o conjunto que corromperia a nova selecao se
+ * fosse lido como se pertencesse a ela.
+ *
+ * NAO inclui `outra_pessoa_alem_das_listadas`/`vinculo_novo_paciente`/
+ * `telefone_novo_paciente`: esses pertencem ao FLUXO de "outra pessoa", nao
+ * a um paciente selecionado, e sao limpos so ao concluir/desistir DELE
+ * (spec secao 4.5).
+ */
+const CAMPOS_LIMPOS_AO_TROCAR_PACIENTE: readonly CampoDadosConversa[] = [
+  ...CAMPOS_NOVO_AGENDAMENTO,
+  'agendamento_id',
+  'nome',
+  'cpf',
+  'data_nascimento',
+  'email',
+];
+
+/** Campos do fluxo "outra pessoa" (spec secao 4.5), limpos ao concluir/desistir dele. */
+const CAMPOS_FLUXO_OUTRA_PESSOA: readonly CampoDadosConversa[] = [
+  'vinculo_novo_paciente',
+  'telefone_novo_paciente',
+];
+
+/**
+ * A decisao FECHA o fluxo em andamento -- ponto em que
+ * `estado_conversa.paciente_id` volta a `null` e os campos do fluxo de
+ * "outra pessoa" saem de `dados` (specs/contato-multiplos-pacientes-v1.md
+ * secao 4.4/4.5). Mesmo conjunto que ja limpa `agendamento_id`/`intencao`
+ * hoje, mais `desistencia`.
+ */
+function concluiuOuDesistiuDeFluxo(decisao: DecisaoOrquestrador): boolean {
+  return (
+    decisao.tipo === 'reserva_criada' ||
+    decisao.tipo === 'remarcacao_criada' ||
+    decisao.tipo === 'cancelamento_criado' ||
+    decisao.tipo === 'desistencia'
+  );
+}
+
+/**
+ * Resolve a SELECAO de paciente para este turno (specs/contato-multiplos-
+ * pacientes-v1.md secao 4.4/4.5). Le e escreve banco: grava a selecao em
+ * `estado_conversa.paciente_id` quando ela muda, limpa `dados` acumulados na
+ * TROCA, e conduz o ramo "numero proprio" (reusa cadastro do contato de
+ * destino, ou pede/cria).
+ *
+ * Retorno:
+ *   - `{ pacienteId }` -- o fluxo operacional segue com esta pessoa (pode ser
+ *     `null` quando ainda nao ha selecao mas tambem nao ha pergunta a fazer);
+ *   - `{ decisao }`    -- e preciso perguntar (escolha entre listados, vinculo
+ *     de pessoa nova, pedir telefone da pessoa nova, ou cadastro dela).
+ */
+async function resolverSelecaoDePaciente(ctx: {
+  clienteBanco: ClienteBancoDados;
+  clienteRpc: ClienteRpc;
+  clinicaId: string;
+  contatoId: string;
+  conversaId: string;
+  atualizadoEmDaDecisao: string;
+  telefoneNormalizado: string;
+  pacienteSelecionadoAtual: string | null;
   pacienteIdEmitido: string | undefined;
   pacientesDoContato: readonly { paciente_id: string; nome: string; vinculo: 'titular' | 'dependente' }[];
+  dados: Record<string, string | undefined>;
   atendimentoParaTerceiro: boolean;
   outraPessoaAlemDasListadas: boolean;
-}): { selecionar: string } | { decisao: DecisaoOrquestrador } | null {
-  const { pacienteIdEmitido, pacientesDoContato, atendimentoParaTerceiro, outraPessoaAlemDasListadas } = entrada;
+}): Promise<{ pacienteId: string | null } | { decisao: DecisaoOrquestrador }> {
+  const {
+    clienteBanco,
+    clienteRpc,
+    clinicaId,
+    conversaId,
+    atualizadoEmDaDecisao,
+    telefoneNormalizado,
+    pacienteSelecionadoAtual,
+    pacienteIdEmitido,
+    pacientesDoContato,
+    dados,
+    atendimentoParaTerceiro,
+    outraPessoaAlemDasListadas,
+  } = ctx;
 
+  // Troca de selecao: grava a nova e limpa os campos acumulados do paciente
+  // anterior. `dados` (jsonb) e limpo via `aplicarDados` (mesmo CAS de
+  // sempre); `estado_conversa.paciente_id` (coluna) via `gravarSelecaoPaciente`
+  // (CAS proprio). NUNCA deixa a selecao mudar com dado antigo pendurado.
+  const trocarSelecaoPara = async (novo: string): Promise<void> => {
+    if (novo === pacienteSelecionadoAtual) return;
+    await limparCamposDeEstadoConcluido(
+      clienteBanco,
+      { conversa_id: conversaId, clinica_id: clinicaId, telefone_normalizado: telefoneNormalizado },
+      CAMPOS_LIMPOS_AO_TROCAR_PACIENTE,
+      atualizadoEmDaDecisao
+    );
+    await gravarSelecaoPaciente(clienteBanco, clinicaId, telefoneNormalizado, novo);
+  };
+
+  // --- (A) A IA identificou quem e neste turno (ja validado contra a lista
+  //         fresca do contato por `validarEscolhaPaciente`). ---
   if (pacienteIdEmitido !== undefined) {
-    return { selecionar: pacienteIdEmitido };
+    await trocarSelecaoPara(pacienteIdEmitido);
+    return { pacienteId: pacienteIdEmitido };
   }
 
-  if (outraPessoaAlemDasListadas) {
+  // --- (B) Fluxo "outra pessoa alem das listadas" em andamento. ---
+  const vinculoNovo = dados.vinculo_novo_paciente;
+  const telefoneNovo = dados.telefone_novo_paciente;
+  const fluxoOutraPessoaAberto =
+    outraPessoaAlemDasListadas || vinculoNovo !== undefined || telefoneNovo !== undefined;
+
+  if (fluxoOutraPessoaAberto) {
+    // B1. Ainda nao respondeu numero proprio vs. vinculado -> pergunta.
+    if (vinculoNovo === undefined) {
+      return { decisao: { tipo: 'pedir_vinculo_paciente_novo' } };
+    }
+
+    // B2. "vinculado ao contato atual" -> dependente do contato desta
+    //     conversa. A criacao da ficha (contato_id = este contato,
+    //     paciente_id ausente -> INSERT vinculado, vinculo 'dependente')
+    //     acontece no fluxo normal, em `decidirConfirmacaoOuReserva`. Aqui
+    //     so seguimos SEM selecao herdada de outro assunto: `pacienteId`
+    //     null faz `decidirConfirmacaoOuReserva` chamar `persistirPaciente`
+    //     como criacao.
+    if (vinculoNovo === 'dependente') {
+      // Se ha uma selecao anterior (de outro assunto), limpa os campos dela
+      // -- a pessoa nova nao pode herdar data/horario/cadastro do anterior.
+      if (pacienteSelecionadoAtual !== null) {
+        await limparCamposDeEstadoConcluido(
+          clienteBanco,
+          { conversa_id: conversaId, clinica_id: clinicaId, telefone_normalizado: telefoneNormalizado },
+          CAMPOS_LIMPOS_AO_TROCAR_PACIENTE,
+          atualizadoEmDaDecisao
+        );
+        await gravarSelecaoPaciente(clienteBanco, clinicaId, telefoneNormalizado, null);
+      }
+      return { pacienteId: null };
+    }
+
+    // B3. "numero proprio" -- spec secao 4.5, passo 4.
+    if (telefoneNovo === undefined) {
+      // Ainda falta o telefone da pessoa nova. Pede -- decisao propria
+      // (nao cabe em `cadastro_necessario`, que so aceita nome/cpf/
+      // data_nascimento/email).
+      return { decisao: { tipo: 'pedir_telefone_paciente_novo' } };
+    }
+
+    // Telefone presente: resolve o contato de DESTINO (sem criar) e verifica
+    // se ja ha paciente vinculado a ele.
+    const destino = await resolverContatoDeDestino(clienteBanco, clinicaId, telefoneNovo);
+
+    if (destino.contato_id !== null && destino.pacientes.length === 1) {
+      // Reusa o cadastro existente. Grava a selecao (cross-contato -- a
+      // identificacao do proximo turno a aceita relendo `telefone_novo_paciente`).
+      await trocarSelecaoPara(destino.pacientes[0].paciente_id);
+      return { pacienteId: destino.pacientes[0].paciente_id };
+    }
+
+    if (destino.contato_id !== null && destino.pacientes.length > 1) {
+      // Contato de destino com varios pacientes -- pergunta qual, sobre a
+      // lista DELE (nao a do contato desta conversa).
+      return {
+        decisao: {
+          tipo: 'aguardando_escolha_paciente',
+          pacientes: destino.pacientes.map((p) => ({ nome: p.nome, vinculo: p.vinculo })),
+        },
+      };
+    }
+
+    // Contato de destino nao existe, ou existe sem paciente: cadastra a
+    // pessoa nova com esse contato como o DEFINITIVO. Sinaliza pelo objetivo
+    // de cadastro -- os campos faltantes sao os de sempre; a criacao usa o
+    // contato de destino (nao o desta conversa) via
+    // `decidirCadastroPacienteNumeroProprio` abaixo.
+    return await decidirCadastroPacienteNumeroProprio({
+      clienteRpc,
+      clienteBanco,
+      clinicaId,
+      telefoneNovo,
+      telefoneNormalizadoDaConversa: telefoneNormalizado,
+      dados,
+    });
+  }
+
+  // --- (C) `atendimento_para_terceiro` sem identificacao e sem fluxo aberto. ---
+  if (atendimentoParaTerceiro) {
+    const temOutros =
+      pacientesDoContato.length > 1 ||
+      (pacientesDoContato.length === 1 && pacientesDoContato[0].vinculo === 'dependente');
+    if (temOutros) {
+      return {
+        decisao: {
+          tipo: 'aguardando_escolha_paciente',
+          pacientes: pacientesDoContato.map((p) => ({ nome: p.nome, vinculo: p.vinculo })),
+        },
+      };
+    }
     return { decisao: { tipo: 'pedir_vinculo_paciente_novo' } };
   }
 
-  if (!atendimentoParaTerceiro) {
-    return null;
-  }
+  // --- (D) Nada a fazer: segue com o paciente resolvido pela identificacao. ---
+  return { pacienteId: pacienteSelecionadoAtual };
+}
 
-  // "Ha quem escolher" = ha um paciente vinculado alem do titular: a lista
-  // tem mais de um item, OU tem exatamente um cujo vinculo e 'dependente'.
-  // Um contato so com o titular (lista de 1 item 'titular', ou vazia) nao
-  // oferece escolha -- pergunta direto o vinculo da pessoa nova.
-  const temOutros =
-    pacientesDoContato.length > 1 ||
-    (pacientesDoContato.length === 1 && pacientesDoContato[0].vinculo === 'dependente');
+/**
+ * Ramo "numero proprio" quando o contato de destino ainda NAO tem paciente
+ * (spec secao 4.5, passo 4, segundo caso): coleta os campos faltantes e, com
+ * o cadastro completo, cria o paciente com `contato_id` = o contato do
+ * telefone informado (resolvido/criado agora), NUNCA o contato desta
+ * conversa. `vinculo = 'titular'` (ele e o titular do proprio numero).
+ */
+async function decidirCadastroPacienteNumeroProprio(ctx: {
+  clienteRpc: ClienteRpc;
+  clienteBanco: ClienteBancoDados;
+  clinicaId: string;
+  telefoneNovo: string;
+  telefoneNormalizadoDaConversa: string;
+  dados: Record<string, string | undefined>;
+}): Promise<{ pacienteId: string | null } | { decisao: DecisaoOrquestrador }> {
+  const { clienteRpc, clienteBanco, clinicaId, telefoneNovo, telefoneNormalizadoDaConversa, dados } = ctx;
 
-  if (temOutros) {
+  // Visao efetiva do cadastro da PESSOA NOVA vem SO de `dados` (nunca de uma
+  // ficha -- ela ainda nao existe). Reusa os mesmos campos exigidos hoje.
+  const visaoEfetiva = comporVisaoEfetivaCadastro({}, dados);
+  const faltantes = calcularCadastroFaltante(visaoEfetiva, false);
+  if (faltantes.length > 0 || visaoEfetiva.nome === undefined) {
     return {
       decisao: {
-        tipo: 'aguardando_escolha_paciente',
-        pacientes: pacientesDoContato.map((p) => ({ nome: p.nome, vinculo: p.vinculo })),
+        tipo: 'cadastro_necessario',
+        campos_faltantes: faltantes.length > 0 ? faltantes : ['nome'],
       },
     };
   }
 
-  // Contato so com o titular: nao ha escolha a oferecer -- pergunta direto.
-  return { decisao: { tipo: 'pedir_vinculo_paciente_novo' } };
+  // Cadastro completo -> cria com o contato de destino como DEFINITIVO.
+  const contatoDestinoId = await resolverOuCriarContatoParaCadastro(clienteBanco, clinicaId, telefoneNovo);
+  const persistencia = await persistirPaciente(clienteRpc, {
+    clinica_id: clinicaId,
+    contato_id: contatoDestinoId,
+    telefone_normalizado: telefoneNovo,
+    nome: visaoEfetiva.nome as string,
+    vinculo: 'titular',
+    ...(visaoEfetiva.cpf !== undefined ? { cpf: visaoEfetiva.cpf } : {}),
+    ...(visaoEfetiva.data_nascimento !== undefined ? { data_nascimento: visaoEfetiva.data_nascimento } : {}),
+    ...(visaoEfetiva.email !== undefined ? { email: visaoEfetiva.email } : {}),
+  });
+
+  if (persistencia.tipo === 'cpf_ja_cadastrado') {
+    return { decisao: { tipo: 'troca_telefone_pendente' } };
+  }
+  if (persistencia.tipo === 'falhou') {
+    throw new ErroRpcTecnico('cappia_persistir_paciente', `invariante_violada:${persistencia.motivo}`);
+  }
+
+  // Grava a selecao (cross-contato, spec secao 4.5, passo 5): o proximo turno
+  // a aceita relendo `telefone_novo_paciente` de `dados`.
+  await gravarSelecaoPaciente(
+    clienteBanco,
+    clinicaId,
+    telefoneNormalizadoDaConversa,
+    persistencia.paciente_id
+  );
+  return { pacienteId: persistencia.paciente_id };
 }
 
 function camposParaLimparAoConcluir(
@@ -1782,6 +2016,8 @@ async function decidir(
   clienteRpc: ClienteRpc,
   clinicaId: string,
   contatoId: string,
+  conversaId: string,
+  atualizadoEmDaDecisao: string,
   // MUTAVEL: reatribuido quando a IA emite um `paciente_id` valido neste
   // turno (spec contato-multiplos-pacientes secao 4.4) -- dai em diante o
   // fluxo inteiro usa o paciente selecionado.
@@ -1804,33 +2040,30 @@ async function decidir(
   //
   // Vem ANTES de qualquer decisao de agendamento/cadastro: enquanto o Core
   // nao sabe PARA QUEM e o atendimento, nao pode aplicar dado nenhum a um
-  // paciente. O `paciente_id` que a IA emitiu neste turno ja passou por
-  // `validarEscolhaPaciente` (interpretar-e-aplicar.ts) -- se sobreviveu em
-  // `alteracoesDoTurno`, pertence ao contato.
-  const pacienteIdEmitido = lerAlteracaoStringInformada(alteracoesDoTurno.paciente_id);
-  const escolhaPaciente = decidirEscolhaPaciente({
-    pacienteId,
-    pacienteIdEmitido,
+  // paciente. Cobre: `paciente_id` emitido pela IA (ja validado por
+  // `validarEscolhaPaciente`), o fluxo "outra pessoa" -> pergunta de vinculo,
+  // e o ramo "numero proprio" completo (reusa/cadastra no contato de
+  // destino). Ao TROCAR a selecao, limpa os campos acumulados do paciente
+  // anterior em `dados` (spec secao 4.4).
+  const selecao = await resolverSelecaoDePaciente({
+    clienteBanco,
+    clienteRpc,
+    clinicaId,
+    contatoId,
+    conversaId,
+    atualizadoEmDaDecisao,
+    telefoneNormalizado,
+    pacienteSelecionadoAtual: pacienteId,
+    pacienteIdEmitido: lerAlteracaoStringInformada(alteracoesDoTurno.paciente_id),
     pacientesDoContato,
+    dados,
     atendimentoParaTerceiro,
     outraPessoaAlemDasListadas,
   });
-  if (escolhaPaciente !== null) {
-    if ('selecionar' in escolhaPaciente) {
-      // A IA identificou quem e -- grava a selecao em
-      // `estado_conversa.paciente_id` (spec secao 4.4) e o fluxo segue com
-      // ela dai em diante (reatribuicao do parametro `pacienteId`). A limpeza
-      // de `dados` acumulados do paciente anterior na TROCA (spec secao 4.4,
-      // "limpeza na troca") fica para uma revisao dedicada -- ver o TODO em
-      // orquestrador-contato-multiplos-pacientes.test.ts.
-      if (escolhaPaciente.selecionar !== pacienteId) {
-        await gravarSelecaoPaciente(clienteBanco, clinicaId, telefoneNormalizado, escolhaPaciente.selecionar);
-        pacienteId = escolhaPaciente.selecionar;
-      }
-    } else {
-      return { decisao: escolhaPaciente.decisao };
-    }
+  if ('decisao' in selecao) {
+    return { decisao: selecao.decisao };
   }
+  pacienteId = selecao.pacienteId;
 
   // CORRECAO DE CADASTRO FORA DO AGENDAMENTO (2026-09-01,
   // specs/correcao-cadastro-conversacional-v1.md).

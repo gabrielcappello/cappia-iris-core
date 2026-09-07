@@ -530,7 +530,11 @@ export type DecisaoOrquestrador =
   // SEM PAYLOAD: a pergunta e sempre a mesma, e a decisao nao carrega dado
   // da pessoa (o cadastro dela vem depois, so no ramo em que o passo 4 nao
   // encontrar cadastro para o numero informado).
-  | { tipo: 'pedir_vinculo_paciente_novo' };
+  | { tipo: 'pedir_vinculo_paciente_novo' }
+  // A pessoa nova tera numero proprio, mas o telefone ainda nao chegou
+  // (secao 4.5, passo 4: `vinculo_novo_paciente = 'numero_proprio'` sem
+  // `telefone_novo_paciente`). A Iris pede o numero. SEM PAYLOAD.
+  | { tipo: 'pedir_telefone_paciente_novo' };
 
 export interface ResultadoOrquestrador {
   clinica_id: string;

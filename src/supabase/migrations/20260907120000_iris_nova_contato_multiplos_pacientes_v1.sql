@@ -2,11 +2,18 @@
 --
 -- Base normativa: specs/contato-multiplos-pacientes-v1.md (aprovada 2026-09-07).
 --
--- Projeto-alvo: cappia-iris-core-dev (bcmuqautblvjdqzhjfbw) -- ambiente
--- isolado de desenvolvimento e testes da Iris Nova. PROIBIDO aplicar em
--- udizowyfjnhuhgxkeayk sem migration irma propria e autorizacao explicita:
--- os dois esquemas divergiram (ver historico em
--- 20260809120000_iris_nova_persistencia_paciente_v1.sql).
+-- ── STATUS: CANDIDATA LOCAL, NAO APLICADA, NAO AUTORIZADA ─────────────────
+-- Esta e uma migration CANDIDATA, compativel com o SCHEMA VERIFICADO (leitura
+-- de pg_constraint em 2026-09-07, abaixo), escrita junto da implementacao mas
+-- PENDENTE DE:
+--   1. teste real: aplicar num BRANCH descartavel do Supabase de dev
+--      (bcmuqautblvjdqzhjfbw), rodar a suite de integracao e conferir o
+--      backfill contra dados reais;
+--   2. autorizacao explicita do Gabriel, por acao, antes de aplicar em
+--      QUALQUER projeto.
+-- Nao ha "migration irma": este arquivo unico e a candidata; o alvo eventual
+-- de dev e este mesmo DDL. NUNCA aplicar em udizowyfjnhuhgxkeayk sem uma
+-- decisao separada e explicita.
 --
 -- ── ESTADO REAL DE PRODUCAO (verificado por leitura de pg_constraint em
 --    udizowyfjnhuhgxkeayk, 2026-09-07 -- registrado na spec secao 2.2) ─────
@@ -23,8 +30,10 @@
 --   - agendamentos_paciente_id_fkey (paciente_id) -> pacientes(id): FK SIMPLES,
 --     sem clinica_id. Esta migration NAO a altera (spec secao 1.3 e 6).
 --
--- Este arquivo tenta cobrir os DOIS jogos de nomes de constraint (local e
--- producao) para a UNIQUE de telefone, via DO/EXCEPTION -- ver bloco final.
+-- Este arquivo cobre os DOIS jogos de nomes de constraint (local e producao)
+-- para a UNIQUE de telefone, via DO/EXCEPTION -- ver bloco final. Isso a torna
+-- aplicavel tanto no schema local quanto no de producao SEM edicao, mas
+-- continua exigindo o teste real e a autorizacao acima.
 --
 -- ── ESCOPO (spec secao 2.1 e 6) ──────────────────────────────────────────
 --   1 tabela nova: contatos_whatsapp
@@ -60,7 +69,7 @@
 --      NOT NULL em pacientes.contato_id
 --   7. (dados corrompidos migram como estao -- fora de escopo)
 --
--- ── NAO APLICADA em nenhum projeto no momento desta escrita. ─────────────
+-- ── NAO APLICADA EM NENHUM PROJETO. Ver STATUS no topo do arquivo. ───────
 
 begin;
 

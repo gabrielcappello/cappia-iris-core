@@ -258,6 +258,7 @@ export function derivarAcaoContextoHorarios(decisao: DecisaoOrquestrador): AcaoC
     // contato, nunca contra um marcador persistido aqui.
     case 'aguardando_escolha_paciente':
     case 'pedir_vinculo_paciente_novo':
+    case 'pedir_telefone_paciente_novo':
       return { tipo: 'limpar' };
   }
 }

@@ -344,3 +344,353 @@ test('20: aguardando_escolha_paciente mapeia para o objetivo escolher_entre_paci
     assert.equal(serial.includes('paciente_id'), false);
   }
 });
+
+// ── Teste 15: trocar de Carlos para Marta nao transporta cadastro nem
+//    dados operacionais (spec secao 4.4, limpeza na troca) ────────────────
+
+test('15: trocar de Carlos para Marta limpa data_texto/horario_texto/procedimento_id/nome de Carlos', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const clinicaId = semearClinica(tabelas);
+  const contatoId = semearContato(tabelas, clinicaId);
+  const carlosId = semearPaciente(tabelas, clinicaId, contatoId, { nome: 'Carlos', vinculo: 'titular' });
+  const martaId = semearPaciente(tabelas, clinicaId, contatoId, { nome: 'Marta', vinculo: 'dependente' });
+  // Carlos era o selecionado E acumulou dados do assunto dele.
+  tabelas.estado_conversa.push({
+    id: crypto.randomUUID(),
+    clinica_id: clinicaId,
+    telefone_normalizado: TELEFONE,
+    estado: 'atendimento',
+    dados: {
+      procedimento_id: 'algum-proc',
+      data_texto: 'amanha',
+      horario_texto: '10:00',
+      nome: 'Carlos Cappello',
+    },
+    paciente_id: carlosId,
+    atualizado_em: new Date('2026-08-01T00:00:00.000Z').toISOString(),
+  });
+
+  const m = modelo({
+    natureza_mensagem: 'pedido',
+    alteracoes: { paciente_id: { acao: 'informar', valor: martaId } },
+    atendimento_para_terceiro: true,
+  });
+  await processar(tabelas, m, 'na verdade e pra minha mae Marta');
+
+  // a selecao virou Marta
+  assert.equal(tabelas.estado_conversa[0].paciente_id, martaId);
+  // e os campos acumulados de Carlos sumiram de dados
+  const dados = tabelas.estado_conversa[0].dados as Record<string, unknown>;
+  for (const campo of ['procedimento_id', 'data_texto', 'horario_texto', 'nome']) {
+    assert.ok(!(campo in dados) || dados[campo] === undefined, `${campo} deveria ter sido limpo na troca`);
+  }
+});
+
+// ── Teste 16: "numero proprio" num turno e telefone no seguinte, pessoa
+//    SEM cadastro no numero informado (spec secao 4.5, passos 4-5) ────────
+
+const TELEFONE_MARTA = '5511777777777';
+
+test('16: vinculo_novo_paciente numero_proprio persistido; ao chegar telefone sem cadastro, pede cadastro (nao INSERT)', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const clinicaId = semearClinica(tabelas);
+  const contatoId = semearContato(tabelas, clinicaId);
+  semearPaciente(tabelas, clinicaId, contatoId, { nome: 'Carlos', vinculo: 'titular' });
+  // turno 1 ja aconteceu: vinculo_novo_paciente = numero_proprio persistido em dados
+  tabelas.estado_conversa.push({
+    id: crypto.randomUUID(),
+    clinica_id: clinicaId,
+    telefone_normalizado: TELEFONE,
+    estado: 'atendimento',
+    dados: { vinculo_novo_paciente: 'numero_proprio' },
+    paciente_id: null,
+    atualizado_em: new Date('2026-08-01T00:00:00.000Z').toISOString(),
+  });
+
+  const rpc = new ClienteRpcFalso({});
+  // turno 2: so o telefone da Marta (contato de destino nao existe ainda)
+  const m = new ClienteModeloFalso([
+    {
+      natureza_mensagem: 'resposta',
+      alteracoes: { telefone_novo_paciente: { acao: 'informar', valor: TELEFONE_MARTA } },
+    },
+  ]);
+  const resultado = await processarMensagem(m, new ClienteFalso(tabelas), rpc, {
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA,
+    telefone_normalizado: TELEFONE,
+    mensagens_atuais: [TELEFONE_MARTA],
+    instante_atual: INSTANTE_ATUAL,
+  });
+
+  // persistirPaciente NAO foi chamada -- ainda falta o cadastro da pessoa nova
+  assert.equal(rpc.chamadas.filter((c) => c.nome === 'cappia_persistir_paciente').length, 0);
+  // e a decisao pede o cadastro (nome/cpf/data)
+  assert.equal(resultado.decisao.tipo, 'cadastro_necessario');
+  // o telefone da Marta ficou persistido para o proximo turno
+  assert.equal((tabelas.estado_conversa[0].dados as Record<string, unknown>).telefone_novo_paciente, TELEFONE_MARTA);
+});
+
+test('16b: cadastro completo + telefone -> cria Marta com o contato de DESTINO (nunca o da conversa)', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const clinicaId = semearClinica(tabelas);
+  const contatoId = semearContato(tabelas, clinicaId);
+  semearPaciente(tabelas, clinicaId, contatoId, { nome: 'Carlos', vinculo: 'titular' });
+  tabelas.estado_conversa.push({
+    id: crypto.randomUUID(),
+    clinica_id: clinicaId,
+    telefone_normalizado: TELEFONE,
+    estado: 'atendimento',
+    // ja tem vinculo + telefone + cadastro completo acumulados
+    dados: {
+      vinculo_novo_paciente: 'numero_proprio',
+      telefone_novo_paciente: TELEFONE_MARTA,
+      nome: 'Marta Silva',
+      cpf: '52998224725',
+      data_nascimento: '1950-07-07',
+    },
+    paciente_id: null,
+    atualizado_em: new Date('2026-08-01T00:00:00.000Z').toISOString(),
+  });
+
+  const novoPacienteId = crypto.randomUUID();
+  const rpc = new ClienteRpcFalso({
+    cappia_persistir_paciente: { data: { sucesso: true, paciente_id: novoPacienteId }, error: null },
+  });
+  const m = new ClienteModeloFalso([{ natureza_mensagem: 'resposta', alteracoes: {} }]);
+  await processarMensagem(m, new ClienteFalso(tabelas), rpc, {
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA,
+    telefone_normalizado: TELEFONE,
+    mensagens_atuais: ['ok'],
+    instante_atual: INSTANTE_ATUAL,
+  });
+
+  const chamada = rpc.chamadas.find((c) => c.nome === 'cappia_persistir_paciente');
+  assert.ok(chamada, 'persistirPaciente deveria ter sido chamada');
+  // o contato de destino foi criado a partir do telefone da Marta, NAO o da conversa
+  const contatoDestino = tabelas.contatos_whatsapp.find((c) => c.telefone_normalizado === TELEFONE_MARTA);
+  assert.ok(contatoDestino, 'contato de destino deveria ter sido criado');
+  assert.equal(chamada!.parametros.p_contato_id, contatoDestino!.id);
+  assert.notEqual(chamada!.parametros.p_contato_id, contatoId);
+  assert.equal(chamada!.parametros.p_telefone_normalizado, TELEFONE_MARTA);
+  assert.equal(chamada!.parametros.p_vinculo, 'titular');
+  // e a selecao passou a apontar para a Marta recem-criada
+  assert.equal(tabelas.estado_conversa[0].paciente_id, novoPacienteId);
+});
+
+// ── Teste 18: terceiro ja cadastrado com telefone proprio -> reutiliza,
+//    nao duplica (spec secao 4.5, passo 4, primeiro ramo) ────────────────
+
+test('18: numero proprio de contato que JA tem Marta -> reutiliza o cadastro, nenhum INSERT', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const clinicaId = semearClinica(tabelas);
+  const contatoCarlos = semearContato(tabelas, clinicaId);
+  semearPaciente(tabelas, clinicaId, contatoCarlos, { nome: 'Carlos', vinculo: 'titular' });
+  // Marta ja e titular do PROPRIO contato (outro telefone), sem relacao com Carlos
+  const contatoMarta = semearContato(tabelas, clinicaId, TELEFONE_MARTA);
+  const martaId = semearPaciente(
+    tabelas,
+    clinicaId,
+    contatoMarta,
+    { nome: 'Marta', vinculo: 'titular' },
+    TELEFONE_MARTA
+  );
+  tabelas.estado_conversa.push({
+    id: crypto.randomUUID(),
+    clinica_id: clinicaId,
+    telefone_normalizado: TELEFONE,
+    estado: 'atendimento',
+    dados: { vinculo_novo_paciente: 'numero_proprio', telefone_novo_paciente: TELEFONE_MARTA },
+    paciente_id: null,
+    atualizado_em: new Date('2026-08-01T00:00:00.000Z').toISOString(),
+  });
+
+  const rpc = new ClienteRpcFalso({});
+  const m = new ClienteModeloFalso([{ natureza_mensagem: 'resposta', alteracoes: {} }]);
+  await processarMensagem(m, new ClienteFalso(tabelas), rpc, {
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA,
+    telefone_normalizado: TELEFONE,
+    mensagens_atuais: ['ok'],
+    instante_atual: INSTANTE_ATUAL,
+  });
+
+  // nenhum INSERT: a Marta ja existia
+  assert.equal(rpc.chamadas.filter((c) => c.nome === 'cappia_persistir_paciente').length, 0);
+  // a selecao passou a apontar para a Marta existente (cross-contato)
+  assert.equal(tabelas.estado_conversa[0].paciente_id, martaId);
+  // e a ficha da Marta continua no contato dela propria
+  assert.equal(tabelas.pacientes.find((p) => p.id === martaId)!.contato_id, contatoMarta);
+});
+
+// ── Teste 19: "numero proprio" para contato de destino com varios pacientes
+//    -> escolha validada contra a lista fresca DESSE contato ──────────────
+
+test('19: contato de destino com Marta + outro -> aguardando_escolha_paciente sobre a lista do destino', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const clinicaId = semearClinica(tabelas);
+  const contatoCarlos = semearContato(tabelas, clinicaId);
+  semearPaciente(tabelas, clinicaId, contatoCarlos, { nome: 'Carlos', vinculo: 'titular' });
+  // contato de destino tem DOIS pacientes
+  const contatoDestino = semearContato(tabelas, clinicaId, TELEFONE_MARTA);
+  semearPaciente(tabelas, clinicaId, contatoDestino, { nome: 'Marta', vinculo: 'titular' }, TELEFONE_MARTA);
+  semearPaciente(tabelas, clinicaId, contatoDestino, { nome: 'Joana', vinculo: 'dependente' }, TELEFONE_MARTA);
+  tabelas.estado_conversa.push({
+    id: crypto.randomUUID(),
+    clinica_id: clinicaId,
+    telefone_normalizado: TELEFONE,
+    estado: 'atendimento',
+    dados: { vinculo_novo_paciente: 'numero_proprio', telefone_novo_paciente: TELEFONE_MARTA },
+    paciente_id: null,
+    atualizado_em: new Date('2026-08-01T00:00:00.000Z').toISOString(),
+  });
+
+  const m = new ClienteModeloFalso([{ natureza_mensagem: 'resposta', alteracoes: {} }]);
+  const resultado = await processarMensagem(m, new ClienteFalso(tabelas), new ClienteRpcFalso({}), {
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA,
+    telefone_normalizado: TELEFONE,
+    mensagens_atuais: ['ok'],
+    instante_atual: INSTANTE_ATUAL,
+  });
+
+  assert.equal(resultado.decisao.tipo, 'aguardando_escolha_paciente');
+  if (resultado.decisao.tipo === 'aguardando_escolha_paciente') {
+    assert.deepEqual(
+      resultado.decisao.pacientes.map((p) => p.nome).sort(),
+      ['Joana', 'Marta']
+    );
+  }
+});
+
+test('19b: escolha no contato de destino so aceita paciente_id da lista fresca DELE (rejeita id do contato do Carlos)', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const clinicaId = semearClinica(tabelas);
+  const contatoCarlos = semearContato(tabelas, clinicaId);
+  const carlosId = semearPaciente(tabelas, clinicaId, contatoCarlos, { nome: 'Carlos', vinculo: 'titular' });
+  const contatoDestino = semearContato(tabelas, clinicaId, TELEFONE_MARTA);
+  semearPaciente(tabelas, clinicaId, contatoDestino, { nome: 'Marta', vinculo: 'titular' }, TELEFONE_MARTA);
+  semearPaciente(tabelas, clinicaId, contatoDestino, { nome: 'Joana', vinculo: 'dependente' }, TELEFONE_MARTA);
+  tabelas.estado_conversa.push({
+    id: crypto.randomUUID(),
+    clinica_id: clinicaId,
+    telefone_normalizado: TELEFONE,
+    estado: 'atendimento',
+    dados: { vinculo_novo_paciente: 'numero_proprio', telefone_novo_paciente: TELEFONE_MARTA },
+    paciente_id: null,
+    atualizado_em: new Date('2026-08-01T00:00:00.000Z').toISOString(),
+  });
+
+  // a IA emite o paciente_id do CARLOS (contato de quem conversa) -- deve ser descartado
+  const m = new ClienteModeloFalso([
+    {
+      natureza_mensagem: 'resposta',
+      alteracoes: { paciente_id: { acao: 'informar', valor: carlosId } },
+    },
+  ]);
+  const resultado = await processarMensagem(m, new ClienteFalso(tabelas), new ClienteRpcFalso({}), {
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA,
+    telefone_normalizado: TELEFONE,
+    mensagens_atuais: ['esse ai'],
+    instante_atual: INSTANTE_ATUAL,
+  });
+
+  // o id do Carlos foi descartado (nao esta na lista do contato de destino)
+  // -> a selecao NAO virou Carlos, e continua pedindo a escolha do destino
+  assert.notEqual(tabelas.estado_conversa[0].paciente_id, carlosId);
+  assert.equal(resultado.decisao.tipo, 'aguardando_escolha_paciente');
+});
+
+// ── Selecao LIMPA ao concluir o fluxo (spec secao 4.4) ──────────────────
+
+test('selecao volta a null ao concluir a reserva de um paciente selecionado', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const clinicaId = semearClinica(tabelas);
+  const contatoId = semearContato(tabelas, clinicaId);
+  const proc = tabelas.procedimentos_catalogo[0].id as string;
+  const dent = (tabelas.clinicas[0].dentistas as Record<string, unknown>[])[0].id as string;
+  const carlosId = semearPaciente(tabelas, clinicaId, contatoId, { nome: 'Carlos', vinculo: 'titular' });
+  const martaId = semearPaciente(tabelas, clinicaId, contatoId, {
+    nome: 'Marta',
+    vinculo: 'dependente',
+    documento: '52998224725',
+    data_nascimento: '1950-05-10',
+  });
+  // Marta ja selecionada (a IA a identificou num turno anterior).
+  tabelas.estado_conversa.push({
+    id: crypto.randomUUID(),
+    clinica_id: clinicaId,
+    telefone_normalizado: TELEFONE,
+    estado: 'atendimento',
+    dados: {},
+    paciente_id: martaId,
+    atualizado_em: new Date('2026-08-01T00:00:00.000Z').toISOString(),
+  });
+  void carlosId;
+
+  const agendamentoId = crypto.randomUUID();
+  const rpc = new ClienteRpcFalso({
+    cappia_reservar_agendamento: {
+      data: {
+        sucesso: true,
+        agendamento_id: agendamentoId,
+        dentista_id: dent,
+        duracao_min: 30,
+        data: '2026-08-03',
+        horario: '10:00',
+      },
+      error: null,
+    },
+  });
+  const m = new ClienteModeloFalso([
+    {
+      natureza_mensagem: 'resposta',
+      alteracoes: {
+        procedimento_id: { acao: 'informar', valor: proc },
+        data_texto: { acao: 'informar', valor: 'hoje' },
+        horario_texto: { acao: 'informar', valor: '10:00' },
+        confirmacao: { acao: 'informar', valor: 'sim' },
+      },
+    },
+  ]);
+  const resultado = await processarMensagem(m, new ClienteFalso(tabelas), rpc, {
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA,
+    telefone_normalizado: TELEFONE,
+    mensagens_atuais: ['pode confirmar'],
+    instante_atual: INSTANTE_ATUAL,
+  });
+
+  assert.equal(resultado.decisao.tipo, 'reserva_criada');
+  // a reserva usou a Marta selecionada
+  const chamadaReserva = rpc.chamadas.find((c) => c.nome === 'cappia_reservar_agendamento');
+  assert.equal(chamadaReserva!.parametros.p_paciente_id, martaId);
+  // selecao limpa apos concluir
+  assert.equal(tabelas.estado_conversa[0].paciente_id, null);
+});
+
+test('campos do fluxo "outra pessoa" (vinculo/telefone) saem de dados ao desistir', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const clinicaId = semearClinica(tabelas);
+  const contatoId = semearContato(tabelas, clinicaId);
+  semearPaciente(tabelas, clinicaId, contatoId, { nome: 'Carlos', vinculo: 'titular' });
+  tabelas.estado_conversa.push({
+    id: crypto.randomUUID(),
+    clinica_id: clinicaId,
+    telefone_normalizado: TELEFONE,
+    estado: 'atendimento',
+    dados: { vinculo_novo_paciente: 'numero_proprio', telefone_novo_paciente: TELEFONE_MARTA },
+    paciente_id: null,
+    atualizado_em: new Date('2026-08-01T00:00:00.000Z').toISOString(),
+  });
+
+  const m = new ClienteModeloFalso([{ natureza_mensagem: 'negacao', alteracoes: {} }]);
+  const resultado = await processar(tabelas, m, 'deixa pra la');
+
+  assert.equal(resultado.decisao.tipo, 'desistencia');
+  const dados = tabelas.estado_conversa[0].dados as Record<string, unknown>;
+  assert.ok(!('vinculo_novo_paciente' in dados) || dados.vinculo_novo_paciente === undefined);
+  assert.ok(!('telefone_novo_paciente' in dados) || dados.telefone_novo_paciente === undefined);
+});

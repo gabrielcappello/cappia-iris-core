@@ -53,6 +53,15 @@ export type DecisaoCaminhoFeliz = DecisaoOrquestrador;
 // bruto (specs/resposta-conversacional-v1.md secao 6).
 const RESPOSTA_FALHA_TECNICA_GENERICA = 'Tive um problema técnico agora. Pode tentar de novo em instantes?';
 
+// Rede generica JA EXISTENTE de "nao consegui redigir isto" -- exatamente a
+// mesma frase de `mensagem_nao_compreendida`. Reusada (sem frase nova) para
+// as decisoes de ESCOLHA DE PACIENTE (specs/contato-multiplos-pacientes-v1.md
+// secao 6: "nenhum fallback novo, nenhuma frase fixa"): quem redige a
+// pergunta natural e a redatora; se ela falhar, esta rede mantem a conversa
+// viva sem o Core inventar texto proprio para um caso que a spec proibe
+// fixar.
+const RESPOSTA_GENERICA_PEDIR_REFORMULACAO = 'Desculpa, não entendi. Pode explicar de outro jeito?';
+
 export function gerarRespostaPaciente(decisao: DecisaoOrquestrador): string {
   switch (decisao.tipo) {
     case 'horarios_disponiveis':
@@ -77,7 +86,7 @@ export function gerarRespostaPaciente(decisao: DecisaoOrquestrador): string {
       // fato sobre o que foi perguntado (a decisao nao carrega esse dado).
       return 'Posso te ajudar a agendar uma consulta. Me conta qual procedimento você precisa.';
     case 'mensagem_nao_compreendida':
-      return 'Desculpa, não entendi. Pode explicar de outro jeito?';
+      return RESPOSTA_GENERICA_PEDIR_REFORMULACAO;
     case 'desistencia':
       // Situacao "Desistencia" (atendimento-v1.md secao 5): encerra com
       // cordialidade, nunca trata como cancelamento de agendamento existente.
@@ -195,16 +204,14 @@ export function gerarRespostaPaciente(decisao: DecisaoOrquestrador): string {
       // existe para eliminar.
       return `Não consigo agendar esse atendimento com ${decisao.dentista_nome_exibido}. Quer tentar outro procedimento com ${decisao.dentista_nome_exibido}?`;
     // ESCOLHA DE PACIENTE (2026-09-07,
-    // specs/contato-multiplos-pacientes-v1.md secao 4.5). Fallback
-    // deterministico -- a redatora e quem escreve a pergunta natural. Aqui
-    // so uma frase honesta que nao inventa nome nem assume qual paciente e.
-    case 'aguardando_escolha_paciente': {
-      const nomes = decisao.pacientes.map((p) => p.nome);
-      const lista = nomes.length > 0 ? ` (${nomes.join(', ')})` : '';
-      return `Esse atendimento é para uma das pessoas já vinculadas a este número${lista}, ou para outra pessoa?`;
-    }
+    // specs/contato-multiplos-pacientes-v1.md secao 4.5). A redatora escreve
+    // a pergunta natural (redator-instrucoes.ts). A spec proibe frase fixa
+    // nova aqui (secao 6), entao o FALLBACK reusa a rede generica ja
+    // existente -- nunca um texto proprio destas decisoes.
+    case 'aguardando_escolha_paciente':
     case 'pedir_vinculo_paciente_novo':
-      return 'Essa pessoa vai usar um número de WhatsApp próprio, ou prefere deixar este número como o contato dela também?';
+    case 'pedir_telefone_paciente_novo':
+      return RESPOSTA_GENERICA_PEDIR_REFORMULACAO;
     // --- Os cinco estados de falha tecnica real ---
     case 'clinica_sem_catalogo':
     case 'erro_catalogo_dentista':

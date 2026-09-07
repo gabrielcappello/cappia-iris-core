@@ -98,6 +98,14 @@ export function mapearDecisaoParaCapacidadeV2(tipo: DecisaoOrquestrador['tipo'])
     // a Iris esta conversando para desfazer uma ambiguidade -- pergunta qual
     // procedimento vem primeiro, sem consultar nem alterar nada no sistema.
     case 'pedido_multiplo_detectado':
+    // 2026-09-07 (specs/contato-multiplos-pacientes-v1.md secao 4.5): a Iris
+    // esta conversando para saber PARA QUEM e o atendimento -- pergunta se e
+    // um dos pacientes listados ou outra pessoa, ou se a pessoa nova tera
+    // numero proprio, ou pede o numero dela. Nenhuma capacidade operacional
+    // e acionada nestes turnos.
+    case 'aguardando_escolha_paciente':
+    case 'pedir_vinculo_paciente_novo':
+    case 'pedir_telefone_paciente_novo':
       return 'nenhuma_apenas_conversar';
     case 'sem_dentista_disponivel':
     case 'combinacao_indisponivel':

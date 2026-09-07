@@ -1,4 +1,9 @@
-import { ClinicaNaoEncontradaError, EntradaInvalidaError } from './erros.ts';
+import {
+  ClinicaNaoEncontradaError,
+  ConflitoConcorrenteError,
+  ConversaNaoEncontradaError,
+  EntradaInvalidaError,
+} from './erros.ts';
 import { telefoneNormalizadoValido } from './telefone.ts';
 import { validarContextoHorarios } from './contexto-horarios.ts';
 import { validarHistoricoConversa } from './historico-conversa.ts';
@@ -108,12 +113,19 @@ function validarLinhaEstadoConversa(valor: Record<string, unknown>): LinhaEstado
  * MUDANCA (specs/contato-multiplos-pacientes-v1.md secao 5.1): a resolucao
  * e em duas etapas -- primeiro o `contato_whatsapp` por `(clinica_id,
  * telefone_normalizado)`, depois a LISTA de pacientes vinculados a esse
- * `contato_id` (0, 1 ou N). O paciente RESOLVIDO do turno sai de duas
- * fontes, nesta ordem: (a) a selecao ja gravada em
- * `estado_conversa.paciente_id`, quando ela ainda aponta para um vinculo
- * valido deste contato; (b) o unico paciente do contato, quando ha
- * exatamente um. Fora disso, `paciente.id` fica `null` e o orquestrador
- * pergunta.
+ * `contato_id` (0, 1 ou N). O paciente RESOLVIDO do turno sai, nesta ordem:
+ *
+ *   (a) a selecao ja gravada em `estado_conversa.paciente_id`, quando ela
+ *       ainda aponta para um vinculo valido DESTE contato;
+ *   (b) SELECAO CROSS-CONTATO (spec secao 4.5, passo 5): quando `dados`
+ *       carrega `telefone_novo_paciente` (fluxo "numero proprio" em
+ *       andamento), a selecao pode apontar para um paciente do contato DE
+ *       DESTINO (o telefone informado para a outra pessoa), que tem telefone
+ *       diferente do desta conversa -- e legitimo, e resolvido relendo
+ *       `telefone_novo_paciente` a cada turno, sem coluna nova;
+ *   (c) o unico paciente do contato desta conversa, quando ha exatamente um.
+ *
+ * Fora disso, `paciente.id` fica `null` e o orquestrador pergunta.
  */
 export async function identificarConversa(
   cliente: ClienteBancoDados,
@@ -140,7 +152,24 @@ export async function identificarConversa(
     entrada.telefone_normalizado
   );
 
-  const resolvido = resolverPacienteSelecionado(pacientesDoContato, conversa.paciente_id);
+  let resolvido = resolverPacienteSelecionado(pacientesDoContato, conversa.paciente_id);
+
+  // (b) SELECAO CROSS-CONTATO: a selecao aponta para alguem que NAO esta na
+  // lista deste contato, MAS `dados` carrega um `telefone_novo_paciente` em
+  // andamento (spec secao 4.5, passo 5). Relemos esse telefone, resolvemos o
+  // contato de destino e aceitamos a selecao se ela pertencer a ele. Nunca
+  // aceita uma selecao arbitraria: ela precisa estar vinculada ao contato
+  // que aquele telefone resolve.
+  if (resolvido === null && conversa.paciente_id !== null) {
+    const telefoneDestino = lerTelefoneNovoPaciente(conversa.dados);
+    if (telefoneDestino !== null && telefoneDestino !== entrada.telefone_normalizado) {
+      const contatoDestinoId = await buscarContato(cliente, clinica.id, telefoneDestino);
+      if (contatoDestinoId !== null) {
+        const pacientesDestino = await listarPacientesDoContato(cliente, clinica.id, contatoDestinoId);
+        resolvido = pacientesDestino.find((p) => p.id === conversa.paciente_id) ?? null;
+      }
+    }
+  }
 
   return {
     clinica_id: clinica.id,
@@ -232,6 +261,40 @@ function campoCadastral(valor: unknown): string | undefined {
   if (typeof valor !== 'string') return undefined;
   const limpo = valor.trim();
   return limpo === '' ? undefined : limpo;
+}
+
+/**
+ * `estado_conversa.dados.telefone_novo_paciente`, quando presente e nao
+ * vazio (spec secao 4.5, contrato fisico). `null` caso contrario. Nunca
+ * normaliza nem valida formato aqui -- so devolve o que esta gravado.
+ */
+function lerTelefoneNovoPaciente(dados: unknown): string | null {
+  if (dados === null || typeof dados !== 'object') return null;
+  const valor = (dados as Record<string, unknown>).telefone_novo_paciente;
+  return typeof valor === 'string' && valor.trim() !== '' ? valor : null;
+}
+
+/**
+ * Busca o `contato_whatsapp` por `(clinica_id, telefone_normalizado)` SEM
+ * criar -- usado para o contato de DESTINO do fluxo "numero proprio" (spec
+ * secao 4.5, passo 4/5): o contato so passa a existir se um paciente for de
+ * fato cadastrado com ele. `null` quando ainda nao existe.
+ */
+async function buscarContato(
+  cliente: ClienteBancoDados,
+  clinicaId: string,
+  telefoneNormalizado: string
+): Promise<string | null> {
+  const { data, error } = await cliente
+    .from('contatos_whatsapp')
+    .select('id')
+    .eq('clinica_id', clinicaId)
+    .eq('telefone_normalizado', telefoneNormalizado)
+    .maybeSingle();
+
+  if (error) throw new Error(`falha ao buscar contato de destino: ${error.message}`);
+  const id = (data as Record<string, unknown> | null)?.id;
+  return typeof id === 'string' && id.trim() !== '' ? id : null;
 }
 
 /**
@@ -345,6 +408,52 @@ async function listarPacientesDoContato(
   });
 }
 
+/** Um paciente de um contato, para consumo externo (orquestrador). */
+export interface PacienteVinculado {
+  paciente_id: string;
+  nome: string;
+  vinculo: VinculoPaciente;
+  cadastro: CadastroPaciente;
+}
+
+/**
+ * Resolve o contato de um telefone (SEM criar) e lista seus pacientes -- para
+ * o orquestrador tratar o contato de DESTINO do fluxo "numero proprio" (spec
+ * secao 4.5, passo 4): a cada turno o Core rele `telefone_novo_paciente`,
+ * resolve de novo o contato de destino e monta `pacientes_do_contato` contra
+ * ele. Nunca cria o contato aqui -- ele so passa a existir quando um paciente
+ * e de fato cadastrado (via `resolverOuCriarContatoParaCadastro`).
+ *
+ * `contato_id === null` quando o telefone ainda nao tem contato.
+ */
+export async function resolverContatoDeDestino(
+  cliente: ClienteBancoDados,
+  clinicaId: string,
+  telefoneNormalizado: string
+): Promise<{ contato_id: string | null; pacientes: readonly PacienteVinculado[] }> {
+  const contatoId = await buscarContato(cliente, clinicaId, telefoneNormalizado);
+  if (contatoId === null) return { contato_id: null, pacientes: [] };
+  const linhas = await listarPacientesDoContato(cliente, clinicaId, contatoId);
+  return {
+    contato_id: contatoId,
+    pacientes: linhas.map((p) => ({ paciente_id: p.id, nome: p.nome, vinculo: p.vinculo, cadastro: p.cadastro })),
+  };
+}
+
+/**
+ * Resolve OU cria o `contato_whatsapp` de um telefone -- usado no momento em
+ * que um paciente novo sera cadastrado com esse contato como o DEFINITIVO
+ * (spec secao 4.5, passo 4, segundo ramo). Reusa exatamente
+ * `obterOuCriarContato` (mesma disciplina de concorrencia).
+ */
+export async function resolverOuCriarContatoParaCadastro(
+  cliente: ClienteBancoDados,
+  clinicaId: string,
+  telefoneNormalizado: string
+): Promise<string> {
+  return obterOuCriarContato(cliente, clinicaId, telefoneNormalizado);
+}
+
 /**
  * Decide o paciente RESOLVIDO do turno a partir da lista fresca do contato e
  * da selecao ja gravada (spec secao 4.4/5.1):
@@ -429,6 +538,8 @@ async function obterOuCriarEstadoConversa(
   return validarLinhaEstadoConversa(concorrente);
 }
 
+const MAX_TENTATIVAS_SELECAO = 5;
+
 /**
  * Escreve (ou limpa) a SELECAO de paciente em `estado_conversa.paciente_id`
  * (specs/contato-multiplos-pacientes-v1.md secao 4.4). A coluna existente e
@@ -436,11 +547,19 @@ async function obterOuCriarEstadoConversa(
  * entre assuntos, `null` ao concluir/desistir de um fluxo.
  *
  * `pacienteId = null` limpa a selecao. Qualquer outro valor grava a nova
- * selecao. Nao ha protecao write-once: a spec exige que a selecao possa
- * mudar de um assunto para outro. O isolamento por clinica na FK composta
- * `(paciente_id, clinica_id) references pacientes(id, clinica_id)` e a
- * segunda camada de defesa -- a primeira e `validarEscolhaPaciente`
- * (interpretar-e-aplicar.ts), que so oferece IDs da lista fresca do contato.
+ * selecao. Nao ha protecao write-once (a spec exige que a selecao possa
+ * mudar), mas ha a MESMA disciplina de CAS/concorrencia de `aplicarDados`:
+ * le `atualizado_em`, condiciona o UPDATE a ele, e relê+reaplica quando
+ * outra escrita venceu a corrida, ate `MAX_TENTATIVAS_SELECAO`.
+ *
+ * FALHA FECHADA quando o UPDATE afeta ZERO linhas por motivo que NAO e
+ * corrida (a conversa nao existe): `ConversaNaoEncontradaError`. Nunca segue
+ * em silencio -- gravar a selecao de paciente e operacional, nao best-effort.
+ *
+ * O isolamento por clinica na FK composta `(paciente_id, clinica_id)
+ * references pacientes(id, clinica_id)` e a segunda camada de defesa -- a
+ * primeira e `validarEscolhaPaciente` (interpretar-e-aplicar.ts), que so
+ * oferece IDs da lista fresca do contato.
  */
 export async function gravarSelecaoPaciente(
   cliente: ClienteBancoDados,
@@ -448,13 +567,50 @@ export async function gravarSelecaoPaciente(
   telefoneNormalizado: string,
   pacienteId: string | null
 ): Promise<void> {
-  const { error } = await cliente
-    .from('estado_conversa')
-    .update({ paciente_id: pacienteId })
-    .eq('clinica_id', clinicaId)
-    .eq('telefone_normalizado', telefoneNormalizado)
-    .select('id')
-    .maybeSingle();
+  for (let tentativa = 1; tentativa <= MAX_TENTATIVAS_SELECAO; tentativa++) {
+    const { data: atual, error: erroLeitura } = await cliente
+      .from('estado_conversa')
+      .select('id, paciente_id, atualizado_em')
+      .eq('clinica_id', clinicaId)
+      .eq('telefone_normalizado', telefoneNormalizado)
+      .maybeSingle();
 
-  if (error) throw new Error(`falha ao gravar selecao de paciente: ${error.message}`);
+    if (erroLeitura) throw new Error(`falha ao ler estado antes de gravar selecao: ${erroLeitura.message}`);
+    if (!atual) throw new ConversaNaoEncontradaError();
+
+    const bruto = atual as Record<string, unknown>;
+    const timestampLido = bruto.atualizado_em;
+    if (typeof timestampLido !== 'string' || Number.isNaN(Date.parse(timestampLido))) {
+      throw new Error('estado_conversa retornou atualizado_em em formato invalido');
+    }
+
+    // Nada a fazer: a selecao ja e a desejada. Nenhum UPDATE, nenhum bump de
+    // `atualizado_em` -- mesma idempotencia que `aplicarDados` aplica a
+    // `dados` iguais.
+    if ((bruto.paciente_id ?? null) === pacienteId) return;
+
+    const novoTimestamp = proximoTimestampSelecao(timestampLido);
+    const { data: atualizado, error: erroUpdate } = await cliente
+      .from('estado_conversa')
+      .update({ paciente_id: pacienteId, atualizado_em: novoTimestamp })
+      .eq('clinica_id', clinicaId)
+      .eq('telefone_normalizado', telefoneNormalizado)
+      .eq('atualizado_em', timestampLido)
+      .select('id')
+      .maybeSingle();
+
+    if (erroUpdate) throw new Error(`falha ao gravar selecao de paciente: ${erroUpdate.message}`);
+    if (atualizado) return;
+
+    // 0 linhas: `atualizado_em` mudou entre a leitura e o UPDATE -- outra
+    // escrita venceu. Relê e tenta de novo. (A linha EXISTE: o `!atual`
+    // acima ja teria lancado se nao existisse.)
+  }
+  throw new ConflitoConcorrenteError(MAX_TENTATIVAS_SELECAO);
+}
+
+function proximoTimestampSelecao(anteriorIso: string): string {
+  const anteriorMs = new Date(anteriorIso).getTime();
+  const agoraMs = Date.now();
+  return new Date(agoraMs > anteriorMs ? agoraMs : anteriorMs + 1).toISOString();
 }
