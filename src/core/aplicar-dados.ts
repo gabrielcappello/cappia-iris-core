@@ -17,6 +17,12 @@ export const CAMPOS_PERMITIDOS: readonly CampoDadosConversa[] = [
   'procedimento_id',
   'dentista_id',
   'agendamento_id',
+  // specs/contato-multiplos-pacientes-v1.md (2026-09-07). `paciente_id` e
+  // emitido pela IA e lido pelo orquestrador para gravar a selecao; os dois
+  // de `_novo_paciente` PERSISTEM entre turnos (como `intencao`).
+  'paciente_id',
+  'vinculo_novo_paciente',
+  'telefone_novo_paciente',
   'data_texto',
   'periodo',
   'horario_texto',

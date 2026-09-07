@@ -14,6 +14,7 @@ import {
   CAMPOS_OPERACIONAIS_INTERPRETACAO,
   NATUREZAS_MENSAGEM_PERMITIDAS,
   TIPOS_EVENTO_CANDIDATO_PERMITIDOS,
+  VINCULOS_NOVO_PACIENTE_PERMITIDOS,
 } from './interpretacao-tipos.ts';
 import type { AcaoAlteracaoDados, CadastroPaciente, CampoDadosConversa, ParConversa } from './tipos.ts';
 import type {
@@ -71,6 +72,9 @@ export async function extrairAlteracoes(
       : {}),
     ...(entradaBruta.agendamentos_do_paciente !== undefined
       ? { agendamentos_do_paciente: [...entradaBruta.agendamentos_do_paciente] }
+      : {}),
+    ...(entradaBruta.pacientes_do_contato !== undefined
+      ? { pacientes_do_contato: [...entradaBruta.pacientes_do_contato] }
       : {}),
     ...(entradaBruta.tratamentos_pendentes !== undefined
       ? { tratamentos_pendentes: [...entradaBruta.tratamentos_pendentes] }
@@ -134,7 +138,15 @@ export function construirEntradaMinimizada(
     dente?: string;
     dentista_id?: string;
     assunto_atual?: true;
-  }[]
+  }[],
+  /**
+   * Pacientes vinculados ao contato (specs/contato-multiplos-pacientes-v1.md
+   * secao 3.1). SO passado pelo orquestrador quando ha MAIS DE UM. Contexto
+   * de interpretacao; nunca influencia persistencia, disponibilidade ou
+   * reserva -- `paciente_id` emitido pela IA e conferido depois pelo Core
+   * (validarEscolhaPaciente) contra a lista FRESCA.
+   */
+  pacientesDoContato?: { paciente_id: string; nome: string; vinculo: 'titular' | 'dependente' }[]
 ): EntradaInterpretacao {
   return {
     mensagens_atuais: [...mensagensAtuais],
@@ -154,6 +166,7 @@ export function construirEntradaMinimizada(
     ...(agendamentosDoPaciente !== undefined
       ? { agendamentos_do_paciente: [...agendamentosDoPaciente] }
       : {}),
+    ...(pacientesDoContato !== undefined ? { pacientes_do_contato: [...pacientesDoContato] } : {}),
     ...(tratamentosPendentes !== undefined
       ? { tratamentos_pendentes: [...tratamentosPendentes] }
       : {}),
@@ -211,6 +224,9 @@ export const CHAVES_OPCIONAIS_INTERPRETACAO = [
   // CONTEXTO do que o paciente ja tem marcado (2026-08-17) -- distinto de
   // `agendamentos_ativos`, que significa "escolha qual destes".
   'agendamentos_do_paciente',
+  // Pacientes vinculados ao contato, quando ha mais de um
+  // (specs/contato-multiplos-pacientes-v1.md secao 3.1).
+  'pacientes_do_contato',
   'historico_recente',
 ] as const;
 
@@ -244,6 +260,8 @@ export function validarEntradaInterpretacao(entrada: unknown): asserts entrada i
     oferta_procedimento_pendente,
     troca_telefone_pendente,
     agendamentos_ativos,
+    agendamentos_do_paciente,
+    pacientes_do_contato,
     tratamentos_pendentes,
     historico_recente,
   } = entrada as Record<string, unknown>;
@@ -257,6 +275,10 @@ export function validarEntradaInterpretacao(entrada: unknown): asserts entrada i
   if (oferta_procedimento_pendente !== undefined) validarOfertaProcedimentoPendente(oferta_procedimento_pendente);
   if (troca_telefone_pendente !== undefined) validarTrocaTelefonePendente(troca_telefone_pendente);
   if (agendamentos_ativos !== undefined) validarAgendamentosAtivos(agendamentos_ativos);
+  // `agendamentos_do_paciente` mantem o comportamento anterior (nao havia
+  // validador dedicado) -- so `pacientes_do_contato` ganha um.
+  void agendamentos_do_paciente;
+  if (pacientes_do_contato !== undefined) validarPacientesDoContato(pacientes_do_contato);
   if (tratamentos_pendentes !== undefined) validarTratamentosPendentes(tratamentos_pendentes);
   if (historico_recente !== undefined) validarHistoricoRecente(historico_recente);
 }
@@ -414,6 +436,47 @@ export function validarAgendamentosAtivos(
     }
     if (typeof descricao !== 'string' || descricao.trim() === '') {
       throw new EntradaInvalidaError('agendamentos_ativos', 'agendamentos_ativos contem descricao invalida');
+    }
+  }
+}
+
+/**
+ * Pacientes vinculados ao contato, quando ha mais de um
+ * (specs/contato-multiplos-pacientes-v1.md secao 3.1). EXATAMENTE tres
+ * campos por item -- `paciente_id`, `nome`, `vinculo` --, o vinculo restrito
+ * ao vocabulario fechado. Array nao vazio -- "0 ou 1 paciente" se representa
+ * pela AUSENCIA da chave, nunca por `[]`. Quem produz este valor e sempre o
+ * Core (identificacao.ts), nunca a IA nem o paciente.
+ */
+export function validarPacientesDoContato(
+  valor: unknown
+): asserts valor is { paciente_id: string; nome: string; vinculo: 'titular' | 'dependente' }[] {
+  if (!Array.isArray(valor)) {
+    throw new EntradaInvalidaError('pacientes_do_contato', 'pacientes_do_contato deve ser um array');
+  }
+  if (valor.length === 0) {
+    throw new EntradaInvalidaError('pacientes_do_contato', 'pacientes_do_contato nao pode ser um array vazio');
+  }
+  for (const item of valor) {
+    if (item === null || typeof item !== 'object' || Array.isArray(item)) {
+      throw new EntradaInvalidaError('pacientes_do_contato', 'pacientes_do_contato contem item que nao e objeto');
+    }
+    const chaves = Object.keys(item as Record<string, unknown>).sort();
+    if (JSON.stringify(chaves) !== JSON.stringify(['nome', 'paciente_id', 'vinculo'])) {
+      throw new EntradaInvalidaError(
+        'pacientes_do_contato',
+        'pacientes_do_contato contem item com chaves diferentes de paciente_id/nome/vinculo'
+      );
+    }
+    const { paciente_id, nome, vinculo } = item as Record<string, unknown>;
+    if (typeof paciente_id !== 'string' || paciente_id.trim() === '') {
+      throw new EntradaInvalidaError('pacientes_do_contato', 'pacientes_do_contato contem paciente_id invalido');
+    }
+    if (typeof nome !== 'string' || nome.trim() === '') {
+      throw new EntradaInvalidaError('pacientes_do_contato', 'pacientes_do_contato contem nome invalido');
+    }
+    if (vinculo !== 'titular' && vinculo !== 'dependente') {
+      throw new EntradaInvalidaError('pacientes_do_contato', 'pacientes_do_contato contem vinculo fora do vocabulario');
     }
   }
 }
@@ -650,6 +713,12 @@ function validarMapaDeCampos(
     if (campo === 'confirmacao' && !CONFIRMACOES_PERMITIDAS.includes(valor)) {
       throw new EntradaInvalidaError(campo, `valor de '${campo}' invalido`);
     }
+    if (
+      campo === 'vinculo_novo_paciente' &&
+      !(VINCULOS_NOVO_PACIENTE_PERMITIDOS as readonly string[]).includes(valor)
+    ) {
+      throw new EntradaInvalidaError(campo, `valor de '${campo}' invalido`);
+    }
     filtrado[campo] = valor;
   }
   return filtrado;
@@ -673,19 +742,38 @@ export function validarSaidaInterpretacao(saida: unknown): asserts saida is Said
       'alteracoes',
       'eventos_candidatos',
       'dentistas_candidatos',
+      // specs/contato-multiplos-pacientes-v1.md secao 4.5 -- booleanos do
+      // turno, sempre presentes.
+      'atendimento_para_terceiro',
+      'outra_pessoa_alem_das_listadas',
     ])
   ) {
     throw new InterpretacaoInvalidaError('propriedade_extra', 'saida');
   }
 
-  const { natureza_mensagem, alteracoes, eventos_candidatos, dentistas_candidatos } = saida as {
+  const {
+    natureza_mensagem,
+    alteracoes,
+    eventos_candidatos,
+    dentistas_candidatos,
+    atendimento_para_terceiro,
+    outra_pessoa_alem_das_listadas,
+  } = saida as {
     natureza_mensagem: unknown;
     alteracoes: unknown;
     eventos_candidatos: unknown;
     dentistas_candidatos: unknown;
+    atendimento_para_terceiro: unknown;
+    outra_pessoa_alem_das_listadas: unknown;
   };
   validarEventosCandidatos(eventos_candidatos);
   validarDentistasCandidatos(dentistas_candidatos);
+  if (typeof atendimento_para_terceiro !== 'boolean') {
+    throw new InterpretacaoInvalidaError('valor_invalido', 'saida.atendimento_para_terceiro');
+  }
+  if (typeof outra_pessoa_alem_das_listadas !== 'boolean') {
+    throw new InterpretacaoInvalidaError('valor_invalido', 'saida.outra_pessoa_alem_das_listadas');
+  }
   if (
     typeof natureza_mensagem !== 'string' ||
     !NATUREZAS_MENSAGEM_PERMITIDAS.includes(natureza_mensagem as NaturezaMensagem)
@@ -740,6 +828,12 @@ export function validarSaidaInterpretacao(saida: unknown): asserts saida is Said
       throw new InterpretacaoInvalidaError('valor_fora_do_dominio', `${caminhoCampo}.valor`);
     }
     if (campo === 'confirmacao' && !CONFIRMACOES_PERMITIDAS.includes(valor)) {
+      throw new InterpretacaoInvalidaError('valor_fora_do_dominio', `${caminhoCampo}.valor`);
+    }
+    if (
+      campo === 'vinculo_novo_paciente' &&
+      !(VINCULOS_NOVO_PACIENTE_PERMITIDOS as readonly string[]).includes(valor)
+    ) {
       throw new InterpretacaoInvalidaError('valor_fora_do_dominio', `${caminhoCampo}.valor`);
     }
   }

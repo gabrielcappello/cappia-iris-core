@@ -320,6 +320,28 @@ export type CampoDadosConversa =
   // fora da lista oficialmente oferecida neste turno (interpretar-e-
   // aplicar.ts) -- nunca adivinha, nunca interpreta referencia textual.
   | 'agendamento_id'
+  // Paciente que o contato quer atender, quando o contato tem mais de um
+  // vinculado (specs/contato-multiplos-pacientes-v1.md secao 3.2). AO
+  // CONTRARIO de `dentista_id`, a IA emite este campo DIRETAMENTE -- mesmo
+  // contrato de `agendamento_id`. O Core NUNCA aceita um valor fora da lista
+  // fresca de pacientes do contato (validarEscolhaPaciente,
+  // interpretar-e-aplicar.ts) -- nunca adivinha, nunca interpreta referencia
+  // textual. Escrito em `dados` e lido pelo orquestrador para gravar a
+  // selecao em `estado_conversa.paciente_id`; limpo ao concluir o fluxo.
+  | 'paciente_id'
+  // Resposta a pergunta "numero proprio vs. vinculado ao contato atual" para
+  // uma pessoa que nao esta na lista do contato (spec secao 4.5). Vocabulario
+  // FECHADO ('dependente' | 'numero_proprio'), mesmo padrao de
+  // `confirmacao`/`intencao`. PERSISTE entre turnos (como `intencao`): a
+  // resposta pode vir num turno e o telefone no seguinte. Limpo ao concluir
+  // ou desistir do fluxo de "outra pessoa".
+  | 'vinculo_novo_paciente'
+  // Telefone informado para a pessoa nova, quando `vinculo_novo_paciente =
+  // 'numero_proprio'` (spec secao 4.5). NUNCA confundido com troca de
+  // telefone de paciente existente (`troca_telefone_pendente`). Mesmo
+  // formato E.164 ja exigido no cadastro. PERSISTE entre turnos; limpo com
+  // `vinculo_novo_paciente`.
+  | 'telefone_novo_paciente'
   | 'data_texto'
   | 'periodo'
   | 'horario_texto'

@@ -4,7 +4,11 @@ import {
   INTENCOES_PERMITIDAS,
   PERIODOS_PERMITIDOS,
 } from './aplicar-dados.ts';
-import { NATUREZAS_MENSAGEM_PERMITIDAS, TIPOS_EVENTO_CANDIDATO_PERMITIDOS } from './interpretacao-tipos.ts';
+import {
+  NATUREZAS_MENSAGEM_PERMITIDAS,
+  TIPOS_EVENTO_CANDIDATO_PERMITIDOS,
+  VINCULOS_NOVO_PACIENTE_PERMITIDOS,
+} from './interpretacao-tipos.ts';
 
 // Unico lugar onde o contrato dado ao modelo (instrucoes + schema) e
 // registrado. Qualquer mudanca de comportamento esperado da IA deve ser
@@ -93,6 +97,11 @@ Regras obrigatorias:
 - Omitir um campo significa NAO incluir nenhuma alteracao para ele. Nunca inclua uma alteracao com "valor" vazio, com espacos em branco, com "null" ou com um marcador de "nao sei" — uma alteracao so existe quando ha um valor real a registrar. Isso vale para todos os campos, sem excecao.
 - Nunca inclua confidence, justificativa, explicacao, resposta ao paciente ou qualquer texto dirigido ao proprio paciente.
 - Nunca decida o proximo estado da conversa.
+- "pacientes_do_contato" (quando presente): a lista de pacientes ja vinculados a este numero de WhatsApp, cada um com "paciente_id", "nome" e "vinculo" ("titular" ou "dependente"). E CONTEXTO -- so chega quando o numero tem MAIS DE UM paciente. Quando a mensagem identificar CLARAMENTE qual deles e o atendimento -- pelo nome ("para a Marta"), pelo vinculo, ou por uma combinacao -- preencha "paciente_id" com o identificador correspondente, copiado LITERALMENTE da lista. Em duvida real sobre qual paciente, omita "paciente_id" e deixe o sistema perguntar; nunca escolha por aproximacao. Quando "pacientes_do_contato" nao estiver presente, nunca emita "paciente_id".
+- "atendimento_para_terceiro" e sempre obrigatorio (true/false). Marque true quando a mensagem expressar claramente que o atendimento e para alguem que NAO E quem esta conversando ("para minha mae", "e pro meu filho", "nao e pra mim", "quero marcar para a Marta"). Marque false caso contrario. Isso SOZINHO so significa "nao e para quem esta falando" -- NUNCA significa "e uma pessoa nova" nem "e alguem fora da lista". A pessoa mencionada pode perfeitamente ser um dos pacientes ja vinculados ao contato.
+- "outra_pessoa_alem_das_listadas" e sempre obrigatorio (true/false). Marque true SOMENTE quando a mensagem expressar claramente que o atendimento NAO e para nenhum dos pacientes de "pacientes_do_contato" -- "nao e a Marta nem o Joao", "e outra pessoa", ou, respondendo a uma pergunta de qual deles, "nenhum desses". Marque false caso contrario, inclusive em duvida real. Este campo NAO afirma nem nega que a pessoa ja tenha cadastro na clinica -- so diz "nao esta nesta lista". Nunca marque true so porque voce nao conseguiu identificar qual paciente e (ausencia de "paciente_id" nao e este sinal), e nunca so porque "atendimento_para_terceiro" e true.
+- "vinculo_novo_paciente" (quando o paciente responder a pergunta "essa pessoa vai usar um numero de WhatsApp proprio, ou fica vinculada a este numero?"): vocabulario FECHADO -- "dependente" (fica vinculada a este numero) ou "numero_proprio" (tera numero proprio). Emita quando a resposta for semanticamente clara; em duvida real, omita. Fora dessa pergunta, nunca emita este campo.
+- "telefone_novo_paciente" (quando "vinculo_novo_paciente" for "numero_proprio" e o paciente informar o numero): so os digitos do telefone informado para a OUTRA pessoa, no mesmo formato de um telefone brasileiro (55 + DDD + numero). NUNCA confunda com uma troca de telefone do paciente atual -- este e o telefone de OUTRA pessoa. Pode vir num turno diferente do "vinculo_novo_paciente"; emita quando ele estiver claramente na mensagem, senao omita.
 - Alem de "alteracoes", classifique tambem "natureza_mensagem": o tipo da mensagem atual, sempre um destes valores, nunca mais de um: "saudacao" (cumprimento puro, sem mais nenhum conteudo), "duvida" (pergunta ou comentario fora do vocabulario de agendamento — nunca responda como se fosse um profissional de saude, so classifique), "pedido" (a mensagem avanca o agendamento: procedimento, dentista, data, periodo ou horario), "resposta" (reage a algo que foi perguntado, ex.: escolha de horario, confirmacao, dado cadastral), "correcao" (corrige um dado ja informado antes), "negacao" (recusa, desistencia OU ENCERRAMENTO -- "obrigado", "so isso", "valeu", "era so isso": o paciente esta fechando a conversa, sem pedir outra coisa no lugar. Agradecer nao e pedido nem duvida: e despedida, e classificar como outra coisa faz o sistema oferecer um agendamento que ninguem pediu. MAS SO quando ele NAO PEDE MAIS NADA: se a mensagem contem um pedido, uma data, um horario ou uma pergunta -- "pode ser dia 26?", "obrigado, e para as 15h?", "ola boa tarde, quero remarcar" -- ela e "pedido" ou "resposta", NUNCA encerramento, por mais cordial que seja. Saudacao e cortesia no comeco da frase nao transformam um pedido em despedida), "nao_compreendida" (nao foi possivel classificar com seguranca em nenhuma das categorias acima). Em duvida real entre duas categorias, classifique como "nao_compreendida" — nunca adivinhe. "natureza_mensagem" e "alteracoes" sao preenchidos sempre juntos, na mesma resposta.
 - Responda estritamente no formato do schema fornecido — nenhuma propriedade alem de "natureza_mensagem" e "alteracoes" no nivel principal, nenhuma propriedade alem de "acao"/"valor" (ou somente "acao" para remover) dentro de cada alteracao.
 
@@ -113,6 +122,9 @@ function schemaValorCampo(campo: string): object {
   if (campo === 'confirmacao') {
     return { type: 'string', enum: [...CONFIRMACOES_PERMITIDAS] };
   }
+  if (campo === 'vinculo_novo_paciente') {
+    return { type: 'string', enum: [...VINCULOS_NOVO_PACIENTE_PERMITIDOS] };
+  }
   return { type: 'string', minLength: 1 };
 }
 
@@ -121,7 +133,17 @@ function schemaValorCampo(campo: string): object {
 export const SCHEMA_SAIDA_INTERPRETACAO: object = {
   type: 'object',
   additionalProperties: false,
-  required: ['natureza_mensagem', 'alteracoes', 'eventos_candidatos', 'dentistas_candidatos'],
+  required: [
+    'natureza_mensagem',
+    'alteracoes',
+    'eventos_candidatos',
+    'dentistas_candidatos',
+    // specs/contato-multiplos-pacientes-v1.md secao 4.5 -- booleanos do
+    // turno, sempre presentes (Structured Outputs estrito exige toda raiz em
+    // `required`).
+    'atendimento_para_terceiro',
+    'outra_pessoa_alem_das_listadas',
+  ],
   properties: {
     natureza_mensagem: { type: 'string', enum: [...NATUREZAS_MENSAGEM_PERMITIDAS] },
     // Quarto campo raiz (specs/dentista-semantico-v1.md secao 12). `null` = o
@@ -132,6 +154,12 @@ export const SCHEMA_SAIDA_INTERPRETACAO: object = {
       type: ['array', 'null'],
       items: { type: 'string', minLength: 1 },
     },
+    // specs/contato-multiplos-pacientes-v1.md secao 4.5. "para minha mae" ->
+    // true; NAO significa "pessoa nova".
+    atendimento_para_terceiro: { type: 'boolean' },
+    // "nao e nenhum dos listados neste contato" -> true; NAO afirma nada
+    // sobre existir cadastro na clinica.
+    outra_pessoa_alem_das_listadas: { type: 'boolean' },
     // Terceiro campo raiz (specs/eventos-conversacionais-v1.md, fatia minima
     // de 2026-08-09). Obrigatorio e possivelmente vazio.
     //
