@@ -527,15 +527,20 @@ test('18: numero proprio de contato que JA tem Marta -> reutiliza o cadastro, ne
 // ── Teste 19: "numero proprio" para contato de destino com varios pacientes
 //    -> escolha validada contra a lista fresca DESSE contato ──────────────
 
-test('19: contato de destino com Marta + outro -> aguardando_escolha_paciente sobre a lista do destino', async () => {
+function cenarioDestinoComDoisPacientes() {
   const tabelas = criarTabelasFalsasVazias();
   const clinicaId = semearClinica(tabelas);
   const contatoCarlos = semearContato(tabelas, clinicaId);
-  semearPaciente(tabelas, clinicaId, contatoCarlos, { nome: 'Carlos', vinculo: 'titular' });
-  // contato de destino tem DOIS pacientes
+  const carlosId = semearPaciente(tabelas, clinicaId, contatoCarlos, { nome: 'Carlos', vinculo: 'titular' });
   const contatoDestino = semearContato(tabelas, clinicaId, TELEFONE_MARTA);
-  semearPaciente(tabelas, clinicaId, contatoDestino, { nome: 'Marta', vinculo: 'titular' }, TELEFONE_MARTA);
-  semearPaciente(tabelas, clinicaId, contatoDestino, { nome: 'Joana', vinculo: 'dependente' }, TELEFONE_MARTA);
+  const martaId = semearPaciente(tabelas, clinicaId, contatoDestino, { nome: 'Marta', vinculo: 'titular' }, TELEFONE_MARTA);
+  const joanaId = semearPaciente(
+    tabelas,
+    clinicaId,
+    contatoDestino,
+    { nome: 'Joana', vinculo: 'dependente' },
+    TELEFONE_MARTA
+  );
   tabelas.estado_conversa.push({
     id: crypto.randomUUID(),
     clinica_id: clinicaId,
@@ -545,6 +550,11 @@ test('19: contato de destino com Marta + outro -> aguardando_escolha_paciente so
     paciente_id: null,
     atualizado_em: new Date('2026-08-01T00:00:00.000Z').toISOString(),
   });
+  return { tabelas, carlosId, martaId, joanaId };
+}
+
+test('19: destino com varios pacientes -> a lista FRESCA do destino (Marta/Joana) chega ao payload da interpretadora e a decisao pergunta sobre ela', async () => {
+  const { tabelas } = cenarioDestinoComDoisPacientes();
 
   const m = new ClienteModeloFalso([{ natureza_mensagem: 'resposta', alteracoes: {} }]);
   const resultado = await processarMensagem(m, new ClienteFalso(tabelas), new ClienteRpcFalso({}), {
@@ -555,39 +565,46 @@ test('19: contato de destino com Marta + outro -> aguardando_escolha_paciente so
     instante_atual: INSTANTE_ATUAL,
   });
 
+  // PAYLOAD REAL da interpretadora: a lista e a do contato de DESTINO, nunca
+  // a do contato de quem conversa (que so tem o Carlos).
+  const payload = m.chamadas[0].payload as { pacientes_do_contato?: { nome: string }[] };
+  assert.ok(Array.isArray(payload.pacientes_do_contato), 'pacientes_do_contato deve estar no payload');
+  assert.deepEqual(payload.pacientes_do_contato!.map((p) => p.nome).sort(), ['Joana', 'Marta']);
+  assert.equal(
+    payload.pacientes_do_contato!.some((p) => p.nome === 'Carlos'),
+    false,
+    'o Carlos (contato de quem conversa) NUNCA entra na lista do destino'
+  );
+
   assert.equal(resultado.decisao.tipo, 'aguardando_escolha_paciente');
   if (resultado.decisao.tipo === 'aguardando_escolha_paciente') {
-    assert.deepEqual(
-      resultado.decisao.pacientes.map((p) => p.nome).sort(),
-      ['Joana', 'Marta']
-    );
+    assert.deepEqual(resultado.decisao.pacientes.map((p) => p.nome).sort(), ['Joana', 'Marta']);
   }
 });
 
-test('19b: escolha no contato de destino so aceita paciente_id da lista fresca DELE (rejeita id do contato do Carlos)', async () => {
-  const tabelas = criarTabelasFalsasVazias();
-  const clinicaId = semearClinica(tabelas);
-  const contatoCarlos = semearContato(tabelas, clinicaId);
-  const carlosId = semearPaciente(tabelas, clinicaId, contatoCarlos, { nome: 'Carlos', vinculo: 'titular' });
-  const contatoDestino = semearContato(tabelas, clinicaId, TELEFONE_MARTA);
-  semearPaciente(tabelas, clinicaId, contatoDestino, { nome: 'Marta', vinculo: 'titular' }, TELEFONE_MARTA);
-  semearPaciente(tabelas, clinicaId, contatoDestino, { nome: 'Joana', vinculo: 'dependente' }, TELEFONE_MARTA);
-  tabelas.estado_conversa.push({
-    id: crypto.randomUUID(),
-    clinica_id: clinicaId,
+test('19b (par A): id de UM paciente do DESTINO e aceito -> vira a selecao (cross-contato)', async () => {
+  const { tabelas, martaId } = cenarioDestinoComDoisPacientes();
+
+  const m = new ClienteModeloFalso([
+    { natureza_mensagem: 'resposta', alteracoes: { paciente_id: { acao: 'informar', valor: martaId } } },
+  ]);
+  await processarMensagem(m, new ClienteFalso(tabelas), new ClienteRpcFalso({}), {
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA,
     telefone_normalizado: TELEFONE,
-    estado: 'atendimento',
-    dados: { vinculo_novo_paciente: 'numero_proprio', telefone_novo_paciente: TELEFONE_MARTA },
-    paciente_id: null,
-    atualizado_em: new Date('2026-08-01T00:00:00.000Z').toISOString(),
+    mensagens_atuais: ['a Marta'],
+    instante_atual: INSTANTE_ATUAL,
   });
 
-  // a IA emite o paciente_id do CARLOS (contato de quem conversa) -- deve ser descartado
+  // aceito: a selecao passou a apontar para a Marta (do contato de destino)
+  assert.equal(tabelas.estado_conversa[0].paciente_id, martaId);
+});
+
+test('19b (par B): id do contato do CARLOS e REJEITADO -> selecao nao muda, decisao segue pedindo a escolha do destino', async () => {
+  const { tabelas, carlosId } = cenarioDestinoComDoisPacientes();
+
   const m = new ClienteModeloFalso([
-    {
-      natureza_mensagem: 'resposta',
-      alteracoes: { paciente_id: { acao: 'informar', valor: carlosId } },
-    },
+    { natureza_mensagem: 'resposta', alteracoes: { paciente_id: { acao: 'informar', valor: carlosId } } },
   ]);
   const resultado = await processarMensagem(m, new ClienteFalso(tabelas), new ClienteRpcFalso({}), {
     provider: PROVIDER,
@@ -597,9 +614,10 @@ test('19b: escolha no contato de destino so aceita paciente_id da lista fresca D
     instante_atual: INSTANTE_ATUAL,
   });
 
-  // o id do Carlos foi descartado (nao esta na lista do contato de destino)
-  // -> a selecao NAO virou Carlos, e continua pedindo a escolha do destino
+  // rejeitado: validarEscolhaPaciente descartou o id do Carlos (nao esta na
+  // lista do contato de destino) -- selecao NAO virou Carlos
   assert.notEqual(tabelas.estado_conversa[0].paciente_id, carlosId);
+  assert.equal(tabelas.estado_conversa[0].paciente_id, null);
   assert.equal(resultado.decisao.tipo, 'aguardando_escolha_paciente');
 });
 
@@ -693,4 +711,209 @@ test('campos do fluxo "outra pessoa" (vinculo/telefone) saem de dados ao desisti
   const dados = tabelas.estado_conversa[0].dados as Record<string, unknown>;
   assert.ok(!('vinculo_novo_paciente' in dados) || dados.vinculo_novo_paciente === undefined);
   assert.ok(!('telefone_novo_paciente' in dados) || dados.telefone_novo_paciente === undefined);
+});
+
+// ── #2: ramo `dependente` envia vinculo: 'dependente' na RPC ────────────
+
+test('dependente: a criacao da ficha envia p_vinculo="dependente" na RPC (nao cai no default titular)', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const clinicaId = semearClinica(tabelas);
+  const contatoId = semearContato(tabelas, clinicaId);
+  semearPaciente(tabelas, clinicaId, contatoId, { nome: 'Carlos', vinculo: 'titular' });
+  const proc = tabelas.procedimentos_catalogo[0].id as string;
+  const dent = (tabelas.clinicas[0].dentistas as Record<string, unknown>[])[0].id as string;
+  // fluxo "outra pessoa": ja respondeu "vinculado a este numero", cadastro
+  // completo da pessoa nova acumulado, horario ja proposto -> so falta o "sim".
+  tabelas.estado_conversa.push({
+    id: crypto.randomUUID(),
+    clinica_id: clinicaId,
+    telefone_normalizado: TELEFONE,
+    estado: 'atendimento',
+    dados: {
+      vinculo_novo_paciente: 'dependente',
+      nome: 'Marta Silva',
+      cpf: '52998224725',
+      data_nascimento: '1950-07-07',
+      procedimento_id: proc,
+      data_texto: 'hoje',
+      horario_texto: '10:00',
+    },
+    paciente_id: null,
+    atualizado_em: new Date('2026-08-01T00:00:00.000Z').toISOString(),
+  });
+
+  const novoId = crypto.randomUUID();
+  const agId = crypto.randomUUID();
+  const rpc = new ClienteRpcFalso({
+    cappia_persistir_paciente: { data: { sucesso: true, paciente_id: novoId }, error: null },
+    cappia_reservar_agendamento: {
+      data: { sucesso: true, agendamento_id: agId, dentista_id: dent, duracao_min: 30, data: '2026-08-03', horario: '10:00' },
+      error: null,
+    },
+  });
+  const m = new ClienteModeloFalso([
+    { natureza_mensagem: 'resposta', alteracoes: { confirmacao: { acao: 'informar', valor: 'sim' } } },
+  ]);
+  await processarMensagem(m, new ClienteFalso(tabelas), rpc, {
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA,
+    telefone_normalizado: TELEFONE,
+    mensagens_atuais: ['pode confirmar'],
+    instante_atual: INSTANTE_ATUAL,
+  });
+
+  const criacao = rpc.chamadas.find((c) => c.nome === 'cappia_persistir_paciente');
+  assert.ok(criacao, 'persistirPaciente deveria ter sido chamada para criar a dependente');
+  assert.equal(criacao!.parametros.p_vinculo, 'dependente');
+  // INSERT (sem p_paciente_id) e no contato DESTA conversa
+  assert.ok(!Object.prototype.hasOwnProperty.call(criacao!.parametros, 'p_paciente_id'));
+  assert.equal(criacao!.parametros.p_contato_id, contatoId);
+});
+
+// ── #4: na troca, dados NOVOS de Marta (fornecidos no turno) sao
+//    PRESERVADOS; so o snapshot antigo de Carlos e limpo ──────────────────
+
+test('troca preserva o cadastro de Marta emitido no MESMO turno e apaga so o snapshot de Carlos', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const clinicaId = semearClinica(tabelas);
+  const contatoId = semearContato(tabelas, clinicaId);
+  const carlosId = semearPaciente(tabelas, clinicaId, contatoId, {
+    nome: 'Carlos',
+    vinculo: 'titular',
+    documento: '11144477735',
+    data_nascimento: '1980-03-03',
+  });
+  const martaId = semearPaciente(tabelas, clinicaId, contatoId, { nome: 'Marta', vinculo: 'dependente' });
+  // Carlos era o selecionado, com o SNAPSHOT OPERACIONAL do assunto dele
+  // acumulado em `dados` (o cadastral dele mora na ficha, nao aqui).
+  tabelas.estado_conversa.push({
+    id: crypto.randomUUID(),
+    clinica_id: clinicaId,
+    telefone_normalizado: TELEFONE,
+    estado: 'atendimento',
+    dados: {
+      procedimento_id: 'proc-do-carlos',
+      data_texto: 'amanha',
+      horario_texto: '09:00',
+      // um dado cadastral que Carlos chegou a dar na conversa e que NAO
+      // pertence a Marta -- tem de sumir na troca.
+      email: 'carlos@antigo.test',
+    },
+    paciente_id: carlosId,
+    atualizado_em: new Date('2026-08-01T00:00:00.000Z').toISOString(),
+  });
+
+  // ESTE turno: identifica a Marta E ja traz o nome/nascimento DELA.
+  const m = modelo({
+    natureza_mensagem: 'pedido',
+    alteracoes: {
+      paciente_id: { acao: 'informar', valor: martaId },
+      nome: { acao: 'informar', valor: 'Marta Silva Prado' },
+      data_nascimento: { acao: 'informar', valor: '1950-07-07' },
+    },
+    atendimento_para_terceiro: true,
+  });
+  await processar(tabelas, m, 'e pra minha mae Marta Silva Prado, nasceu 07/07/1950');
+
+  assert.equal(tabelas.estado_conversa[0].paciente_id, martaId);
+  const dados = tabelas.estado_conversa[0].dados as Record<string, unknown>;
+  // OPERACIONAIS de Carlos: apagados
+  for (const campo of ['procedimento_id', 'data_texto', 'horario_texto']) {
+    assert.ok(!(campo in dados) || dados[campo] === undefined, `${campo} (de Carlos) deveria ter sido limpo`);
+  }
+  // CADASTRAL de Carlos que o turno NAO tocou (email): apagado (era snapshot dele)
+  assert.ok(!('email' in dados) || dados.email === undefined, 'o email antigo de Carlos deveria ter sido limpo');
+  // CADASTRAIS que o turno emitiu para MARTA: preservados (nao apagados na troca)
+  assert.equal(dados.nome, 'Marta Silva Prado');
+  assert.equal(dados.data_nascimento, '1950-07-07');
+  // a ficha do Carlos no banco: intacta
+  const carlos = tabelas.pacientes.find((p) => p.id === carlosId)!;
+  assert.equal(carlos.nome, 'Carlos');
+  assert.equal(carlos.documento, '11144477735');
+  assert.equal(carlos.data_nascimento, '1980-03-03');
+});
+
+// ── PERCURSO REAL COMPLETO: Carlos inicia avaliacao para a mae ──────────
+
+test('percurso: Carlos ja informou procedimento/data, cadastra a mae (dependente), reserva usa SO os dados dela; Carlos intacto', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const clinicaId = semearClinica(tabelas);
+  const contatoId = semearContato(tabelas, clinicaId);
+  const carlosId = semearPaciente(tabelas, clinicaId, contatoId, {
+    nome: 'Carlos',
+    vinculo: 'titular',
+    documento: '11144477735',
+    data_nascimento: '1980-03-03',
+    email: 'carlos@exemplo.test',
+  });
+  const proc = tabelas.procedimentos_catalogo[0].id as string;
+  const dent = (tabelas.clinicas[0].dentistas as Record<string, unknown>[])[0].id as string;
+  const carlosAntes = { ...tabelas.pacientes.find((p) => p.id === carlosId)! };
+
+  // Estado apos varios turnos: Carlos ja informou procedimento+data para a mae,
+  // ja respondeu "vinculado a este numero", ja completou o cadastro DELA, e o
+  // horario ja foi proposto. Este turno e o "pode confirmar".
+  tabelas.estado_conversa.push({
+    id: crypto.randomUUID(),
+    clinica_id: clinicaId,
+    telefone_normalizado: TELEFONE,
+    estado: 'atendimento',
+    dados: {
+      vinculo_novo_paciente: 'dependente',
+      procedimento_id: proc,
+      data_texto: 'hoje',
+      horario_texto: '10:00',
+      nome: 'Marta Cappello',
+      cpf: '52998224725',
+      data_nascimento: '1950-11-20',
+    },
+    paciente_id: null,
+    atualizado_em: new Date('2026-08-01T00:00:00.000Z').toISOString(),
+  });
+
+  const martaId = crypto.randomUUID();
+  const agId = crypto.randomUUID();
+  const rpc = new ClienteRpcFalso({
+    cappia_persistir_paciente: { data: { sucesso: true, paciente_id: martaId }, error: null },
+    cappia_reservar_agendamento: {
+      data: { sucesso: true, agendamento_id: agId, dentista_id: dent, duracao_min: 30, data: '2026-08-03', horario: '10:00' },
+      error: null,
+    },
+  });
+  const m = new ClienteModeloFalso([
+    { natureza_mensagem: 'resposta', alteracoes: { confirmacao: { acao: 'informar', valor: 'sim' } } },
+  ]);
+  const resultado = await processarMensagem(m, new ClienteFalso(tabelas), rpc, {
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA,
+    telefone_normalizado: TELEFONE,
+    mensagens_atuais: ['pode confirmar'],
+    instante_atual: INSTANTE_ATUAL,
+  });
+
+  assert.equal(resultado.decisao.tipo, 'reserva_criada');
+
+  // a MARTA foi criada como dependente do contato do Carlos, com O CADASTRO DELA
+  const criacao = rpc.chamadas.find((c) => c.nome === 'cappia_persistir_paciente')!;
+  assert.equal(criacao.parametros.p_vinculo, 'dependente');
+  assert.equal(criacao.parametros.p_contato_id, contatoId);
+  assert.equal(criacao.parametros.p_nome, 'Marta Cappello');
+  assert.equal(criacao.parametros.p_documento, '52998224725');
+  assert.equal(criacao.parametros.p_data_nascimento, '1950-11-20');
+
+  // a RESERVA usou EXCLUSIVAMENTE o paciente_id da Marta e a ficha dela
+  const reserva = rpc.chamadas.find((c) => c.nome === 'cappia_reservar_agendamento')!;
+  assert.equal(reserva.parametros.p_paciente_id, martaId);
+  assert.notEqual(reserva.parametros.p_paciente_id, carlosId);
+  assert.equal(reserva.parametros.p_nome, 'Marta Cappello');
+  assert.equal(reserva.parametros.p_documento, '52998224725');
+
+  // a ficha do Carlos: bit a bit intacta
+  const carlosDepois = tabelas.pacientes.find((p) => p.id === carlosId)!;
+  assert.deepEqual(carlosDepois, carlosAntes);
+
+  // selecao limpa ao concluir; campos do fluxo "outra pessoa" tambem
+  assert.equal(tabelas.estado_conversa[0].paciente_id, null);
+  const dadosFinais = tabelas.estado_conversa[0].dados as Record<string, unknown>;
+  assert.ok(!('vinculo_novo_paciente' in dadosFinais) || dadosFinais.vinculo_novo_paciente === undefined);
 });

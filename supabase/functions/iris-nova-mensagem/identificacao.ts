@@ -178,6 +178,7 @@ export async function identificarConversa(
       paciente_id: p.id,
       nome: p.nome,
       vinculo: p.vinculo,
+      cadastro: p.cadastro,
     })),
     paciente: {
       encontrado: resolvido !== null,
@@ -188,6 +189,9 @@ export async function identificarConversa(
       id: conversa.id,
       estado: conversa.estado as EstadoConversa,
       dados: (conversa.dados as Record<string, unknown>) ?? {},
+      // Valor BRUTO da selecao (spec secao 4.4): quem decide se ha "paciente
+      // anterior" com snapshot a limpar e a selecao gravada, nunca o resolvido.
+      selecao_gravada: conversa.paciente_id,
       atualizado_em: conversa.atualizado_em,
       contexto_horarios: conversa.contexto_horarios,
       historico_conversa: conversa.historico_conversa,

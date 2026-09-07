@@ -178,6 +178,15 @@ export interface PacienteDoContato {
   paciente_id: string;
   nome: string;
   vinculo: VinculoPaciente;
+  /**
+   * Cadastro oficial ja persistido deste paciente (mesma disciplina de
+   * `ResultadoIdentificacao.paciente.cadastro`). `{}` quando nao ha nenhum
+   * dado preenchido. Usado pelo orquestrador ao TROCAR a selecao: a reserva
+   * precisa da ficha da pessoa CERTA, nao da resolvida na identificacao.
+   * NUNCA vai ao payload do modelo por valor (so presenca, em
+   * `campos_cadastrais_preenchidos`).
+   */
+  cadastro: CadastroPaciente;
 }
 
 export interface ResultadoIdentificacao {
@@ -218,6 +227,15 @@ export interface ResultadoIdentificacao {
     id: string;
     estado: EstadoConversa;
     dados: Record<string, unknown>;
+    /**
+     * Selecao de paciente GRAVADA em `estado_conversa.paciente_id` -- o valor
+     * bruto, NAO o resolvido (specs/contato-multiplos-pacientes-v1.md secao
+     * 4.4). `null` quando nenhuma selecao foi escrita: nesse caso `paciente.id`
+     * pode ainda estar preenchido pelo fallback "unico paciente do contato",
+     * mas isso NAO conta como "paciente anterior" para a limpeza da troca --
+     * so uma selecao gravada de verdade tem snapshot a limpar.
+     */
+    selecao_gravada: string | null;
     // Exposto (aditivo) para que a gravacao de contexto_horarios use o
     // `atualizado_em` EXATO do estado sobre o qual a decisao foi calculada,
     // sem reler antes do UPDATE -- ver contexto-horarios.ts.
