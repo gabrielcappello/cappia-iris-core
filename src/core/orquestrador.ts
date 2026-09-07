@@ -273,17 +273,32 @@ export async function processarMensagem(
       ? dadosAntesDoTurno.telefone_novo_paciente
       : null;
 
+  const destinoParaLista =
+    telefoneDestinoParaLista !== null
+      ? await resolverContatoDeDestino(clienteBanco, identificacao.clinica_id, telefoneDestinoParaLista)
+      : null;
+
   const pacientesParaEscolha: readonly {
     paciente_id: string;
     nome: string;
     vinculo: 'titular' | 'dependente';
     cadastro: CadastroPaciente;
   }[] =
-    telefoneDestinoParaLista !== null
-      ? (await resolverContatoDeDestino(clienteBanco, identificacao.clinica_id, telefoneDestinoParaLista)).pacientes.map(
-          (p) => ({ paciente_id: p.paciente_id, nome: p.nome, vinculo: p.vinculo, cadastro: p.cadastro })
-        )
+    destinoParaLista !== null
+      ? destinoParaLista.pacientes.map((p) => ({
+          paciente_id: p.paciente_id,
+          nome: p.nome,
+          vinculo: p.vinculo,
+          cadastro: p.cadastro,
+        }))
       : identificacao.pacientes;
+
+  // Contato/telefone A QUE `pacientesParaEscolha` pertence -- o de DESTINO
+  // quando ha fluxo "numero proprio", `null` (= a propria conversa) senao.
+  // Encaminha a identidade efetiva do paciente escolhido ate a
+  // persistencia/reserva (spec secao 4.5).
+  const contatoDaListaDeEscolha = destinoParaLista?.contato_id ?? null;
+  const telefoneDaListaDeEscolha = destinoParaLista !== null ? telefoneDestinoParaLista : null;
 
   const interpretacao = await interpretarEAplicar(clienteModelo, clienteBanco, {
     conversa_id: identificacao.conversa.id,
@@ -634,22 +649,24 @@ export async function processarMensagem(
     // fecha o estado operacional (specs/contato-multiplos-pacientes-v1.md
     // secao 4.4 "Quando a selecao e limpa" e secao 4.5 "sao limpos... quando
     // o fluxo conclui"). `estado_conversa.paciente_id` volta a `null`; os
-    // campos do fluxo de "outra pessoa" saem de `dados`. Best-effort pelo
-    // mesmo motivo de `limparCamposDeEstadoConcluido`: um fluxo ja concluido
-    // nunca vira erro para o paciente por causa de uma limpeza auxiliar.
+    // campos do fluxo de "outra pessoa" saem de `dados`.
+    //
+    // A limpeza da SELECAO nao e best-effort (revisao do Codex): um `catch`
+    // vazio aqui deixaria uma dependente do MESMO contato como selecao valida
+    // -- na proxima mensagem ela continua sendo tratada como interlocutora,
+    // porque a revalidacao da identificacao a aceita (ela pertence a lista do
+    // contato). `gravarSelecaoPaciente` ja tem o CAS proprio (le
+    // `atualizado_em`, condiciona o UPDATE, rele+retenta, e falha fechada com
+    // `ConflitoConcorrenteError` / `ConversaNaoEncontradaError`); deixamos a
+    // excecao PROPAGAR, com a mesma disciplina de
+    // `limparSnapshotDoPacienteAnterior`. Sem camada nem fallback novo.
     if (concluiuOuDesistiuDeFluxo(decisao)) {
-      try {
-        await gravarSelecaoPaciente(
-          clienteBanco,
-          identificacao.clinica_id,
-          entrada.telefone_normalizado,
-          null
-        );
-      } catch {
-        // Pior caso: o turno seguinte reencontra a selecao antiga -- a
-        // proxima resolucao de identificacao a revalida contra a lista fresca
-        // do contato, entao uma selecao obsoleta nao sobrevive.
-      }
+      await gravarSelecaoPaciente(
+        clienteBanco,
+        identificacao.clinica_id,
+        entrada.telefone_normalizado,
+        null
+      );
       atualizadoEmParaContexto = await limparCamposDeEstadoConcluido(
         clienteBanco,
         {
@@ -976,6 +993,11 @@ export async function processarMensagem(
     // `pacientesParaEscolha`). `decidir` nunca decide sobre a lista do
     // contato de quem conversa quando o assunto e o destino.
     pacientesParaEscolha,
+    // Contato/telefone A QUE `pacientesParaEscolha` pertence: o de DESTINO no
+    // fluxo "numero proprio", `null` (= a propria conversa) senao. Leva a
+    // identidade efetiva do escolhido ate persistencia/reserva.
+    contatoDaListaDeEscolha,
+    telefoneDaListaDeEscolha,
     interpretacao.atendimento_para_terceiro,
     interpretacao.outra_pessoa_alem_das_listadas
   );
@@ -1224,6 +1246,18 @@ const CAMPOS_CADASTRAIS_LIMPOS_NA_TROCA: readonly CampoDadosConversa[] = [
   'email',
 ];
 
+/**
+ * TODOS os campos que uma troca de selecao pode limpar (cadastrais +
+ * operacionais). Da troca, preserva-se apenas o subconjunto que o turno ATUAL
+ * emitiu para a pessoa nova -- cadastral OU operacional (spec secao 4.4: no
+ * primeiro turno "para minha mae" o paciente ja pode ter dado procedimento/
+ * data DELA junto). O resto e snapshot do paciente anterior e sai.
+ */
+const CAMPOS_LIMPAVEIS_NA_TROCA: readonly CampoDadosConversa[] = [
+  ...CAMPOS_OPERACIONAIS_LIMPOS_NA_TROCA,
+  ...CAMPOS_CADASTRAIS_LIMPOS_NA_TROCA,
+];
+
 /** Campos do fluxo "outra pessoa" (spec secao 4.5), limpos ao concluir/desistir dele. */
 const CAMPOS_FLUXO_OUTRA_PESSOA: readonly CampoDadosConversa[] = [
   'vinculo_novo_paciente',
@@ -1238,8 +1272,10 @@ const CAMPOS_FLUXO_OUTRA_PESSOA: readonly CampoDadosConversa[] = [
  * a troca inteira e a selecao NAO muda (requisito da revisao do Codex: "a
  * limpeza necessaria para trocar nao pode ser best-effort").
  *
- * Preserva os campos cadastrais que o turno ATUAL emitiu (`camposCadastraisDoTurno`):
- * eles descrevem a pessoa nova, nao o paciente anterior.
+ * Preserva os campos -- cadastrais OU operacionais -- que o turno ATUAL emitiu
+ * (`camposEmitidosNoTurno`): eles descrevem a pessoa nova, nao o paciente
+ * anterior (spec secao 4.4: "preserve alteracoes fornecidas no turno que
+ * identificou o terceiro ou durante o fluxo dele").
  *
  * Devolve o `dados` RESULTANTE (do banco, apos a limpeza) para o chamador
  * seguir o resto do turno com o objeto correto -- nunca com o `dados` antigo
@@ -1248,12 +1284,9 @@ const CAMPOS_FLUXO_OUTRA_PESSOA: readonly CampoDadosConversa[] = [
 async function limparSnapshotDoPacienteAnterior(
   clienteBanco: ClienteBancoDados,
   contexto: ContextoConversa,
-  camposCadastraisDoTurno: ReadonlySet<CampoDadosConversa>
+  camposEmitidosNoTurno: ReadonlySet<CampoDadosConversa>
 ): Promise<Record<string, string | undefined>> {
-  const cadastraisParaLimpar = CAMPOS_CADASTRAIS_LIMPOS_NA_TROCA.filter(
-    (campo) => !camposCadastraisDoTurno.has(campo)
-  );
-  const campos = [...CAMPOS_OPERACIONAIS_LIMPOS_NA_TROCA, ...cadastraisParaLimpar];
+  const campos = CAMPOS_LIMPAVEIS_NA_TROCA.filter((campo) => !camposEmitidosNoTurno.has(campo));
   const alteracoes = Object.fromEntries(campos.map((campo) => [campo, { acao: 'remover' as const }]));
   // `aplicarDados` faz o proprio CAS/retry; um erro dele PROPAGA daqui.
   const resultado = await aplicarDados(clienteBanco, { ...contexto, alteracoes });
@@ -1296,6 +1329,15 @@ type ResultadoSelecaoPaciente =
        * um paciente que ja existe.
        */
       cadastroDoSelecionado: CadastroPaciente;
+      /**
+       * IDENTIDADE EFETIVA do paciente selecionado (spec secao 4.5, passo 4/5).
+       * No ramo "numero proprio" o paciente vive num contato DIFERENTE do de
+       * quem conversa -- um UPDATE de cadastro por `(paciente_id, contato_id)`
+       * ou uma reserva precisam do contato/telefone DELE, nao os do Carlos.
+       * Fora desse ramo sao o contato/telefone da propria conversa.
+       */
+      contatoDoSelecionado: string;
+      telefoneDoSelecionado: string;
     }
   | { decisao: DecisaoOrquestrador };
 
@@ -1335,9 +1377,22 @@ async function resolverSelecaoDePaciente(ctx: {
     vinculo: 'titular' | 'dependente';
     cadastro: CadastroPaciente;
   }[];
+  /**
+   * Contato/telefone A QUE `pacientesDoContato` pertence. `null` quando e o
+   * proprio contato desta conversa (caso normal); preenchido com o contato de
+   * DESTINO quando ha fluxo "numero proprio" (a lista veio de
+   * `resolverContatoDeDestino`). Serve para a identidade efetiva do paciente
+   * escolhido chegar correta a persistencia/reserva.
+   */
+  contatoDaListaDeEscolha: string | null;
+  telefoneDaListaDeEscolha: string | null;
   dados: Record<string, string | undefined>;
-  /** Campos cadastrais que o turno ATUAL emitiu -- descrevem a pessoa nova, nunca o anterior. */
-  camposCadastraisDoTurno: ReadonlySet<CampoDadosConversa>;
+  /**
+   * Campos -- cadastrais OU operacionais -- que o turno ATUAL emitiu.
+   * Descrevem a pessoa nova (o terceiro), nunca o paciente anterior, entao a
+   * limpeza da troca os PRESERVA (spec secao 4.4).
+   */
+  camposEmitidosNoTurno: ReadonlySet<CampoDadosConversa>;
   atendimentoParaTerceiro: boolean;
   outraPessoaAlemDasListadas: boolean;
 }): Promise<ResultadoSelecaoPaciente> {
@@ -1345,6 +1400,7 @@ async function resolverSelecaoDePaciente(ctx: {
     clienteBanco,
     clienteRpc,
     clinicaId,
+    contatoId,
     conversaId,
     telefoneNormalizado,
     pacienteSelecionadoAtual,
@@ -1352,8 +1408,10 @@ async function resolverSelecaoDePaciente(ctx: {
     cadastroDoResolvidoNaIdentificacao,
     pacienteIdEmitido,
     pacientesDoContato,
+    contatoDaListaDeEscolha,
+    telefoneDaListaDeEscolha,
     dados,
-    camposCadastraisDoTurno,
+    camposEmitidosNoTurno,
     atendimentoParaTerceiro,
     outraPessoaAlemDasListadas,
   } = ctx;
@@ -1362,38 +1420,78 @@ async function resolverSelecaoDePaciente(ctx: {
   const cadastroDe = (id: string): CadastroPaciente =>
     pacientesDoContato.find((p) => p.paciente_id === id)?.cadastro ?? cadastroVazio;
 
+  // IDENTIDADE EFETIVA de um paciente da LISTA que a IA escolheu. Quando ha
+  // fluxo "numero proprio", `pacientesDoContato` ja e a lista do contato de
+  // DESTINO -- entao o contato/telefone do escolhido sao os do destino, nunca
+  // os da conversa (spec secao 4.5). Fora do fluxo, e a propria conversa.
+  const idComoDaLista = (id: string): boolean =>
+    pacientesDoContato.some((p) => p.paciente_id === id);
+  const contatoEfetivoDe = (id: string): string =>
+    idComoDaLista(id) && contatoDaListaDeEscolha !== null ? contatoDaListaDeEscolha : contatoId;
+  const telefoneEfetivoDe = (id: string): string =>
+    idComoDaLista(id) && telefoneDaListaDeEscolha !== null ? telefoneDaListaDeEscolha : telefoneNormalizado;
+
   const contextoConversa: ContextoConversa = {
     conversa_id: conversaId,
     clinica_id: clinicaId,
     telefone_normalizado: telefoneNormalizado,
   };
 
+  // HA UM PACIENTE ANTERIOR cujo snapshot em `dados` precisa ser limpo? (spec
+  // secao 4.4). Duas situacoes disparam:
+  //   - uma selecao GRAVADA de verdade em `estado_conversa.paciente_id`; OU
+  //   - `atendimento_para_terceiro` NESTE turno com um paciente resolvido
+  //     (ainda que so pelo fallback "unico paciente do contato"): "na verdade
+  //     e para minha mae" logo apos Carlos ter dado procedimento/data DELE --
+  //     esse snapshot e do Carlos e nao pode ir para a mae.
+  // Fora desses casos, `selecaoGravada === null` significa que o `dados`
+  // acumulado pertence ao fluxo em curso da propria pessoa nova -- nao se
+  // apaga.
+  const haPacienteAnteriorParaLimpar =
+    selecaoGravada !== null || (atendimentoParaTerceiro && pacienteSelecionadoAtual !== null);
+
+  // MUTAVEL: apos qualquer limpeza aqui, e o `dados` RELIDO do banco que segue
+  // para o resto do turno -- nunca o objeto antigo em memoria.
+  let dadosCorrente = dados;
+
+  // DESACOPLAR DO PACIENTE ANTERIOR -- feito UMA vez, no primeiro turno em que
+  // o fluxo deixa de ser sobre o paciente resolvido (spec secao 4.4). Vale
+  // mesmo quando o desfecho deste turno e so uma pergunta
+  // (`pedir_vinculo_paciente_novo` / `pedir_telefone_paciente_novo`): o
+  // snapshot do Carlos nao pode sobreviver ate o turno em que a dependente e
+  // criada. Preserva o que o turno emitiu para o terceiro. ESTRITO: se a
+  // limpeza falhar, propaga e nada muda.
+  if (haPacienteAnteriorParaLimpar && selecaoGravada === null && pacienteIdEmitido === undefined) {
+    dadosCorrente = await limparSnapshotDoPacienteAnterior(
+      clienteBanco,
+      contextoConversa,
+      camposEmitidosNoTurno
+    );
+  }
+
   /**
    * Troca a selecao para `novo` (ou `null`): PRIMEIRO limpa o snapshot do
    * paciente anterior (estrito -- lanca se falhar), SO ENTAO grava a nova
-   * selecao. Devolve o `dados` resultante.
-   *
-   * A limpeza do snapshot so acontece quando havia mesmo um PACIENTE ANTERIOR
-   * -- uma selecao GRAVADA de verdade -- da qual estamos saindo (spec secao
-   * 4.4). Se nao ha selecao gravada (`selecaoGravada === null`), o que `dados`
-   * acumulou pertence ao fluxo em curso (o da propria pessoa nova, no ramo
-   * "outra pessoa") e NAO pode ser apagado -- so gravamos a selecao, sem
-   * mexer em `dados`. E se `novo` ja e a selecao gravada, nada muda.
+   * selecao. Devolve o `dados` resultante. Se nao ha nada a trocar nem a
+   * limpar, devolve `dadosCorrente` intacto. A limpeza SEMPRE preserva os
+   * campos que o turno atual emitiu para o terceiro (`camposEmitidosNoTurno`).
    */
   const trocarSelecaoPara = async (
     novo: string | null
   ): Promise<Record<string, string | undefined>> => {
-    if (novo === (selecaoGravada ?? null)) return dados;
-    if (selecaoGravada === null) {
-      // Nao ha paciente anterior: nenhum snapshot a limpar. Grava a selecao e
-      // segue com o `dados` como esta (pertence ao fluxo da pessoa nova).
-      await gravarSelecaoPaciente(clienteBanco, clinicaId, telefoneNormalizado, novo);
-      return dados;
+    const selecaoJaEhAlvo = novo === (selecaoGravada ?? null);
+    // A limpeza upfront acima ja cobriu o caso `selecaoGravada === null`.
+    // Aqui so resta o caso de uma selecao GRAVADA de verdade da qual saimos.
+    if (selecaoGravada === null || selecaoJaEhAlvo) {
+      if (!selecaoJaEhAlvo) {
+        await gravarSelecaoPaciente(clienteBanco, clinicaId, telefoneNormalizado, novo);
+      }
+      return dadosCorrente;
     }
     const dadosLimpos = await limparSnapshotDoPacienteAnterior(
       clienteBanco,
       contextoConversa,
-      camposCadastraisDoTurno
+      camposEmitidosNoTurno
     );
     await gravarSelecaoPaciente(clienteBanco, clinicaId, telefoneNormalizado, novo);
     return dadosLimpos;
@@ -1409,17 +1507,20 @@ async function resolverSelecaoDePaciente(ctx: {
       dados: dadosPos,
       // `pacientesDoContato` ja e a lista fresca da qual `validarEscolhaPaciente`
       // aprovou o id -- do contato de destino no fluxo "numero proprio", do
-      // contato atual senao. O cadastro sai dela.
+      // contato atual senao. O cadastro E a identidade (contato/telefone) saem
+      // dela.
       cadastroDoSelecionado:
         pacienteIdEmitido === pacienteSelecionadoAtual
           ? cadastroDoResolvidoNaIdentificacao
           : cadastroDe(pacienteIdEmitido),
+      contatoDoSelecionado: contatoEfetivoDe(pacienteIdEmitido),
+      telefoneDoSelecionado: telefoneEfetivoDe(pacienteIdEmitido),
     };
   }
 
   // --- (B) Fluxo "outra pessoa alem das listadas" em andamento. ---
-  const vinculoNovo = dados.vinculo_novo_paciente;
-  const telefoneNovo = dados.telefone_novo_paciente;
+  const vinculoNovo = dadosCorrente.vinculo_novo_paciente;
+  const telefoneNovo = dadosCorrente.telefone_novo_paciente;
   const fluxoOutraPessoaAberto =
     outraPessoaAlemDasListadas || vinculoNovo !== undefined || telefoneNovo !== undefined;
 
@@ -1436,8 +1537,15 @@ async function resolverSelecaoDePaciente(ctx: {
     if (vinculoNovo === 'dependente') {
       const dadosPos = await trocarSelecaoPara(null);
       // Paciente novo, sem ficha ainda -- cadastro vazio; `decidirConfirmacaoOuReserva`
-      // cria a partir do que o turno acumulou em `dados`.
-      return { pacienteId: null, dados: dadosPos, cadastroDoSelecionado: cadastroVazio };
+      // cria a partir do que o turno acumulou em `dados`. A dependente vive no
+      // contato DESTA conversa (spec secao 4.5, passo 3).
+      return {
+        pacienteId: null,
+        dados: dadosPos,
+        cadastroDoSelecionado: cadastroVazio,
+        contatoDoSelecionado: contatoId,
+        telefoneDoSelecionado: telefoneNormalizado,
+      };
     }
 
     // B3. "numero proprio" -- spec secao 4.5, passo 4.
@@ -1456,9 +1564,18 @@ async function resolverSelecaoDePaciente(ctx: {
     if (destino.contato_id !== null && destino.pacientes.length === 1) {
       // Reusa o cadastro existente. Grava a selecao (cross-contato -- a
       // identificacao do proximo turno a aceita relendo `telefone_novo_paciente`).
+      // A identidade efetiva e a do contato de DESTINO, nunca a da conversa
+      // (spec secao 4.5, passo 4): um UPDATE de cadastro ou uma reserva desta
+      // pessoa usa o contato/telefone dela.
       const reusado = destino.pacientes[0];
       const dadosPos = await trocarSelecaoPara(reusado.paciente_id);
-      return { pacienteId: reusado.paciente_id, dados: dadosPos, cadastroDoSelecionado: reusado.cadastro };
+      return {
+        pacienteId: reusado.paciente_id,
+        dados: dadosPos,
+        cadastroDoSelecionado: reusado.cadastro,
+        contatoDoSelecionado: destino.contato_id,
+        telefoneDoSelecionado: telefoneNovo,
+      };
     }
 
     if (destino.contato_id !== null && destino.pacientes.length > 1) {
@@ -1481,8 +1598,8 @@ async function resolverSelecaoDePaciente(ctx: {
       conversaId,
       telefoneNovo,
       telefoneNormalizadoDaConversa: telefoneNormalizado,
-      dados,
-      camposCadastraisDoTurno,
+      dados: dadosCorrente,
+      camposEmitidosNoTurno,
     });
   }
 
@@ -1503,10 +1620,13 @@ async function resolverSelecaoDePaciente(ctx: {
   }
 
   // --- (D) Nada a fazer: segue com o paciente resolvido pela identificacao. ---
+  //         Identidade efetiva = o proprio contato/telefone desta conversa.
   return {
     pacienteId: pacienteSelecionadoAtual,
-    dados,
+    dados: dadosCorrente,
     cadastroDoSelecionado: cadastroDoResolvidoNaIdentificacao,
+    contatoDoSelecionado: contatoId,
+    telefoneDoSelecionado: telefoneNormalizado,
   };
 }
 
@@ -1525,7 +1645,7 @@ async function decidirCadastroPacienteNumeroProprio(ctx: {
   telefoneNovo: string;
   telefoneNormalizadoDaConversa: string;
   dados: Record<string, string | undefined>;
-  camposCadastraisDoTurno: ReadonlySet<CampoDadosConversa>;
+  camposEmitidosNoTurno: ReadonlySet<CampoDadosConversa>;
 }): Promise<ResultadoSelecaoPaciente> {
   const {
     clienteRpc,
@@ -1535,7 +1655,7 @@ async function decidirCadastroPacienteNumeroProprio(ctx: {
     telefoneNovo,
     telefoneNormalizadoDaConversa,
     dados,
-    camposCadastraisDoTurno,
+    camposEmitidosNoTurno,
   } = ctx;
 
   // Visao efetiva do cadastro da PESSOA NOVA vem SO de `dados` (nunca de uma
@@ -1572,13 +1692,13 @@ async function decidirCadastroPacienteNumeroProprio(ctx: {
   }
 
   // Troca de selecao para a pessoa recem-criada (cross-contato, spec secao
-  // 4.5, passo 5): PRIMEIRO limpa o snapshot operacional acumulado
-  // (estrito -- lanca se falhar), SO ENTAO grava a selecao. Os campos
-  // cadastrais que o turno emitiu para ela sao preservados.
+  // 4.5, passo 5): PRIMEIRO limpa o snapshot acumulado do paciente anterior
+  // (estrito -- lanca se falhar), SO ENTAO grava a selecao. Os campos que o
+  // turno emitiu para ela (cadastrais E operacionais) sao preservados.
   const dadosLimpos = await limparSnapshotDoPacienteAnterior(
     clienteBanco,
     { conversa_id: conversaId, clinica_id: clinicaId, telefone_normalizado: telefoneNormalizadoDaConversa },
-    camposCadastraisDoTurno
+    camposEmitidosNoTurno
   );
   await gravarSelecaoPaciente(
     clienteBanco,
@@ -1586,8 +1706,16 @@ async function decidirCadastroPacienteNumeroProprio(ctx: {
     telefoneNormalizadoDaConversa,
     persistencia.paciente_id
   );
-  // A ficha da pessoa nova e exatamente o que acabou de ser persistido.
-  return { pacienteId: persistencia.paciente_id, dados: dadosLimpos, cadastroDoSelecionado: visaoEfetiva };
+  // A ficha da pessoa nova e exatamente o que acabou de ser persistido, no
+  // contato de DESTINO (`contatoDestinoId` / `telefoneNovo`) -- nunca o da
+  // conversa. Uma divergencia cadastral posterior deve ir para esse contato.
+  return {
+    pacienteId: persistencia.paciente_id,
+    dados: dadosLimpos,
+    cadastroDoSelecionado: visaoEfetiva,
+    contatoDoSelecionado: contatoDestinoId,
+    telefoneDoSelecionado: telefoneNovo,
+  };
 }
 
 function camposParaLimparAoConcluir(
@@ -2222,6 +2350,14 @@ async function decidir(
     vinculo: 'titular' | 'dependente';
     cadastro: CadastroPaciente;
   }[],
+  /**
+   * Contato/telefone A QUE `pacientesDoContato` pertence. `null` = e o proprio
+   * contato desta conversa; preenchido com o contato de DESTINO quando ha
+   * fluxo "numero proprio". Encaminha a identidade efetiva do escolhido ate a
+   * persistencia/reserva (spec secao 4.5).
+   */
+  contatoDaListaDeEscolha: string | null,
+  telefoneDaListaDeEscolha: string | null,
   atendimentoParaTerceiro: boolean,
   outraPessoaAlemDasListadas: boolean
 ): Promise<{ decisao: DecisaoOrquestrador; substituicao?: { dentista_nome_exibido: string } }> {
@@ -2235,8 +2371,13 @@ async function decidir(
   // destino). Ao TROCAR a selecao, limpa (ESTRITO, nunca best-effort) o
   // snapshot acumulado do paciente anterior em `dados` -- e o resto do turno
   // segue com o `dados` RELIDO e o cadastro da pessoa certa (spec secao 4.4).
-  const camposCadastraisDoTurno = new Set<CampoDadosConversa>(
-    CAMPOS_CADASTRAIS_LIMPOS_NA_TROCA.filter(
+  // Campos -- cadastrais E operacionais -- que o turno ATUAL emitiu. A limpeza
+  // da troca os preserva: descrevem o terceiro, nunca o paciente anterior
+  // (spec secao 4.4: "preserve alteracoes fornecidas no turno que identificou
+  // o terceiro ou durante o fluxo dele" -- inclui procedimento/data que a
+  // pessoa ja tenha dado junto do "para minha mae").
+  const camposEmitidosNoTurno = new Set<CampoDadosConversa>(
+    CAMPOS_LIMPAVEIS_NA_TROCA.filter(
       (campo) => lerAlteracaoStringInformada(alteracoesDoTurno[campo]) !== undefined
     )
   );
@@ -2253,8 +2394,10 @@ async function decidir(
     cadastroDoResolvidoNaIdentificacao: cadastroFicha,
     pacienteIdEmitido: lerAlteracaoStringInformada(alteracoesDoTurno.paciente_id),
     pacientesDoContato,
+    contatoDaListaDeEscolha,
+    telefoneDaListaDeEscolha,
     dados,
-    camposCadastraisDoTurno,
+    camposEmitidosNoTurno,
     atendimentoParaTerceiro,
     outraPessoaAlemDasListadas,
   });
@@ -2262,12 +2405,15 @@ async function decidir(
     return { decisao: selecao.decisao };
   }
   pacienteId = selecao.pacienteId;
-  // DAQUI EM DIANTE: o `dados` e o cadastro sao os da pessoa EFETIVAMENTE
-  // selecionada -- nunca mais os do paciente resolvido na identificacao
-  // quando houve troca (requisito da revisao do Codex: "continua processando
-  // com o objeto local `dados` antigo").
+  // DAQUI EM DIANTE: o `dados`, o cadastro e a IDENTIDADE (contato/telefone)
+  // sao os da pessoa EFETIVAMENTE selecionada -- nunca mais os do paciente
+  // resolvido na identificacao quando houve troca (requisito das revisoes do
+  // Codex: "continua processando com o objeto local antigo" / "usa o
+  // contato/telefone do Carlos no fim do fluxo").
   dados = selecao.dados;
   cadastroFicha = selecao.cadastroDoSelecionado;
+  const contatoDoPaciente = selecao.contatoDoSelecionado;
+  const telefoneDoPaciente = selecao.telefoneDoSelecionado;
 
   // CORRECAO DE CADASTRO FORA DO AGENDAMENTO (2026-09-01,
   // specs/correcao-cadastro-conversacional-v1.md).
@@ -2302,9 +2448,12 @@ async function decidir(
       decisao: await aplicarCorrecaoCadastro(
         clienteRpc,
         clinicaId,
-        contatoId,
+        // Identidade EFETIVA do paciente selecionado: um UPDATE por
+        // `(paciente_id, contato_id)` de alguem escolhido via "numero
+        // proprio" tem de usar o contato/telefone DELE (spec secao 4.5).
+        contatoDoPaciente,
         pacienteId,
-        telefoneNormalizado,
+        telefoneDoPaciente,
         dados,
         cadastroFicha,
         correcao.campos
@@ -2486,9 +2635,13 @@ async function decidir(
           await decidirConfirmacaoOuReserva(
             clienteRpc,
             clinicaId,
-            contatoId,
+            // IDENTIDADE EFETIVA do paciente selecionado, nao a da conversa:
+            // no ramo "numero proprio" a pessoa vive noutro contato/telefone
+            // (spec secao 4.5). Persistencia por `(paciente_id, contato_id)` e
+            // reserva por telefone precisam dos valores DELA.
+            contatoDoPaciente,
             pacienteId,
-            telefoneNormalizado,
+            telefoneDoPaciente,
             procedimentoIdEfetivo,
             nomeProcedimentoEfetivo(procedimentoIdEfetivo, catalogo),
             resolucaoDentista.dentistaId,
@@ -2556,8 +2709,15 @@ function cadastroDivergeDaFicha(visaoEfetiva: CadastroPaciente, ficha: CadastroP
 async function decidirConfirmacaoOuReserva(
   clienteRpc: ClienteRpc,
   clinicaId: string,
+  /**
+   * Contato do paciente EFETIVAMENTE selecionado -- ja e o contato de DESTINO
+   * quando a escolha veio do ramo "numero proprio" (spec secao 4.5), nunca o
+   * de quem conversa. `persistirPaciente` faz UPDATE/INSERT por
+   * `(paciente_id, contato_id)` com este valor.
+   */
   contatoId: string,
   pacienteId: string | null,
+  /** Telefone do paciente EFETIVAMENTE selecionado (idem: o de destino no ramo "numero proprio"). */
   telefoneNormalizado: string,
   procedimentoId: string,
   procedimentoNome: string,
@@ -2664,12 +2824,12 @@ async function decidirConfirmacaoOuReserva(
   if (pacienteId === null || cadastroDivergeDaFicha(visaoEfetiva, cadastroFicha)) {
     const persistencia = await persistirPaciente(clienteRpc, {
       clinica_id: clinicaId,
-      // Contato desta conversa (spec secao 5.2). `paciente_id` presente ->
-      // UPDATE do ja selecionado; ausente -> INSERT vinculado a este contato.
-      // O ramo "numero proprio" (spec secao 4.5, passo 4) e tratado antes, na
-      // decisao de escolha de paciente -- aqui `contatoId` e sempre o contato
-      // da conversa, e um INSERT aqui e ou o proprio titular, ou o
-      // `dependente` do fluxo de "outra pessoa" (via `vinculoParaCriacao`).
+      // Contato do paciente EFETIVAMENTE selecionado (spec secao 5.2 + 4.5).
+      // `paciente_id` presente -> UPDATE por `(paciente_id, contato_id)`;
+      // ausente -> INSERT vinculado a este contato. No ramo "numero proprio"
+      // este `contatoId` ja e o contato de DESTINO (a pessoa vive nele),
+      // encaminhado por `resolverSelecaoDePaciente` -- sem isto a RPC recusaria
+      // o UPDATE de uma Marta existente com `paciente_nao_encontrado`.
       contato_id: contatoId,
       ...(pacienteId !== null ? { paciente_id: pacienteId } : {}),
       telefone_normalizado: telefoneNormalizado,

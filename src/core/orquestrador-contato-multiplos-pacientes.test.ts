@@ -917,3 +917,281 @@ test('percurso: Carlos ja informou procedimento/data, cadastra a mae (dependente
   const dadosFinais = tabelas.estado_conversa[0].dados as Record<string, unknown>;
   assert.ok(!('vinculo_novo_paciente' in dadosFinais) || dadosFinais.vinculo_novo_paciente === undefined);
 });
+
+// ── 3a revisao, bloqueador 1: identidade EFETIVA (contato/telefone) do
+//    paciente de "numero proprio" chega a persistencia E a reserva ─────────
+
+test('numero proprio + paciente EXISTENTE no destino, com correcao cadastral: UPDATE e reserva usam o contato/telefone DELE, nunca os do Carlos', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const clinicaId = semearClinica(tabelas);
+  const proc = tabelas.procedimentos_catalogo[0].id as string;
+  const dent = (tabelas.clinicas[0].dentistas as Record<string, unknown>[])[0].id as string;
+
+  const contatoCarlos = semearContato(tabelas, clinicaId);
+  const carlosId = semearPaciente(tabelas, clinicaId, contatoCarlos, { nome: 'Carlos', vinculo: 'titular' });
+
+  // Marta ja e titular do PROPRIO contato (telefone dela), com cadastro
+  // INCOMPLETO -- falta CPF. Nenhuma relacao com o contato do Carlos.
+  const contatoMarta = semearContato(tabelas, clinicaId, TELEFONE_MARTA);
+  const martaId = semearPaciente(
+    tabelas,
+    clinicaId,
+    contatoMarta,
+    { nome: 'Marta Souza', vinculo: 'titular', data_nascimento: '1950-07-07' },
+    TELEFONE_MARTA
+  );
+
+  // Conversa do Carlos: fluxo "numero proprio" ja resolveu para a Marta
+  // existente (selecao cross-contato gravada), procedimento/data ja dados,
+  // horario ja proposto. ESTE turno traz o CPF que faltava + "sim".
+  tabelas.estado_conversa.push({
+    id: crypto.randomUUID(),
+    clinica_id: clinicaId,
+    telefone_normalizado: TELEFONE,
+    estado: 'atendimento',
+    dados: {
+      vinculo_novo_paciente: 'numero_proprio',
+      telefone_novo_paciente: TELEFONE_MARTA,
+      procedimento_id: proc,
+      data_texto: 'hoje',
+      horario_texto: '10:00',
+    },
+    paciente_id: martaId,
+    atualizado_em: new Date('2026-08-01T00:00:00.000Z').toISOString(),
+  });
+
+  const agId = crypto.randomUUID();
+  const rpc = new ClienteRpcFalso({
+    cappia_persistir_paciente: { data: { sucesso: true, paciente_id: martaId }, error: null },
+    cappia_reservar_agendamento: {
+      data: { sucesso: true, agendamento_id: agId, dentista_id: dent, duracao_min: 30, data: '2026-08-03', horario: '10:00' },
+      error: null,
+    },
+  });
+  const m = new ClienteModeloFalso([
+    {
+      natureza_mensagem: 'resposta',
+      alteracoes: {
+        cpf: { acao: 'informar', valor: '52998224725' },
+        confirmacao: { acao: 'informar', valor: 'sim' },
+      },
+    },
+  ]);
+  const resultado = await processarMensagem(m, new ClienteFalso(tabelas), rpc, {
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA,
+    telefone_normalizado: TELEFONE,
+    mensagens_atuais: ['o CPF dela e 529.982.247-25, pode confirmar'],
+    instante_atual: INSTANTE_ATUAL,
+  });
+
+  assert.equal(resultado.decisao.tipo, 'reserva_criada');
+
+  // UPDATE cadastral: por (paciente_id da Marta, contato_id DELA), telefone DELA.
+  // Sem isto a RPC real recusaria com paciente_nao_encontrado.
+  const upd = rpc.chamadas.find((c) => c.nome === 'cappia_persistir_paciente');
+  assert.ok(upd, 'persistirPaciente deveria ter sido chamada para o UPDATE cadastral');
+  assert.equal(upd!.parametros.p_paciente_id, martaId);
+  assert.equal(upd!.parametros.p_contato_id, contatoMarta);
+  assert.notEqual(upd!.parametros.p_contato_id, contatoCarlos);
+  assert.equal(upd!.parametros.p_telefone_normalizado, TELEFONE_MARTA);
+  assert.notEqual(upd!.parametros.p_telefone_normalizado, TELEFONE);
+  assert.equal(upd!.parametros.p_documento, '52998224725');
+
+  // RESERVA: paciente da Marta, telefone da Marta -- nunca o do Carlos.
+  const reserva = rpc.chamadas.find((c) => c.nome === 'cappia_reservar_agendamento')!;
+  assert.equal(reserva.parametros.p_paciente_id, martaId);
+  assert.notEqual(reserva.parametros.p_paciente_id, carlosId);
+  assert.equal(reserva.parametros.p_telefone, TELEFONE_MARTA);
+  assert.notEqual(reserva.parametros.p_telefone, TELEFONE);
+
+  // a ficha da Marta continua no contato dela; a do Carlos, intacta.
+  assert.equal(tabelas.pacientes.find((p) => p.id === martaId)!.contato_id, contatoMarta);
+  assert.equal(tabelas.pacientes.find((p) => p.id === carlosId)!.nome, 'Carlos');
+});
+
+// ── 3a revisao, bloqueador 2: selecao_gravada === null NAO prova que `dados`
+//    e da pessoa nova -- multi-turno real ─────────────────────────────────
+
+test('Carlos ja tinha procedimento/data PROPRIOS; ao dizer "e para minha mae" o snapshot dele NAO acompanha a mae', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const clinicaId = semearClinica(tabelas);
+  const proc = tabelas.procedimentos_catalogo[0].id as string;
+  const contatoId = semearContato(tabelas, clinicaId);
+  const carlosId = semearPaciente(tabelas, clinicaId, contatoId, { nome: 'Carlos', vinculo: 'titular' });
+
+  // Turno anterior: Carlos, unico paciente do contato, resolvido pelo
+  // fallback -- `estado_conversa.paciente_id` NUNCA foi gravado (segue null).
+  // Ele ja tinha dado procedimento/data DELE.
+  tabelas.estado_conversa.push({
+    id: crypto.randomUUID(),
+    clinica_id: clinicaId,
+    telefone_normalizado: TELEFONE,
+    estado: 'atendimento',
+    dados: {
+      procedimento_id: proc,
+      data_texto: 'quinta',
+      horario_texto: '09:00',
+    },
+    paciente_id: null,
+    atualizado_em: new Date('2026-08-01T00:00:00.000Z').toISOString(),
+  });
+
+  // ESTE turno: "na verdade e para minha mae" -- atendimento_para_terceiro,
+  // sem paciente_id, sem nada emitido para a terceira pessoa ainda.
+  const m = modelo({ natureza_mensagem: 'pedido', alteracoes: {}, atendimento_para_terceiro: true });
+  const resultado = await processar(tabelas, m, 'na verdade e para a minha mae');
+
+  // O Core pergunta o vinculo (contato so tem o titular).
+  assert.equal(resultado.decisao.tipo, 'pedir_vinculo_paciente_novo');
+
+  // E o SNAPSHOT do Carlos (procedimento/data/horario dele) JA saiu de `dados`
+  // NESTE turno -- nao pode sobreviver ate o turno em que a mae for criada.
+  const dados = tabelas.estado_conversa[0].dados as Record<string, unknown>;
+  for (const campo of ['procedimento_id', 'data_texto', 'horario_texto']) {
+    assert.ok(!(campo in dados) || dados[campo] === undefined, `${campo} (de Carlos) deveria ter sido limpo no 1o turno "para minha mae"`);
+  }
+  // a ficha do Carlos: intacta (nada foi aplicado a ela).
+  assert.equal(tabelas.pacientes.find((p) => p.id === carlosId)!.nome, 'Carlos');
+});
+
+test('primeiro turno "para minha mae" que JA traz um campo operacional/cadastral DELA: o que o turno emitiu e preservado; so o snapshot antigo do Carlos sai', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const clinicaId = semearClinica(tabelas);
+  const procCarlos = tabelas.procedimentos_catalogo[0].id as string;
+  const contatoId = semearContato(tabelas, clinicaId);
+  semearPaciente(tabelas, clinicaId, contatoId, { nome: 'Carlos', vinculo: 'titular' });
+
+  // Snapshot do Carlos: procedimento + data + horario DELE.
+  tabelas.estado_conversa.push({
+    id: crypto.randomUUID(),
+    clinica_id: clinicaId,
+    telefone_normalizado: TELEFONE,
+    estado: 'atendimento',
+    dados: {
+      procedimento_id: procCarlos,
+      data_texto: 'quinta',
+      horario_texto: '09:00',
+    },
+    paciente_id: null,
+    atualizado_em: new Date('2026-08-01T00:00:00.000Z').toISOString(),
+  });
+
+  // O turno identifica o terceiro E ja traz dados DELE (a mae): um campo
+  // OPERACIONAL que o snapshot do Carlos nao tinha (`periodo`) e um CADASTRAL
+  // (`nome`). Ambos descrevem a mae -- a limpeza da troca tem de preserva-los.
+  const m = modelo({
+    natureza_mensagem: 'pedido',
+    alteracoes: {
+      periodo: { acao: 'informar', valor: 'manha' },
+      nome: { acao: 'informar', valor: 'Marta Prado' },
+    },
+    atendimento_para_terceiro: true,
+  });
+  await processar(tabelas, m, 'e para minha mae Marta Prado, de manha');
+
+  const dados = tabelas.estado_conversa[0].dados as Record<string, unknown>;
+  // snapshot do Carlos (nao reemitido) -> limpo
+  for (const campo of ['procedimento_id', 'data_texto', 'horario_texto']) {
+    assert.ok(!(campo in dados) || dados[campo] === undefined, `${campo} (de Carlos) deveria ter sido limpo`);
+  }
+  // o que o turno emitiu para a mae -> PRESERVADO (operacional e cadastral)
+  assert.equal(dados.periodo, 'manha');
+  assert.equal(dados.nome, 'Marta Prado');
+});
+
+// ── 3a revisao, bloqueador 3: falha ao limpar a selecao ao concluir NAO e
+//    silenciada ───────────────────────────────────────────────────────────
+
+// Dublê que faz o UPDATE de `estado_conversa` FALHAR quando ele zera a
+// selecao (`paciente_id: null`) -- exatamente a limpeza pos-conclusao. Todo
+// o resto do banco funciona normalmente.
+class ClienteFalsoSelecaoNaoLimpavel extends ClienteFalso {
+  from(nome: string) {
+    const base = super.from(nome);
+    if (nome !== 'estado_conversa') return base;
+    return {
+      ...base,
+      update: (valores: Record<string, unknown>) => {
+        if (Object.prototype.hasOwnProperty.call(valores, 'paciente_id') && valores.paciente_id === null) {
+          // reproduz um erro de escrita do PostgREST
+          return {
+            eq() {
+              return this;
+            },
+            is() {
+              return this;
+            },
+            select() {
+              return this;
+            },
+            async maybeSingle() {
+              return { data: null, error: { message: 'falha simulada ao limpar selecao' } };
+            },
+          } as unknown as ReturnType<typeof base.update>;
+        }
+        return base.update(valores);
+      },
+    };
+  }
+}
+
+test('bloqueador 3: se a limpeza da selecao ao concluir FALHA, o turno NAO conclui em silencio (excecao propaga)', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const clinicaId = semearClinica(tabelas);
+  const contatoId = semearContato(tabelas, clinicaId);
+  const proc = tabelas.procedimentos_catalogo[0].id as string;
+  const dent = (tabelas.clinicas[0].dentistas as Record<string, unknown>[])[0].id as string;
+  semearPaciente(tabelas, clinicaId, contatoId, { nome: 'Carlos', vinculo: 'titular' });
+  // Marta dependente do MESMO contato, ja selecionada, cadastro completo.
+  const martaId = semearPaciente(tabelas, clinicaId, contatoId, {
+    nome: 'Marta',
+    vinculo: 'dependente',
+    documento: '52998224725',
+    data_nascimento: '1950-05-10',
+  });
+  tabelas.estado_conversa.push({
+    id: crypto.randomUUID(),
+    clinica_id: clinicaId,
+    telefone_normalizado: TELEFONE,
+    estado: 'atendimento',
+    dados: {},
+    paciente_id: martaId,
+    atualizado_em: new Date('2026-08-01T00:00:00.000Z').toISOString(),
+  });
+
+  const rpc = new ClienteRpcFalso({
+    cappia_reservar_agendamento: {
+      data: { sucesso: true, agendamento_id: crypto.randomUUID(), dentista_id: dent, duracao_min: 30, data: '2026-08-03', horario: '10:00' },
+      error: null,
+    },
+  });
+  const m = new ClienteModeloFalso([
+    {
+      natureza_mensagem: 'resposta',
+      alteracoes: {
+        procedimento_id: { acao: 'informar', valor: proc },
+        data_texto: { acao: 'informar', valor: 'hoje' },
+        horario_texto: { acao: 'informar', valor: '10:00' },
+        confirmacao: { acao: 'informar', valor: 'sim' },
+      },
+    },
+  ]);
+
+  await assert.rejects(
+    processarMensagem(m, new ClienteFalsoSelecaoNaoLimpavel(tabelas), rpc, {
+      provider: PROVIDER,
+      instancia_whatsapp: INSTANCIA,
+      telefone_normalizado: TELEFONE,
+      mensagens_atuais: ['pode confirmar'],
+      instante_atual: INSTANTE_ATUAL,
+    }),
+    /limpar selecao|selecao de paciente/i,
+    'a falha ao zerar a selecao tem de PROPAGAR -- nunca um catch vazio'
+  );
+
+  // A selecao NAO ficou zerada (a limpeza falhou) -- e o codigo nao fingiu
+  // que concluiu. Marta continua gravada; o proximo turno nao herda uma
+  // conclusao silenciosa.
+  assert.equal(tabelas.estado_conversa[0].paciente_id, martaId);
+});
