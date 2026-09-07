@@ -509,7 +509,28 @@ export type DecisaoOrquestrador =
       dentista_id: string | null;
       data: string;
       horario: string;
-    };
+    }
+  // --- Contato com varios pacientes (2026-09-07,
+  // specs/contato-multiplos-pacientes-v1.md) ---
+  //
+  // O contato tem mais de um paciente vinculado e o turno nao identificou
+  // qual e o atendimento (secao 4.5, passo 1, primeiro ramo). A Iris
+  // pergunta "e um deles ou outra pessoa?". `pacientes` e a lista OFERECIDA
+  // -- nomes e vinculo, NUNCA IDs (a redatora recebe so nomes). Mesmo padrao
+  // de `aguardando_escolha_dentista`/`aguardando_escolha_agendamento`.
+  | {
+      tipo: 'aguardando_escolha_paciente';
+      pacientes: readonly { nome: string; vinculo: 'titular' | 'dependente' }[];
+    }
+  // O turno sinalizou `outra_pessoa_alem_das_listadas` (ou o contato so tem
+  // o titular e o pedido e para terceiro) -- a Iris pergunta se essa pessoa
+  // tera numero de WhatsApp proprio ou fica vinculada ao contato atual
+  // (secao 4.5, passo 2), ANTES de qualquer INSERT. Nome provisorio na spec.
+  //
+  // SEM PAYLOAD: a pergunta e sempre a mesma, e a decisao nao carrega dado
+  // da pessoa (o cadastro dela vem depois, so no ramo em que o passo 4 nao
+  // encontrar cadastro para o numero informado).
+  | { tipo: 'pedir_vinculo_paciente_novo' };
 
 export interface ResultadoOrquestrador {
   clinica_id: string;

@@ -80,7 +80,9 @@ export type ObjetivoResposta =
   | 'informar_cancelamento_criado' // 2026-08-11 -- idem, secao 7.
   | 'informar_cadastro_atualizado' // 2026-09-01 -- specs/correcao-cadastro-conversacional-v1.md.
   | 'informar_correcao_cadastro_invalida' // 2026-09-01 -- idem, valor rejeitado.
-  | 'pedir_um_procedimento_por_vez'; // 2026-09-05 -- specs/multiplos-procedimentos-mesmo-turno-v1.md.
+  | 'pedir_um_procedimento_por_vez' // 2026-09-05 -- specs/multiplos-procedimentos-mesmo-turno-v1.md.
+  | 'escolher_entre_pacientes' // 2026-09-07 -- specs/contato-multiplos-pacientes-v1.md secao 4.5.
+  | 'pedir_vinculo_paciente_novo'; // 2026-09-07 -- idem, pergunta numero proprio vs. vinculado.
 
 export interface FatosAutorizados {
   objetivo: ObjetivoResposta;
@@ -101,6 +103,12 @@ export interface FatosAutorizados {
   dentista_resolvido?: string;
   /** Este SIM e populado: `aguardando_escolha_dentista` carrega `DentistaApto[]`, que ja tem `nome_exibido`. */
   dentistas_candidatos?: string[];
+  /**
+   * NOMES dos pacientes vinculados ao contato, para a redatora perguntar "e
+   * um deles ou outra pessoa?" (specs/contato-multiplos-pacientes-v1.md
+   * secao 4.5). NUNCA IDs. Populado em `aguardando_escolha_paciente`.
+   */
+  pacientes_candidatos?: string[];
   /**
    * Nome do profissional que o paciente escolheu, quando a decisao gira em
    * torno dele (specs/dentista-semantico-v1.md). Populado em
@@ -660,6 +668,22 @@ function derivarPorDecisao(decisao: DecisaoOrquestrador, dataHoje: string): Fato
     // nomearia o item errado, ou um terceiro que ninguem pediu.
     case 'pedido_multiplo_detectado':
       return { objetivo: 'pedir_um_procedimento_por_vez' };
+
+    // ESCOLHA DE PACIENTE (2026-09-07,
+    // specs/contato-multiplos-pacientes-v1.md secao 4.5). A redatora recebe
+    // so os NOMES (nunca IDs) e pergunta com as proprias palavras "e um
+    // deles ou outra pessoa?" -- mesmo padrao de `escolher_entre_dentistas`.
+    case 'aguardando_escolha_paciente':
+      return {
+        objetivo: 'escolher_entre_pacientes',
+        pacientes_candidatos: decisao.pacientes.map((p) => p.nome),
+      };
+
+    // Pergunta "essa pessoa tera numero proprio ou fica vinculada a este
+    // numero?" (spec secao 4.5, passo 2). SEM fato -- a pergunta e sempre a
+    // mesma e nenhum dado da pessoa entra aqui.
+    case 'pedir_vinculo_paciente_novo':
+      return { objetivo: 'pedir_vinculo_paciente_novo' };
 
     case 'aguardando_procedimento':
       // O OBJETIVO NAO MUDA (2026-08-30): o que esta resposta precisa alcancar

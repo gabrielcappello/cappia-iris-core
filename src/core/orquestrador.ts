@@ -323,6 +323,20 @@ export async function processarMensagem(
           })),
         }
       : {}),
+    // Pacientes vinculados ao contato, SOMENTE quando ha mais de um
+    // (specs/contato-multiplos-pacientes-v1.md secao 3.1). Contexto para a
+    // IA correlacionar "minha mae Marta" com um `paciente_id`; o Core valida
+    // depois (validarEscolhaPaciente). Chave AUSENTE quando o contato tem 0
+    // ou 1 paciente -- o fluxo segue como hoje, sem pergunta nova.
+    ...(identificacao.pacientes.length > 1
+      ? {
+          pacientes_do_contato: identificacao.pacientes.map((p) => ({
+            paciente_id: p.paciente_id,
+            nome: p.nome,
+            vinculo: p.vinculo,
+          })),
+        }
+      : {}),
     // Cadastro ja persistido do paciente, quando ele existe e tem algum dado.
     // Serve para a Iris nao pedir de novo o que ja esta na ficha: entra
     // somente na derivacao de `campos_cadastrais_preenchidos` (presenca,
@@ -858,6 +872,7 @@ export async function processarMensagem(
     clienteBanco,
     clienteRpc,
     identificacao.clinica_id,
+    identificacao.contato_id,
     identificacao.paciente.id,
     entrada.telefone_normalizado,
     dados,
@@ -870,7 +885,11 @@ export async function processarMensagem(
     // a alteracao aplicada quanto o campo que a validacao descartou -- um
     // valor invalido nunca chega em `alteracoes`.
     interpretacao.alteracoes_aplicaveis,
-    interpretacao.campos_cadastrais_invalidos
+    interpretacao.campos_cadastrais_invalidos,
+    // specs/contato-multiplos-pacientes-v1.md secao 4.5.
+    identificacao.pacientes,
+    interpretacao.atendimento_para_terceiro,
+    interpretacao.outra_pessoa_alem_das_listadas
   );
 
   return await finalizar(resultadoDecisao.decisao, resultadoDecisao.substituicao);
@@ -1030,6 +1049,8 @@ const CAMPOS_NOVO_AGENDAMENTO: readonly CampoDadosConversa[] = [
 async function aplicarCorrecaoCadastro(
   clienteRpc: ClienteRpc,
   clinicaId: string,
+  contatoId: string,
+  pacienteId: string | null,
   telefoneNormalizado: string,
   dados: Record<string, string | undefined>,
   cadastroFicha: CadastroPaciente,
@@ -1044,9 +1065,19 @@ async function aplicarCorrecaoCadastro(
   if (typeof nome !== 'string' || nome.trim() === '') {
     return { tipo: 'correcao_cadastro_falhou' };
   }
+  // `decidirCorrecaoCadastro` so devolve `corrigir` quando ha ficha
+  // (`pacienteId !== null`) -- mas o tipo permite null. Sem paciente
+  // selecionado nao ha o que corrigir: falha fechado.
+  if (pacienteId === null) {
+    return { tipo: 'correcao_cadastro_falhou' };
+  }
 
   const persistencia = await persistirPaciente(clienteRpc, {
     clinica_id: clinicaId,
+    // Correcao do paciente JA SELECIONADO: UPDATE por (id, contato_id), nunca
+    // por telefone (spec secao 5.2).
+    contato_id: contatoId,
+    paciente_id: pacienteId,
     telefone_normalizado: telefoneNormalizado,
     nome,
     // SOMENTE os campos desta correcao. Ausente = a RPC nao altera o valor
@@ -1067,6 +1098,64 @@ async function aplicarCorrecaoCadastro(
   }
 
   return { tipo: 'cadastro_atualizado', campos_atualizados: campos };
+}
+
+/**
+ * Decide, ANTES de qualquer fluxo de agendamento/cadastro, se o turno precisa
+ * de uma escolha de paciente (specs/contato-multiplos-pacientes-v1.md secao
+ * 4.5, passo 1). Puro -- nao le banco, nao escreve.
+ *
+ * Regra, nesta ordem:
+ *   1. `outra_pessoa_alem_das_listadas` -> `pedir_vinculo_paciente_novo`
+ *      (segue direto para a pergunta de vinculo, sem tentar casar contra a
+ *      lista -- a pessoa pode ou nao ter cadastro, isso e resolvido depois).
+ *   2. `atendimento_para_terceiro` presente, `pacienteId` NAO resolvido, e
+ *      ha pelo menos um paciente vinculado alem do titular
+ *      (`pacientesDoContato.length > 1`, ou == 1 com vinculo 'dependente')
+ *      -> `aguardando_escolha_paciente` ("e um deles ou outra pessoa?").
+ *   3. `atendimento_para_terceiro` presente, `pacienteId` NAO resolvido, e o
+ *      contato so tem o titular -> `pedir_vinculo_paciente_novo` (nao ha
+ *      escolha a oferecer -- pergunta direto numero proprio vs. vinculado).
+ *   4. caso contrario -> `null`: nada a decidir aqui, o fluxo segue com o
+ *      `pacienteId` ja resolvido pela identificacao.
+ *
+ * `pacienteId` resolvido (nao nulo) significa que a pessoa ja esta
+ * identificada -- nenhuma pergunta, mesmo com `atendimento_para_terceiro`
+ * (o turno "para minha mae Marta" que ja emitiu o paciente_id dela).
+ */
+function decidirEscolhaPaciente(entrada: {
+  pacienteId: string | null;
+  pacientesDoContato: readonly { paciente_id: string; nome: string; vinculo: 'titular' | 'dependente' }[];
+  atendimentoParaTerceiro: boolean;
+  outraPessoaAlemDasListadas: boolean;
+}): DecisaoOrquestrador | null {
+  const { pacienteId, pacientesDoContato, atendimentoParaTerceiro, outraPessoaAlemDasListadas } = entrada;
+
+  if (outraPessoaAlemDasListadas) {
+    return { tipo: 'pedir_vinculo_paciente_novo' };
+  }
+
+  if (!atendimentoParaTerceiro || pacienteId !== null) {
+    return null;
+  }
+
+  // Ha "outros" pacientes alem do titular quando a lista tem mais de um, ou
+  // tem exatamente um cujo vinculo e 'dependente' (o titular sozinho nunca
+  // aparece em `pacientes_do_contato` -- ele e o caso 1 telefone = 1
+  // paciente resolvido pela identificacao).
+  const temOutros =
+    pacientesDoContato.length > 1 ||
+    (pacientesDoContato.length === 1 && pacientesDoContato[0].vinculo === 'dependente');
+
+  if (temOutros) {
+    return {
+      tipo: 'aguardando_escolha_paciente',
+      pacientes: pacientesDoContato.map((p) => ({ nome: p.nome, vinculo: p.vinculo })),
+    };
+  }
+
+  // Contato so com o titular: nao ha escolha a oferecer -- pergunta direto.
+  return { tipo: 'pedir_vinculo_paciente_novo' };
 }
 
 function camposParaLimparAoConcluir(
@@ -1666,6 +1755,7 @@ async function decidir(
   clienteBanco: ClienteBancoDados,
   clienteRpc: ClienteRpc,
   clinicaId: string,
+  contatoId: string,
   pacienteId: string | null,
   telefoneNormalizado: string,
   dados: Record<string, string | undefined>,
@@ -1675,8 +1765,41 @@ async function decidir(
   cadastroFicha: CadastroPaciente,
   respostaTrocaTelefone: RespostaTrocaTelefone | null,
   alteracoesDoTurno: AlteracoesDados,
-  camposCadastraisInvalidos: readonly CampoCadastralInterpretacao[] | undefined
+  camposCadastraisInvalidos: readonly CampoCadastralInterpretacao[] | undefined,
+  /** Pacientes vinculados ao contato (specs/contato-multiplos-pacientes-v1.md secao 5.1). */
+  pacientesDoContato: readonly { paciente_id: string; nome: string; vinculo: 'titular' | 'dependente' }[],
+  atendimentoParaTerceiro: boolean,
+  outraPessoaAlemDasListadas: boolean
 ): Promise<{ decisao: DecisaoOrquestrador; substituicao?: { dentista_nome_exibido: string } }> {
+  // ESCOLHA DE PACIENTE (specs/contato-multiplos-pacientes-v1.md secao 4.5).
+  //
+  // Vem ANTES de qualquer decisao de agendamento/cadastro: enquanto o Core
+  // nao sabe PARA QUEM e o atendimento, nao pode aplicar dado nenhum a um
+  // paciente. A regra de decisao segue o passo 1 da secao 4.5:
+  //
+  //   - `outra_pessoa_alem_das_listadas` -> segue para a pergunta de vinculo
+  //     (pedir_vinculo_paciente_novo), sem tentar casar contra a lista;
+  //   - `atendimento_para_terceiro` sem paciente_id resolvido e com OUTROS
+  //     pacientes vinculados alem do titular -> aguardando_escolha_paciente;
+  //   - `atendimento_para_terceiro` sem paciente_id e contato so com o
+  //     titular -> segue DIRETO para a pergunta de vinculo (nao ha escolha a
+  //     oferecer);
+  //   - caso contrario: nada a decidir aqui, o fluxo segue normalmente com o
+  //     `pacienteId` ja resolvido pela identificacao.
+  //
+  // `pacienteId` aqui ja e o RESOLVIDO (identificacao.ts): selecao valida OU
+  // unico paciente do contato. Se ele veio preenchido, a pessoa ja esta
+  // identificada -- nenhuma pergunta.
+  const escolhaPaciente = decidirEscolhaPaciente({
+    pacienteId,
+    pacientesDoContato,
+    atendimentoParaTerceiro,
+    outraPessoaAlemDasListadas,
+  });
+  if (escolhaPaciente !== null) {
+    return { decisao: escolhaPaciente };
+  }
+
   // CORRECAO DE CADASTRO FORA DO AGENDAMENTO (2026-09-01,
   // specs/correcao-cadastro-conversacional-v1.md).
   //
@@ -1685,13 +1808,20 @@ async function decidir(
   // devolve `nao_se_aplica` e nada aqui muda (cenario CC-06). Sem ele, o
   // caminho de hoje cairia em `aguardando_procedimento` e perguntaria "qual
   // procedimento?" a quem so queria corrigir o ano de nascimento.
-  const correcao = decidirCorrecaoCadastro({
-    pacienteId,
-    alteracoes: alteracoesDoTurno,
-    camposInvalidos: camposCadastraisInvalidos,
-    dados,
-    cadastroFicha,
-  });
+  //
+  // PRECEDENCIA DE APLICACAO (spec secao 4.4): quando o turno diz
+  // `atendimento_para_terceiro`, nenhum dado cadastral pode ser aplicado ao
+  // paciente ATUALMENTE selecionado -- e o mecanismo que corrompeu a ficha do
+  // Carlos. Barrado aqui, antes de `aplicarCorrecaoCadastro`.
+  const correcao = atendimentoParaTerceiro
+    ? ({ tipo: 'nao_se_aplica' } as const)
+    : decidirCorrecaoCadastro({
+        pacienteId,
+        alteracoes: alteracoesDoTurno,
+        camposInvalidos: camposCadastraisInvalidos,
+        dados,
+        cadastroFicha,
+      });
 
   if (correcao.tipo === 'invalido') {
     // NADA e gravado. A redatora diz qual campo nao foi aceito.
@@ -1699,7 +1829,18 @@ async function decidir(
   }
 
   if (correcao.tipo === 'corrigir') {
-    return { decisao: await aplicarCorrecaoCadastro(clienteRpc, clinicaId, telefoneNormalizado, dados, cadastroFicha, correcao.campos) };
+    return {
+      decisao: await aplicarCorrecaoCadastro(
+        clienteRpc,
+        clinicaId,
+        contatoId,
+        pacienteId,
+        telefoneNormalizado,
+        dados,
+        cadastroFicha,
+        correcao.campos
+      ),
+    };
   }
 
   // INTEGRIDADE, NUNCA INTERPRETACAO (specs/procedimento-semantico-v1.md
@@ -1876,6 +2017,7 @@ async function decidir(
           await decidirConfirmacaoOuReserva(
             clienteRpc,
             clinicaId,
+            contatoId,
             pacienteId,
             telefoneNormalizado,
             procedimentoIdEfetivo,
@@ -1941,6 +2083,7 @@ function cadastroDivergeDaFicha(visaoEfetiva: CadastroPaciente, ficha: CadastroP
 async function decidirConfirmacaoOuReserva(
   clienteRpc: ClienteRpc,
   clinicaId: string,
+  contatoId: string,
   pacienteId: string | null,
   telefoneNormalizado: string,
   procedimentoId: string,
@@ -2039,6 +2182,13 @@ async function decidirConfirmacaoOuReserva(
   if (pacienteId === null || cadastroDivergeDaFicha(visaoEfetiva, cadastroFicha)) {
     const persistencia = await persistirPaciente(clienteRpc, {
       clinica_id: clinicaId,
+      // Contato desta conversa (spec secao 5.2). `paciente_id` presente ->
+      // UPDATE do ja selecionado; ausente -> INSERT vinculado a este contato
+      // (o caso paciente novo do proprio titular). O ramo "numero proprio"
+      // (spec secao 4.5, passo 4) e tratado antes, na decisao de escolha de
+      // paciente -- aqui `contatoId` e sempre o contato da conversa.
+      contato_id: contatoId,
+      ...(pacienteId !== null ? { paciente_id: pacienteId } : {}),
       telefone_normalizado: telefoneNormalizado,
       // Sempre presente: `calcularCadastroFaltante` acabou de garantir que
       // nenhum obrigatorio falta, e `nome` e obrigatorio em toda chamada.

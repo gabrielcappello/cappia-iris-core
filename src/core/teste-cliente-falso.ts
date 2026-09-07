@@ -254,6 +254,28 @@ export class ClienteFalso implements ClienteBancoDados {
             : {};
         const nova = { id: crypto.randomUUID(), ...padroes, ...valores };
         linhas.push(nova);
+
+        // CONVENIENCIA DE TESTE (2026-09-07, spec contato-multiplos-pacientes):
+        // ao criar um `contato_whatsapp`, faz o mesmo backfill que a migration
+        // de transicao faz -- vincula ao contato recem-criado todo `pacientes`
+        // ja semeado com o mesmo (clinica_id, telefone_normalizado) que ainda
+        // nao tem `contato_id`, marcando-o `vinculo: 'titular'`. Sem isso,
+        // TODA fixture de teste que semeia paciente pelo modelo antigo (1
+        // telefone = 1 paciente) precisaria ser reescrita para criar o contato
+        // a mao. O codigo de producao nao faz isso -- a migration ja rodou la.
+        if (nome === 'contatos_whatsapp') {
+          for (const p of this.tabelas.pacientes) {
+            if (
+              p.contato_id === undefined &&
+              p.clinica_id === nova.clinica_id &&
+              p.telefone_normalizado === nova.telefone_normalizado
+            ) {
+              p.contato_id = nova.id;
+              if (p.vinculo === undefined) p.vinculo = 'titular';
+            }
+          }
+        }
+
         return new ConsultaFalsa(linhas, [nova], null);
       },
       update: (valores: Record<string, unknown>): ConsultaEncadeavel => {

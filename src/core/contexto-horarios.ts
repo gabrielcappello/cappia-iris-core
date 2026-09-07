@@ -250,6 +250,14 @@ export function derivarAcaoContextoHorarios(decisao: DecisaoOrquestrador): AcaoC
     case 'reserva_criada':
     case 'reserva_conflito':
     case 'reserva_falhou':
+    // ESCOLHA DE PACIENTE (2026-09-07,
+    // specs/contato-multiplos-pacientes-v1.md secao 4.5): a pergunta e sobre
+    // QUAL PESSOA, nunca sobre horario. Nao ancora nenhum snapshot de
+    // horarios -- `limpar`. A escolha em si (o `paciente_id` emitido pela IA)
+    // e validada por `validarEscolhaPaciente` contra a lista fresca do
+    // contato, nunca contra um marcador persistido aqui.
+    case 'aguardando_escolha_paciente':
+    case 'pedir_vinculo_paciente_novo':
       return { tipo: 'limpar' };
   }
 }
