@@ -8,6 +8,7 @@ import type { ClienteBancoDados, ConsultaEncadeavel } from './tipos.ts';
 
 export interface TabelasFalsas {
   clinicas: Record<string, unknown>[];
+  contatos_whatsapp: Record<string, unknown>[];
   pacientes: Record<string, unknown>[];
   estado_conversa: Record<string, unknown>[];
   mensagens_recebidas: Record<string, unknown>[];
@@ -19,6 +20,7 @@ export interface TabelasFalsas {
 export function criarTabelasFalsasVazias(): TabelasFalsas {
   return {
     clinicas: [],
+    contatos_whatsapp: [],
     pacientes: [],
     estado_conversa: [],
     mensagens_recebidas: [],
@@ -241,7 +243,15 @@ export class ClienteFalso implements ClienteBancoDados {
         // schema real -- o dublê precisa aplicar o mesmo default no insert,
         // senao a linha volta sem o campo e a validacao de identificacao
         // (que exige atualizado_em) falharia so aqui, nunca em producao.
-        const padroes = nome === 'estado_conversa' ? { atualizado_em: new Date().toISOString() } : {};
+        // `paciente_id` e nullable (default nulo): desde 2026-09-07 o insert
+        // de estado_conversa nao carrega mais a selecao (spec contato-
+        // multiplos-pacientes), entao o dublê precisa materializar o `null`
+        // -- senao a chave fica AUSENTE e `validarLinhaEstadoConversa` (que
+        // distingue null de undefined) reprova.
+        const padroes =
+          nome === 'estado_conversa'
+            ? { atualizado_em: new Date().toISOString(), paciente_id: null }
+            : {};
         const nova = { id: crypto.randomUUID(), ...padroes, ...valores };
         linhas.push(nova);
         return new ConsultaFalsa(linhas, [nova], null);

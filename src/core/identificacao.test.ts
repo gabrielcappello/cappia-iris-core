@@ -1,29 +1,43 @@
 // Testes de unidade de identificacao.ts usando o dublê ClienteFalso
 // (nenhum acesso a rede ou banco real — dados sinteticos apenas em memoria).
 //
+// MODELO NOVO (specs/contato-multiplos-pacientes-v1.md, 2026-09-07): a
+// identidade do CONTATO de WhatsApp (quem conversa) e separada da identidade
+// do PACIENTE (para quem e o atendimento). `identificarConversa` resolve o
+// contato por `(clinica_id, telefone_normalizado)`, lista os pacientes
+// vinculados a esse contato, e resolve `paciente.id` a partir de:
+//   1. a selecao ja gravada em `estado_conversa.paciente_id`, quando ainda
+//      aponta para um vinculo valido do contato;
+//   2. o unico paciente do contato, quando ha exatamente um;
+//   3. `null` caso contrario (0, ou >1 sem selecao valida).
+//
 // O teste 7 (concorrencia) prova, no nivel do codigo, que duas chamadas
-// verdadeiramente entrelaçadas (Promise.all, com yields explicitos no
-// dublê) resultam em uma unica linha de estado_conversa, porque o upsert
-// com ignoreDuplicates + reconsulta trata corretamente o conflito. A
-// garantia de que o banco real rejeita a segunda insercao concorrente ja
-// foi verificada via SQL direto em 20260729_iris_nova_identificacao_v1.sql
-// (teste 8) e reconfirmada em 20260729_iris_nova_identificacao_v1_correcao.sql.
+// entrelaçadas resultam em uma unica linha de estado_conversa. A garantia
+// no banco real ja foi verificada via SQL direto em
+// 20260729_iris_nova_identificacao_v1.sql (teste 8) e reconfirmada em
+// 20260729_iris_nova_identificacao_v1_correcao.sql.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { ClinicaNaoEncontradaError, EntradaInvalidaError } from './erros.ts';
-import { identificarConversa } from './identificacao.ts';
+import { gravarSelecaoPaciente, identificarConversa } from './identificacao.ts';
 import { ClienteFalso, criarTabelasFalsasVazias, type TabelasFalsas } from './teste-cliente-falso.ts';
-import type { ClienteBancoDados, ConsultaEncadeavel } from './tipos.ts';
 
 const PROVIDER = 'evolution';
 const INSTANCIA_A = 'unit-clinica-a';
 const INSTANCIA_B = 'unit-clinica-b';
 const TELEFONE_VALIDO = '5511999999999';
+const TELEFONE_OUTRO = '5511888888888';
 
 function semearClinica(tabelas: TabelasFalsas, instanciaWhatsapp: string) {
   const clinica = { id: crypto.randomUUID(), provider: PROVIDER, instancia_whatsapp: instanciaWhatsapp };
   tabelas.clinicas.push(clinica);
   return clinica;
+}
+
+function semearContato(tabelas: TabelasFalsas, clinicaId: string, telefoneNormalizado: string) {
+  const contato = { id: crypto.randomUUID(), clinica_id: clinicaId, telefone_normalizado: telefoneNormalizado };
+  tabelas.contatos_whatsapp.push(contato);
+  return contato;
 }
 
 function semearEstadoConversa(
@@ -48,16 +62,42 @@ function semearEstadoConversa(
   return conversa;
 }
 
-function semearPaciente(tabelas: TabelasFalsas, clinicaId: string, telefoneNormalizado: string) {
-  const paciente = { id: crypto.randomUUID(), clinica_id: clinicaId, telefone_normalizado: telefoneNormalizado };
+function semearPaciente(
+  tabelas: TabelasFalsas,
+  clinicaId: string,
+  contatoId: string,
+  telefoneNormalizado: string,
+  extra: Record<string, unknown> = {}
+) {
+  const paciente = {
+    id: crypto.randomUUID(),
+    clinica_id: clinicaId,
+    contato_id: contatoId,
+    telefone_normalizado: telefoneNormalizado,
+    nome: 'Paciente Sintetico',
+    vinculo: 'titular',
+    ...extra,
+  };
   tabelas.pacientes.push(paciente);
   return paciente;
 }
 
-test('teste1: clinica existente e paciente existente', async () => {
+/** Semeia contato + 1 paciente titular (o caso 1 telefone = 1 paciente). */
+function semearContatoComTitular(
+  tabelas: TabelasFalsas,
+  clinicaId: string,
+  telefoneNormalizado: string,
+  extra: Record<string, unknown> = {}
+) {
+  const contato = semearContato(tabelas, clinicaId, telefoneNormalizado);
+  const paciente = semearPaciente(tabelas, clinicaId, contato.id, telefoneNormalizado, extra);
+  return { contato, paciente };
+}
+
+test('teste1: clinica existente e contato com 1 paciente resolve esse paciente', async () => {
   const tabelas = criarTabelasFalsasVazias();
   const clinica = semearClinica(tabelas, INSTANCIA_A);
-  const paciente = semearPaciente(tabelas, clinica.id, TELEFONE_VALIDO);
+  const { paciente } = semearContatoComTitular(tabelas, clinica.id, TELEFONE_VALIDO);
   const cliente = new ClienteFalso(tabelas);
 
   const resultado = await identificarConversa(cliente, {
@@ -69,10 +109,12 @@ test('teste1: clinica existente e paciente existente', async () => {
   assert.equal(resultado.clinica_id, clinica.id);
   assert.equal(resultado.paciente.encontrado, true);
   assert.equal(resultado.paciente.id, paciente.id);
+  assert.equal(resultado.pacientes.length, 1);
+  assert.equal(resultado.pacientes[0].vinculo, 'titular');
   assert.equal(resultado.conversa.estado, 'atendimento');
 });
 
-test('teste2: clinica existente e paciente novo', async () => {
+test('teste2: contato sem nenhum paciente -> paciente.id null, lista vazia', async () => {
   const tabelas = criarTabelasFalsasVazias();
   const clinica = semearClinica(tabelas, INSTANCIA_A);
   const cliente = new ClienteFalso(tabelas);
@@ -85,7 +127,10 @@ test('teste2: clinica existente e paciente novo', async () => {
 
   assert.equal(resultado.paciente.encontrado, false);
   assert.equal(resultado.paciente.id, null);
+  assert.deepEqual(resultado.pacientes, []);
   assert.equal(tabelas.pacientes.length, 0, 'nenhum paciente deve ser criado durante a identificacao');
+  // o contato E criado (spec secao 5.1: "resolver/criar")
+  assert.equal(tabelas.contatos_whatsapp.length, 1);
 });
 
 test('teste3: clinica inexistente e rejeitada de forma controlada', async () => {
@@ -137,9 +182,11 @@ test('teste5: cria o estado quando ainda nao existe', async () => {
   assert.equal(tabelas.estado_conversa.length, 1);
   assert.equal(resultado.conversa.id, tabelas.estado_conversa[0].id);
   assert.deepEqual(resultado.conversa.dados, {});
+  // estado recem-criado nasce SEM selecao (spec secao 4.4)
+  assert.equal(tabelas.estado_conversa[0].paciente_id, null);
 });
 
-test('teste6: reutiliza o mesmo estado em uma nova chamada', async () => {
+test('teste6: reutiliza o mesmo estado e o mesmo contato em uma nova chamada', async () => {
   const tabelas = criarTabelasFalsasVazias();
   semearClinica(tabelas, INSTANCIA_A);
   const cliente = new ClienteFalso(tabelas);
@@ -149,10 +196,12 @@ test('teste6: reutiliza o mesmo estado em uma nova chamada', async () => {
   const segunda = await identificarConversa(cliente, entrada);
 
   assert.equal(primeira.conversa.id, segunda.conversa.id);
+  assert.equal(primeira.contato_id, segunda.contato_id);
   assert.equal(tabelas.estado_conversa.length, 1);
+  assert.equal(tabelas.contatos_whatsapp.length, 1);
 });
 
-test('teste7: duas chamadas concorrentes nao criam dois estados', async () => {
+test('teste7: duas chamadas concorrentes nao criam dois estados nem dois contatos', async () => {
   const tabelas = criarTabelasFalsasVazias();
   semearClinica(tabelas, INSTANCIA_A);
   const cliente = new ClienteFalso(tabelas);
@@ -164,7 +213,9 @@ test('teste7: duas chamadas concorrentes nao criam dois estados', async () => {
   ]);
 
   assert.equal(tabelas.estado_conversa.length, 1, 'deve existir somente uma linha de estado para a conversa');
+  assert.equal(tabelas.contatos_whatsapp.length, 1, 'deve existir somente um contato para o telefone');
   assert.equal(resultadoA.conversa.id, resultadoB.conversa.id);
+  assert.equal(resultadoA.contato_id, resultadoB.contato_id);
 });
 
 test('teste8: mesmo telefone em clinicas diferentes permanece isolado', async () => {
@@ -185,38 +236,104 @@ test('teste8: mesmo telefone em clinicas diferentes permanece isolado', async ()
   });
 
   assert.notEqual(resultadoA.conversa.id, resultadoB.conversa.id);
+  assert.notEqual(resultadoA.contato_id, resultadoB.contato_id);
   assert.equal(resultadoA.clinica_id, clinicaA.id);
   assert.equal(resultadoB.clinica_id, clinicaB.id);
   assert.equal(tabelas.estado_conversa.length, 2);
+  assert.equal(tabelas.contatos_whatsapp.length, 2);
 });
 
-test('teste9: paciente encontrado fica vinculado ao estado', async () => {
+test('teste9: contato com varios pacientes e sem selecao -> paciente.id null, lista completa', async () => {
   const tabelas = criarTabelasFalsasVazias();
   const clinica = semearClinica(tabelas, INSTANCIA_A);
-  const paciente = semearPaciente(tabelas, clinica.id, TELEFONE_VALIDO);
+  const contato = semearContato(tabelas, clinica.id, TELEFONE_VALIDO);
+  semearPaciente(tabelas, clinica.id, contato.id, TELEFONE_VALIDO, { nome: 'Carlos', vinculo: 'titular' });
+  semearPaciente(tabelas, clinica.id, contato.id, TELEFONE_VALIDO, { nome: 'Marta', vinculo: 'dependente' });
   const cliente = new ClienteFalso(tabelas);
 
-  await identificarConversa(cliente, {
+  const resultado = await identificarConversa(cliente, {
     provider: PROVIDER,
     instancia_whatsapp: INSTANCIA_A,
     telefone_normalizado: TELEFONE_VALIDO,
   });
 
-  assert.equal(tabelas.estado_conversa[0].paciente_id, paciente.id);
+  assert.equal(resultado.paciente.id, null, 'sem selecao e com >1 paciente, nao resolve sozinho');
+  assert.equal(resultado.pacientes.length, 2);
+  assert.deepEqual(
+    resultado.pacientes.map((p) => p.nome).sort(),
+    ['Carlos', 'Marta']
+  );
 });
 
-test('teste10: paciente novo permanece com paciente_id nulo', async () => {
+test('teste10: contato com varios pacientes e selecao valida -> resolve o selecionado', async () => {
   const tabelas = criarTabelasFalsasVazias();
-  semearClinica(tabelas, INSTANCIA_A);
+  const clinica = semearClinica(tabelas, INSTANCIA_A);
+  const contato = semearContato(tabelas, clinica.id, TELEFONE_VALIDO);
+  semearPaciente(tabelas, clinica.id, contato.id, TELEFONE_VALIDO, { nome: 'Carlos', vinculo: 'titular' });
+  const marta = semearPaciente(tabelas, clinica.id, contato.id, TELEFONE_VALIDO, {
+    nome: 'Marta',
+    vinculo: 'dependente',
+  });
+  // estado_conversa ja tem a Marta selecionada
+  semearEstadoConversa(tabelas, clinica.id, TELEFONE_VALIDO, 'atendimento', marta.id);
   const cliente = new ClienteFalso(tabelas);
 
-  await identificarConversa(cliente, {
+  const resultado = await identificarConversa(cliente, {
     provider: PROVIDER,
     instancia_whatsapp: INSTANCIA_A,
     telefone_normalizado: TELEFONE_VALIDO,
   });
 
-  assert.equal(tabelas.estado_conversa[0].paciente_id, null);
+  assert.equal(resultado.paciente.id, marta.id);
+  assert.equal(resultado.paciente.cadastro.nome, 'Marta');
+});
+
+test('teste11: selecao que aponta para paciente de OUTRO contato e ignorada', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const clinica = semearClinica(tabelas, INSTANCIA_A);
+  // contato desta conversa: Carlos e Marta
+  const contatoConversa = semearContato(tabelas, clinica.id, TELEFONE_VALIDO);
+  semearPaciente(tabelas, clinica.id, contatoConversa.id, TELEFONE_VALIDO, { nome: 'Carlos', vinculo: 'titular' });
+  semearPaciente(tabelas, clinica.id, contatoConversa.id, TELEFONE_VALIDO, { nome: 'Marta', vinculo: 'dependente' });
+  // paciente de OUTRO contato (outro telefone)
+  const outroContato = semearContato(tabelas, clinica.id, TELEFONE_OUTRO);
+  const forasteiro = semearPaciente(tabelas, clinica.id, outroContato.id, TELEFONE_OUTRO, {
+    nome: 'Forasteiro',
+    vinculo: 'titular',
+  });
+  // estado_conversa desta conversa aponta (indevidamente) para o forasteiro
+  semearEstadoConversa(tabelas, clinica.id, TELEFONE_VALIDO, 'atendimento', forasteiro.id);
+  const cliente = new ClienteFalso(tabelas);
+
+  const resultado = await identificarConversa(cliente, {
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA_A,
+    telefone_normalizado: TELEFONE_VALIDO,
+  });
+
+  // a selecao invalida NAO resolve; e ha >1 no contato, entao fica null
+  assert.equal(resultado.paciente.id, null);
+  assert.deepEqual(
+    resultado.pacientes.map((p) => p.nome).sort(),
+    ['Carlos', 'Marta']
+  );
+});
+
+test('teste12: selecao obsoleta com contato de 1 paciente cai no unico paciente do contato', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const clinica = semearClinica(tabelas, INSTANCIA_A);
+  const { paciente } = semearContatoComTitular(tabelas, clinica.id, TELEFONE_VALIDO, { nome: 'Titular' });
+  // selecao aponta para um id que nao existe mais neste contato
+  semearEstadoConversa(tabelas, clinica.id, TELEFONE_VALIDO, 'atendimento', crypto.randomUUID());
+  const cliente = new ClienteFalso(tabelas);
+
+  const resultado = await identificarConversa(cliente, {
+    provider: PROVIDER,
+    instancia_whatsapp: INSTANCIA_A,
+    telefone_normalizado: TELEFONE_VALIDO,
+  });
+
+  assert.equal(resultado.paciente.id, paciente.id, 'cai no unico paciente do contato (comportamento de hoje preservado)');
 });
 
 const ESTADOS_APROVADOS = [
@@ -246,169 +363,52 @@ for (const estado of ESTADOS_APROVADOS) {
   });
 }
 
-test('teste-vinculo1: estado existente com paciente_id nulo e vinculado quando o paciente passa a existir', async () => {
+// --- Selecao MUTAVEL (spec secao 4.4): gravarSelecaoPaciente ---
+//
+// A protecao write-once (`.is('paciente_id', null)`) foi removida. A selecao
+// pode mudar de um assunto para outro e ser limpa (`null`) ao concluir.
+
+test('selecao: gravarSelecaoPaciente escreve a selecao mesmo quando ja havia outra', async () => {
   const tabelas = criarTabelasFalsasVazias();
   const clinica = semearClinica(tabelas, INSTANCIA_A);
-  const conversa = semearEstadoConversa(tabelas, clinica.id, TELEFONE_VALIDO, 'aguardando_escolha', null);
-  // paciente passa a existir DEPOIS que a conversa ja estava em andamento
-  const paciente = semearPaciente(tabelas, clinica.id, TELEFONE_VALIDO);
+  const contato = semearContato(tabelas, clinica.id, TELEFONE_VALIDO);
+  const carlos = semearPaciente(tabelas, clinica.id, contato.id, TELEFONE_VALIDO, { nome: 'Carlos' });
+  const marta = semearPaciente(tabelas, clinica.id, contato.id, TELEFONE_VALIDO, {
+    nome: 'Marta',
+    vinculo: 'dependente',
+  });
+  semearEstadoConversa(tabelas, clinica.id, TELEFONE_VALIDO, 'atendimento', carlos.id);
   const cliente = new ClienteFalso(tabelas);
 
-  const resultado = await identificarConversa(cliente, {
-    provider: PROVIDER,
-    instancia_whatsapp: INSTANCIA_A,
-    telefone_normalizado: TELEFONE_VALIDO,
-  });
+  await gravarSelecaoPaciente(cliente, clinica.id, TELEFONE_VALIDO, marta.id);
 
-  assert.equal(resultado.paciente.encontrado, true);
-  assert.equal(resultado.paciente.id, paciente.id);
-  assert.equal(resultado.conversa.id, conversa.id, 'deve ser o mesmo estado, nao um novo');
-  assert.equal(resultado.conversa.estado, 'aguardando_escolha', 'o estado nao deve ser alterado pelo vinculo');
-  assert.equal(tabelas.estado_conversa.length, 1);
-  assert.equal(tabelas.estado_conversa[0].paciente_id, paciente.id);
+  assert.equal(tabelas.estado_conversa[0].paciente_id, marta.id, 'a selecao anterior foi sobrescrita, sem write-once');
 });
 
-test('teste-vinculo2: estado com paciente_id ja preenchido nao e sobrescrito', async () => {
+test('selecao: gravarSelecaoPaciente com null limpa a selecao', async () => {
   const tabelas = criarTabelasFalsasVazias();
   const clinica = semearClinica(tabelas, INSTANCIA_A);
-  const paciente = semearPaciente(tabelas, clinica.id, TELEFONE_VALIDO);
-  semearEstadoConversa(tabelas, clinica.id, TELEFONE_VALIDO, 'executando', paciente.id);
+  const contato = semearContato(tabelas, clinica.id, TELEFONE_VALIDO);
+  const carlos = semearPaciente(tabelas, clinica.id, contato.id, TELEFONE_VALIDO, { nome: 'Carlos' });
+  semearEstadoConversa(tabelas, clinica.id, TELEFONE_VALIDO, 'atendimento', carlos.id);
   const cliente = new ClienteFalso(tabelas);
 
-  const resultado = await identificarConversa(cliente, {
-    provider: PROVIDER,
-    instancia_whatsapp: INSTANCIA_A,
-    telefone_normalizado: TELEFONE_VALIDO,
-  });
+  await gravarSelecaoPaciente(cliente, clinica.id, TELEFONE_VALIDO, null);
 
-  assert.equal(resultado.conversa.estado, 'executando');
-  assert.equal(tabelas.estado_conversa[0].paciente_id, paciente.id);
-  assert.equal(
-    cliente.estatisticas.chamadasUpdate['estado_conversa'] ?? 0,
-    0,
-    'nenhuma tentativa de atualizacao deve ocorrer quando o paciente_id ja esta preenchido'
-  );
-});
-
-test('teste-vinculo3: duas chamadas concorrentes com paciente encontrado nao causam vinculo inconsistente', async () => {
-  const tabelas = criarTabelasFalsasVazias();
-  const clinica = semearClinica(tabelas, INSTANCIA_A);
-  const paciente = semearPaciente(tabelas, clinica.id, TELEFONE_VALIDO);
-  const conversa = semearEstadoConversa(tabelas, clinica.id, TELEFONE_VALIDO, 'coletando_cadastro', null);
-  const cliente = new ClienteFalso(tabelas);
-
-  const entrada = { provider: PROVIDER, instancia_whatsapp: INSTANCIA_A, telefone_normalizado: TELEFONE_VALIDO };
-  const [resultadoA, resultadoB] = await Promise.all([
-    identificarConversa(cliente, entrada),
-    identificarConversa(cliente, entrada),
-  ]);
-
-  assert.equal(resultadoA.conversa.id, conversa.id);
-  assert.equal(resultadoB.conversa.id, conversa.id);
-  assert.equal(tabelas.estado_conversa.length, 1, 'nao pode surgir um segundo estado');
-  assert.equal(tabelas.estado_conversa[0].paciente_id, paciente.id, 'o vinculo final deve ser consistente para as duas chamadas');
-  assert.equal(tabelas.estado_conversa[0].estado, 'coletando_cadastro', 'o estado nao deve ser alterado pelo vinculo');
-});
-
-// Dublê minimo (nao ClienteFalso) para forcar deterministicamente a
-// reconsulta apos update concorrente em vincularPacienteAoEstado: o UPDATE
-// com filtro paciente_id IS NULL retorna 0 linhas (simulando outro worker ja
-// tendo vinculado o paciente), e a reconsulta subsequente devolve uma linha
-// estruturalmente invalida -- exercita validarLinhaEstadoConversa no unico
-// caminho de estado_conversa que ainda usava cast direto.
-function clienteParaReconsultaInvalida(
-  clinicaId: string,
-  pacienteId: string,
-  conversaId: string,
-  linhaReconsultaInvalida: Record<string, unknown>
-): ClienteBancoDados {
-  let chamadasSelectEstado = 0;
-
-  function consultaFixa(data: Record<string, unknown> | null): ConsultaEncadeavel {
-    const consulta: ConsultaEncadeavel = {
-      eq: () => consulta,
-      is: () => consulta,
-      gte: () => consulta,
-      not: () => consulta,
-      select: () => consulta,
-      maybeSingle: async () => ({ data, error: null }),
-      then: (onfulfilled, onrejected) => Promise.resolve({ data: data ? [data] : [], error: null }).then(onfulfilled, onrejected),
-    };
-    return consulta;
-  }
-
-  return {
-    from(nome: string) {
-      if (nome === 'clinicas') {
-        return { select: () => consultaFixa({ id: clinicaId }), upsert: () => consultaFixa(null), update: () => consultaFixa(null) };
-      }
-      if (nome === 'pacientes') {
-        return { select: () => consultaFixa({ id: pacienteId }), upsert: () => consultaFixa(null), update: () => consultaFixa(null) };
-      }
-      // estado_conversa: 1a select = linha existente sem paciente vinculado
-      // (entra em vincularPacienteAoEstado); update com paciente_id IS NULL
-      // nao encontra linha (0 linhas, simulando corrida perdida); 2a select
-      // (reconsulta) devolve a linha estruturalmente invalida.
-      return {
-        select: () => {
-          chamadasSelectEstado += 1;
-          if (chamadasSelectEstado === 1) {
-            return consultaFixa({ id: conversaId, estado: 'atendimento', dados: {}, paciente_id: null });
-          }
-          return consultaFixa(linhaReconsultaInvalida);
-        },
-        upsert: () => consultaFixa(null),
-        update: () => consultaFixa(null),
-      };
-    },
-  };
-}
-
-test('teste-vinculo4: reconsulta apos update concorrente com linha estruturalmente invalida e rejeitada sem reproduzir o payload', async () => {
-  const clinicaId = crypto.randomUUID();
-  const pacienteId = crypto.randomUUID();
-  const conversaId = crypto.randomUUID();
-  const estadoInvalido = 'estado_fora_do_vocabulario_canonico';
-  const cliente = clienteParaReconsultaInvalida(clinicaId, pacienteId, conversaId, {
-    id: conversaId,
-    estado: estadoInvalido,
-    dados: {},
-    paciente_id: pacienteId,
-  });
-
-  await assert.rejects(
-    () => identificarConversa(cliente, { provider: PROVIDER, instancia_whatsapp: INSTANCIA_A, telefone_normalizado: TELEFONE_VALIDO }),
-    (erro: unknown) => {
-      assert.ok(erro instanceof Error);
-      assert.ok(!erro.message.includes(estadoInvalido), 'erro nao deve reproduzir o payload invalido recebido');
-      return true;
-    }
-  );
+  assert.equal(tabelas.estado_conversa[0].paciente_id, null);
 });
 
 // --- Cadastro do paciente carregado na identificacao (2026-08-09) ---
 //
-// Contrato: specs/interpretacao-ia.md ("Entrada e PII", segunda origem) e a
-// decisao do Gabriel de 2026-08-09. `pacientes.documento` (coluna fisica) e
-// lido como `cpf` (conceito de dominio) NESTE unico ponto de leitura.
-//
-// Todos os valores abaixo sao SINTETICOS -- nenhum dado real de paciente.
+// Contrato: specs/interpretacao-ia.md ("Entrada e PII", segunda origem).
+// `pacientes.documento` (coluna fisica) e lido como `cpf` (conceito de
+// dominio) NESTE unico ponto de leitura. Todos os valores abaixo sao
+// SINTETICOS -- nenhum dado real de paciente.
 
-function semearPacienteComCadastro(
-  tabelas: TabelasFalsas,
-  clinicaId: string,
-  telefoneNormalizado: string,
-  cadastro: Record<string, unknown>
-) {
-  const paciente = { id: crypto.randomUUID(), clinica_id: clinicaId, telefone_normalizado: telefoneNormalizado, ...cadastro };
-  tabelas.pacientes.push(paciente);
-  return paciente;
-}
-
-test('cadastro: paciente existente carrega nome, cpf, nascimento e email', async () => {
+test('cadastro: paciente do contato carrega nome, cpf, nascimento e email', async () => {
   const tabelas = criarTabelasFalsasVazias();
   const clinica = semearClinica(tabelas, INSTANCIA_A);
-  semearPacienteComCadastro(tabelas, clinica.id, TELEFONE_VALIDO, {
+  semearContatoComTitular(tabelas, clinica.id, TELEFONE_VALIDO, {
     nome: 'Idalina Prudencio Vasconcelos',
     documento: '52998224725',
     data_nascimento: '1974-03-19',
@@ -432,7 +432,10 @@ test('cadastro: paciente existente carrega nome, cpf, nascimento e email', async
 test('cadastro: a coluna fisica `documento` vira `cpf` no dominio, e `documento` nao vaza', async () => {
   const tabelas = criarTabelasFalsasVazias();
   const clinica = semearClinica(tabelas, INSTANCIA_A);
-  semearPacienteComCadastro(tabelas, clinica.id, TELEFONE_VALIDO, { nome: 'Reinaldo Bittencourt', documento: '11144477735' });
+  semearContatoComTitular(tabelas, clinica.id, TELEFONE_VALIDO, {
+    nome: 'Reinaldo Bittencourt',
+    documento: '11144477735',
+  });
 
   const resultado = await identificarConversa(new ClienteFalso(tabelas), {
     provider: PROVIDER,
@@ -441,15 +444,13 @@ test('cadastro: a coluna fisica `documento` vira `cpf` no dominio, e `documento`
   });
 
   assert.equal(resultado.paciente.cadastro.cpf, '11144477735');
-  // O nome fisico da coluna nao existe no dominio -- se aparecesse aqui,
-  // haveria duas fontes para o mesmo conceito.
   assert.ok(!Object.prototype.hasOwnProperty.call(resultado.paciente.cadastro, 'documento'));
 });
 
 test('cadastro: coluna nula, ausente ou so espacos vira CHAVE AUSENTE, nunca null', async () => {
   const tabelas = criarTabelasFalsasVazias();
   const clinica = semearClinica(tabelas, INSTANCIA_A);
-  semearPacienteComCadastro(tabelas, clinica.id, TELEFONE_VALIDO, {
+  semearContatoComTitular(tabelas, clinica.id, TELEFONE_VALIDO, {
     nome: 'Osvaldina Nepomuceno',
     documento: null,
     data_nascimento: '   ',
@@ -463,12 +464,10 @@ test('cadastro: coluna nula, ausente ou so espacos vira CHAVE AUSENTE, nunca nul
   });
 
   assert.deepEqual(resultado.paciente.cadastro, { nome: 'Osvaldina Nepomuceno' });
-  // Chave ausente, nunca `null`: um espalhamento `{...cadastro, ...outros}`
-  // com `null` explicito sobrescreveria valor real por nada.
   assert.deepEqual(Object.keys(resultado.paciente.cadastro), ['nome']);
 });
 
-test('cadastro: paciente inexistente devolve cadastro vazio, nunca undefined', async () => {
+test('cadastro: contato sem paciente devolve cadastro vazio, nunca undefined', async () => {
   const tabelas = criarTabelasFalsasVazias();
   semearClinica(tabelas, INSTANCIA_A);
 
@@ -482,12 +481,12 @@ test('cadastro: paciente inexistente devolve cadastro vazio, nunca undefined', a
   assert.deepEqual(resultado.paciente.cadastro, {});
 });
 
-test('cadastro: isolamento por clinica -- mesmo telefone em outra clinica nao carrega cadastro', async () => {
+test('cadastro: isolamento por clinica -- contato/paciente de outra clinica nao carrega', async () => {
   const tabelas = criarTabelasFalsasVazias();
   const clinicaA = semearClinica(tabelas, INSTANCIA_A);
   const clinicaB = semearClinica(tabelas, INSTANCIA_B);
   // O paciente existe SO na clinica B, com o MESMO telefone.
-  semearPacienteComCadastro(tabelas, clinicaB.id, TELEFONE_VALIDO, {
+  semearContatoComTitular(tabelas, clinicaB.id, TELEFONE_VALIDO, {
     nome: 'Nao Deve Vazar Para A Clinica A',
     documento: '52998224725',
   });
@@ -501,4 +500,23 @@ test('cadastro: isolamento por clinica -- mesmo telefone em outra clinica nao ca
   assert.equal(resultado.clinica_id, clinicaA.id);
   assert.equal(resultado.paciente.encontrado, false);
   assert.deepEqual(resultado.paciente.cadastro, {});
+  assert.deepEqual(resultado.pacientes, []);
+});
+
+test('vinculo: valor fora do vocabulario aprovado falha fechado', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const clinica = semearClinica(tabelas, INSTANCIA_A);
+  const contato = semearContato(tabelas, clinica.id, TELEFONE_VALIDO);
+  semearPaciente(tabelas, clinica.id, contato.id, TELEFONE_VALIDO, { vinculo: 'primo' });
+  const cliente = new ClienteFalso(tabelas);
+
+  await assert.rejects(
+    () =>
+      identificarConversa(cliente, {
+        provider: PROVIDER,
+        instancia_whatsapp: INSTANCIA_A,
+        telefone_normalizado: TELEFONE_VALIDO,
+      }),
+    /vinculo fora do vocabulario/
+  );
 });

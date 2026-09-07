@@ -7,7 +7,17 @@
 // Sem essas variaveis, a suite inteira e pulada (test.skip) em vez de
 // falhar.
 //
-// Uso pretendido:
+// ── TODO (specs/contato-multiplos-pacientes-v1.md) ──────────────────────
+// Estes testes exigem o SCHEMA NOVO (tabela contatos_whatsapp, colunas
+// pacientes.contato_id/vinculo, FK de estado_conversa sem telefone) aplicado
+// no banco de dev. A migration
+// 20260907120000_iris_nova_contato_multiplos_pacientes_v1.sql AINDA NAO FOI
+// APLICADA (decisao: implementacao local, sem tocar banco). Ate ela ser
+// aplicada, mesmo com credencial disponivel estes testes ficam SKIP -- rodar
+// contra o schema antigo daria falso negativo. Reativar (remover
+// AGUARDA_MIGRATION) quando a migration estiver aplicada em dev.
+//
+// Uso pretendido (apos a migration):
 //   node --env-file="<caminho absoluto do .env no cofre>" --test core/identificacao.integration.test.ts
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -17,7 +27,9 @@ import type { ClienteBancoDados } from './tipos.ts';
 
 const URL = process.env.IRIS_NOVA_DEV_SUPABASE_URL;
 const SERVICE_ROLE_KEY = process.env.IRIS_NOVA_DEV_SUPABASE_SERVICE_ROLE_KEY;
-const CREDENCIAL_DISPONIVEL = Boolean(URL && SERVICE_ROLE_KEY);
+// AGUARDA_MIGRATION: forca skip ate o schema novo estar aplicado em dev.
+const AGUARDA_MIGRATION = true;
+const CREDENCIAL_DISPONIVEL = Boolean(URL && SERVICE_ROLE_KEY) && !AGUARDA_MIGRATION;
 
 const PROVIDER = 'evolution';
 
@@ -35,6 +47,7 @@ async function criarClinicaSintetica(supabase: SupabaseClient) {
 async function limparClinica(supabase: SupabaseClient, clinicaId: string) {
   await supabase.from('estado_conversa').delete().eq('clinica_id', clinicaId);
   await supabase.from('pacientes').delete().eq('clinica_id', clinicaId);
+  await supabase.from('contatos_whatsapp').delete().eq('clinica_id', clinicaId);
   await supabase.from('clinicas').delete().eq('id', clinicaId);
 }
 
@@ -71,7 +84,7 @@ test(
 );
 
 test(
-  'integracao: paciente criado depois do estado e vinculado em uma nova chamada',
+  'integracao: contato com 1 paciente resolve esse paciente sem escrever selecao',
   { skip: !CREDENCIAL_DISPONIVEL },
   async () => {
     const supabase = createClient(URL as string, SERVICE_ROLE_KEY as string);
@@ -81,24 +94,33 @@ test(
     try {
       const entrada = { provider: PROVIDER, instancia_whatsapp: clinica.instanciaWhatsapp, telefone_normalizado: telefone };
 
-      // 1) primeira chamada: paciente ainda nao existe -> estado criado com paciente_id nulo.
+      // 1) primeira chamada: contato criado, ainda sem paciente vinculado.
       const primeira = await identificarConversa(supabase as unknown as ClienteBancoDados, entrada);
       assert.equal(primeira.paciente.encontrado, false);
       assert.equal(primeira.paciente.id, null);
+      assert.equal(primeira.pacientes.length, 0);
 
-      // 2) paciente sintetico e criado depois, para a mesma clinica + telefone.
+      // 2) paciente sintetico criado depois, vinculado ao contato desta conversa.
       const { data: paciente, error: erroPaciente } = await supabase
         .from('pacientes')
-        .insert({ clinica_id: clinica.id, telefone_normalizado: telefone })
+        .insert({
+          clinica_id: clinica.id,
+          contato_id: primeira.contato_id,
+          telefone_normalizado: telefone,
+          nome: 'Paciente Integracao',
+          vinculo: 'titular',
+        })
         .select('id')
         .single();
       if (erroPaciente) throw erroPaciente;
 
-      // 3) nova chamada: mesmo estado deve ser vinculado ao paciente agora existente.
+      // 3) nova chamada: com 1 paciente no contato, resolve automaticamente --
+      //    sem gravar selecao em estado_conversa.paciente_id (spec secao 4.4).
       const segunda = await identificarConversa(supabase as unknown as ClienteBancoDados, entrada);
       assert.equal(segunda.conversa.id, primeira.conversa.id);
       assert.equal(segunda.paciente.encontrado, true);
       assert.equal(segunda.paciente.id, paciente.id);
+      assert.equal(segunda.pacientes.length, 1);
 
       const { data: linhaFinal, error: erroFinal } = await supabase
         .from('estado_conversa')
@@ -108,7 +130,7 @@ test(
         .single();
       if (erroFinal) throw erroFinal;
       assert.equal(linhaFinal.id, primeira.conversa.id);
-      assert.equal(linhaFinal.paciente_id, paciente.id);
+      assert.equal(linhaFinal.paciente_id, null, 'resolucao por lista nao grava selecao');
     } finally {
       await limparClinica(supabase, clinica.id);
     }
