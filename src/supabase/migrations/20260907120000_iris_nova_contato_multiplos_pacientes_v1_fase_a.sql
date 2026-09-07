@@ -54,8 +54,9 @@
 --   C. `git mv` a MIGRATION da fase C para src/supabase/migrations/ e o
 --      ROLLBACK dela para src/supabase/rollbacks/ (dois `git mv` explicitos,
 --      ver acima), e `supabase db push` de novo, IMEDIATAMENTE apos B, sem
---      teste entre B e C (o teste da sequencia inteira ja foi feito no branch
---      descartavel). So depois de C a funcionalidade esta pronta.
+--      teste entre B e C (a sequencia inteira devera ser testada em branch
+--      descartavel antes da producao). So depois de C a funcionalidade esta
+--      pronta.
 --
 -- Rollback de cada fase: arquivo dedicado, diretamente executavel, em
 -- src/supabase/rollbacks/ (fase A) e

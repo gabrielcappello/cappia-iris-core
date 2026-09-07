@@ -34,10 +34,10 @@
 --     na FASE A, passa a ser a unica).
 --
 -- ── JANELA CONTROLADA: aplicar IMEDIATAMENTE apos a FASE B, SEM TESTE
---    ENTRE B e C. O teste da sequencia inteira ja foi feito no branch
---    descartavel. Entre B e C a feature "dependente / outra pessoa com o
---    mesmo numero" nao funciona (colide com a UNIQUE de telefone); nada
---    REGRIDE. Depois de C a funcionalidade esta pronta. ───────────────────
+--    ENTRE B e C. A sequencia inteira devera ser testada em branch
+--    descartavel antes da producao. Entre B e C a feature "dependente /
+--    outra pessoa com o mesmo numero" nao funciona (colide com a UNIQUE de
+--    telefone); nada REGRIDE. Depois de C a funcionalidade esta pronta. ────
 --
 -- ── NAO APLICADA EM NENHUM PROJETO. ─────────────────────────────────────
 

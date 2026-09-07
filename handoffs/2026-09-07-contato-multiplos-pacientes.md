@@ -4,8 +4,12 @@
 **Branch:** `feat/contato-multiplos-pacientes` (a partir de `main`)
 **Estado:** **escopo funcional da spec fechado e aprovado na 5ª revisão** (código
 de produção **congelado**). 6ª rodada mexeu só nas migrations; 7ª rodada corrige
-**apenas texto** (o comando de promoção da Fase C: wildcard → dois `git mv`
-explícitos). Aguardando revisão final do Codex.
+**apenas texto/comentários**: (a) o comando de promoção da Fase C — wildcard →
+dois `git mv` explícitos; (b) a afirmação falsa "o teste da sequência inteira já
+foi feito" → "deverá ser testada em branch descartável antes da produção".
+Revisão de código e de desenho das migrations **encerrada favoravelmente**;
+pendentes antes da produção: teste real A→B→C em ambiente descartável, medição
+curta com IA e autorização explícita do Gabriel.
 Nada aplicado em banco, nenhum push/merge/deploy, nenhuma chamada paga à IA.
 
 ## O que foi feito
@@ -72,7 +76,14 @@ git mv src/supabase/migrations-pendentes-fase-c/20260907130000_iris_nova_contato
 supabase db push
 ```
 
-**Sem mudança de SQL, código de produção, spec ou banco.**
+Correção factual adicional (mesma rodada): a frase "o teste da sequência
+inteira já foi feito no branch descartável" era **falsa** — nenhum banco foi
+tocado e os testes de integração seguem `skipped` por `AGUARDA_MIGRATION`.
+Substituída nas **3 ocorrências** (handoff, comentário da Fase A, comentário da
+Fase C) por "a sequência inteira deverá ser testada em branch descartável antes
+da produção".
+
+**Sem mudança de SQL executável, código de produção, spec ou banco.**
 
 ## Arquivos alterados
 
@@ -107,10 +118,10 @@ teste da frente (teste 19 A/B + 3 testes) · Edge (paridade).
 ### 7ª rodada — só comentários/texto
 | Arquivo | Mudança |
 |---|---|
-| `handoffs/2026-09-07-contato-multiplos-pacientes.md` | wildcard `git mv .../*.sql` → dois `git mv` de caminho explícito, em todas as 3 ocorrências. |
-| `src/supabase/migrations/20260907120000_..._v1_fase_a.sql` | idem, nos 2 comentários que citavam o comando. |
-| `src/supabase/migrations-pendentes-fase-c/20260907130000_..._v1_fase_c.sql` | idem, no comentário "ONDE ESTE ARQUIVO VIVE". |
-| `src/supabase/migrations-pendentes-fase-c/20260907130000_..._v1_fase_c_rollback.sql` | idem, no comentário de cabeçalho. |
+| `handoffs/2026-09-07-contato-multiplos-pacientes.md` | (a) wildcard `git mv .../*.sql` → dois `git mv` de caminho explícito, em todas as 3 ocorrências; (b) "o teste da sequência inteira já foi feito" → "a sequência inteira deverá ser testada em branch descartável antes da produção". |
+| `src/supabase/migrations/20260907120000_..._v1_fase_a.sql` | idem (a) nos 2 comentários que citavam o comando; idem (b) no passo C. |
+| `src/supabase/migrations-pendentes-fase-c/20260907130000_..._v1_fase_c.sql` | idem (a) no comentário "ONDE ESTE ARQUIVO VIVE"; idem (b) no comentário "JANELA CONTROLADA". |
+| `src/supabase/migrations-pendentes-fase-c/20260907130000_..._v1_fase_c_rollback.sql` | idem (a) no comentário de cabeçalho. |
 
 Nenhuma linha executável de SQL alterada.
 
@@ -181,8 +192,8 @@ Rollbacks — **arquivos dedicados, diretamente executáveis** (nada a colar):
 
 3. **Fase C** — promover **com caminhos explícitos** (nunca wildcard: o
    `..._fase_c_rollback.sql` **não pode** entrar em `src/supabase/migrations/`)
-   e aplicar, **imediatamente após B, SEM TESTE ENTRE B E C** (o teste da
-   sequência inteira já foi feito no branch descartável):
+   e aplicar, **imediatamente após B, SEM TESTE ENTRE B E C** (a sequência
+   inteira deverá ser testada em branch descartável antes da produção):
    ```
    git mv src/supabase/migrations-pendentes-fase-c/20260907130000_iris_nova_contato_multiplos_pacientes_v1_fase_c.sql src/supabase/migrations/
    git mv src/supabase/migrations-pendentes-fase-c/20260907130000_iris_nova_contato_multiplos_pacientes_v1_fase_c_rollback.sql src/supabase/rollbacks/
@@ -243,20 +254,26 @@ A→B→C num branch descartável do Supabase de dev.
   medição com IA real mostrar falta de contexto, um marcador no payload é a
   extensão aditiva natural.
 
-## Para o Codex revisar (7ª rodada — só a promoção da Fase C)
+## Para o Codex revisar (7ª rodada — só texto/comentários)
 
-- **Único ponto desta rodada:** a promoção da Fase C usa **dois `git mv` de
-  caminho explícito** — a migration para `src/supabase/migrations/`, o
-  `..._fase_c_rollback.sql` para `src/supabase/rollbacks/`. O wildcard
-  `migrations-pendentes-fase-c/*.sql` foi **removido de todas as ocorrências**
-  (handoff + comentários das duas migrations + comentário do rollback da Fase
-  C). O rollback **nunca** entra no path escaneado por `supabase db push`.
+- **(a) Promoção da Fase C** usa **dois `git mv` de caminho explícito** — a
+  migration para `src/supabase/migrations/`, o `..._fase_c_rollback.sql` para
+  `src/supabase/rollbacks/`. O wildcard `migrations-pendentes-fase-c/*.sql` foi
+  **removido de todas as ocorrências** (handoff + comentários das duas
+  migrations + comentário do rollback da Fase C). O rollback **nunca** entra no
+  path escaneado por `supabase db push`.
+- **(b) Correção factual:** "o teste da sequência inteira já foi feito no branch
+  descartável" era falso (nenhum banco tocado; testes de integração seguem
+  `skipped` por `AGUARDA_MIGRATION`). Substituído nas 3 ocorrências por "a
+  sequência inteira deverá ser testada em branch descartável antes da produção".
 - Rodadas anteriores (mantidas): Fase C + seu rollback fora do path da CLI;
   Fase C repete o backfill e aborta com `RAISE` se restar `contato_id IS NULL`
   antes do `SET NOT NULL`; rollbacks são arquivos dedicados diretamente
   executáveis, o da Fase C com a RPC de 6 params por inteiro e a ordem correta
   (UNIQUEs de telefone → FK de `estado_conversa` → `DROP NOT NULL` → recria RPC
   de 6 → drop da de 9).
-- Nesta rodada **não** houve mudança de SQL, código de produção, spec ou banco.
-- As pendências abaixo: confirmar que são de execução (banco/IA/tipagem de
-  dublê), não de spec.
+- Nesta rodada **não** houve mudança de SQL executável, código de produção,
+  spec ou banco.
+- Pendentes antes da produção (não são requisitos de spec): teste real A→B→C em
+  ambiente descartável, medição curta com a IA real, autorização explícita do
+  Gabriel.
