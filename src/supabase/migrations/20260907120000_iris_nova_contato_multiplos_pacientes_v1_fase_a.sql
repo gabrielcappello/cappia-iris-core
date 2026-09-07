@@ -30,13 +30,17 @@
 --     continuam intactas. `db push` aplica SO esta fase (a fase C ainda nem
 --     esta no diretorio scaneado).
 --
---   FASE C -- DESTRUTIVA. Fica em src/supabase/migrations-pendentes-fase-c/
---     (fora do diretorio que a CLI escaneia). So entra em
---     src/supabase/migrations/ DEPOIS do deploy B, por um comando unico e
---     nao-interativo:
---       git mv src/supabase/migrations-pendentes-fase-c/*.sql src/supabase/migrations/
---     e so entao um novo `supabase db push` a aplica -- e ela e a unica
---     pendente nesse momento. Sem selecao manual arriscada.
+--   FASE C -- DESTRUTIVA. Ela e seu rollback ficam em
+--     src/supabase/migrations-pendentes-fase-c/ (fora do diretorio que a CLI
+--     escaneia). DEPOIS do deploy B, so a MIGRATION entra em
+--     src/supabase/migrations/ e o ROLLBACK vai para src/supabase/rollbacks/
+--     -- NUNCA o rollback no caminho escaneado pela CLI. Caminhos EXPLICITOS,
+--     nada de wildcard:
+--       git mv src/supabase/migrations-pendentes-fase-c/20260907130000_iris_nova_contato_multiplos_pacientes_v1_fase_c.sql src/supabase/migrations/
+--       git mv src/supabase/migrations-pendentes-fase-c/20260907130000_iris_nova_contato_multiplos_pacientes_v1_fase_c_rollback.sql src/supabase/rollbacks/
+--       supabase db push
+--     e so entao a Fase C e aplicada -- e ela e a unica pendente nesse
+--     momento. Sem selecao manual arriscada.
 --
 -- ── SEQUENCIA OBRIGATORIA: A -> B -> C, em JANELA CONTROLADA ─────────────
 --   A. `supabase db push` -> aplica SO esta fase (v114 continua funcionando;
@@ -47,10 +51,11 @@
 --      AINDA NAO funciona -- ela colide com a UNIQUE (clinica_id,
 --      telefone_normalizado) que so a fase C remove. Nada REGRIDE nesse
 --      intervalo (a feature e nova);
---   C. `git mv` a fase C para src/supabase/migrations/ e `supabase db push`
---      de novo, IMEDIATAMENTE apos B, sem teste entre B e C (o teste da
---      sequencia inteira ja foi feito no branch descartavel). So depois de C
---      a funcionalidade esta pronta.
+--   C. `git mv` a MIGRATION da fase C para src/supabase/migrations/ e o
+--      ROLLBACK dela para src/supabase/rollbacks/ (dois `git mv` explicitos,
+--      ver acima), e `supabase db push` de novo, IMEDIATAMENTE apos B, sem
+--      teste entre B e C (o teste da sequencia inteira ja foi feito no branch
+--      descartavel). So depois de C a funcionalidade esta pronta.
 --
 -- Rollback de cada fase: arquivo dedicado, diretamente executavel, em
 -- src/supabase/rollbacks/ (fase A) e

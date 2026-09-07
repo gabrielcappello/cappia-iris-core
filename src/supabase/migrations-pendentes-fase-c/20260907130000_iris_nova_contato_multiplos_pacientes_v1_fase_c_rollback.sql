@@ -5,9 +5,13 @@
 -- 20260809120000_iris_nova_persistencia_paciente_v1.sql -- qualquer
 -- divergencia entre os dois deve ser tratada como defeito).
 --
--- Este arquivo acompanha a migration da FASE C: quando a FASE C for movida
--- para src/supabase/migrations/ (apos o deploy B), mover este rollback junto,
--- para src/supabase/rollbacks/, mantendo o nome.
+-- Este arquivo acompanha a migration da FASE C, mas vai para um diretorio
+-- DIFERENTE na promocao (apos o deploy B): a migration para
+-- src/supabase/migrations/, este rollback para src/supabase/rollbacks/. O
+-- rollback NUNCA pode entrar no caminho escaneado por `supabase db push`.
+-- Caminhos explicitos, sem wildcard:
+--   git mv src/supabase/migrations-pendentes-fase-c/20260907130000_iris_nova_contato_multiplos_pacientes_v1_fase_c.sql src/supabase/migrations/
+--   git mv src/supabase/migrations-pendentes-fase-c/20260907130000_iris_nova_contato_multiplos_pacientes_v1_fase_c_rollback.sql src/supabase/rollbacks/
 --
 -- ── SEGURANCA ──────────────────────────────────────────────────────────
 -- So e seguro ENQUANTO nenhum dado novo do modelo multi-paciente existir:

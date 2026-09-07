@@ -1,10 +1,11 @@
 # Handoff — implementação de `specs/contato-multiplos-pacientes-v1.md`
 
-**Data:** 2026-09-07 (6ª rodada, após 5ª revisão do Codex)
+**Data:** 2026-09-07 (7ª rodada, após 6ª revisão do Codex)
 **Branch:** `feat/contato-multiplos-pacientes` (a partir de `main`)
 **Estado:** **escopo funcional da spec fechado e aprovado na 5ª revisão** (código
-de produção **congelado**). 6ª rodada mexeu **apenas** nas migrations. Aguardando
-revisão final do Codex.
+de produção **congelado**). 6ª rodada mexeu só nas migrations; 7ª rodada corrige
+**apenas texto** (o comando de promoção da Fase C: wildcard → dois `git mv`
+explícitos). Aguardando revisão final do Codex.
 Nada aplicado em banco, nenhum push/merge/deploy, nenhuma chamada paga à IA.
 
 ## O que foi feito
@@ -52,9 +53,26 @@ V2 · remoção das 2 frases fixas · cabeçalho da migration.
 
 | # | Bloqueador | Como ficou |
 |---|---|---|
-| 1 | A CLI (`supabase db push`) aplica **todas** as pendentes — não dá para parar após a Fase A | A Fase C **saiu de `src/supabase/migrations/`** para `src/supabase/migrations-pendentes-fase-c/` (fora do path escaneado pela CLI). Sequência real: `db push` aplica **só a Fase A**; depois do deploy B, um **comando único não-interativo** promove a Fase C — `git mv src/supabase/migrations-pendentes-fase-c/*.sql src/supabase/migrations/` — e um novo `db push` a aplica como **única** pendente. Sem seleção manual arriscada. |
+| 1 | A CLI (`supabase db push`) aplica **todas** as pendentes — não dá para parar após a Fase A | A Fase C (e seu rollback) **saíram de `src/supabase/migrations/`** para `src/supabase/migrations-pendentes-fase-c/` (fora do path escaneado pela CLI). Sequência real: `db push` aplica **só a Fase A**; depois do deploy B, dois `git mv` **explícitos** — a **migration** para `src/supabase/migrations/`, o **rollback** para `src/supabase/rollbacks/` (o rollback **nunca** no path da CLI) — e um novo `db push` aplica a Fase C como **única** pendente. Sem wildcard, sem seleção manual. |
 | 2 | Entre A e B a v114 ainda insere paciente sem `contato_id` | A **Fase C repete o backfill** imediatamente antes do `SET NOT NULL`: `INSERT` das linhas de contato que faltarem + `UPDATE` dos pacientes órfãos, e uma **guarda `RAISE` que aborta a transação se restar algum `contato_id IS NULL`**. |
 | 3 | O rollback da Fase C não era executável ("colar o `CREATE OR REPLACE`") | Rollbacks agora são **arquivos dedicados, diretamente executáveis**: `src/supabase/rollbacks/20260907120000_..._v1_fase_a_rollback.sql` e `src/supabase/migrations-pendentes-fase-c/20260907130000_..._v1_fase_c_rollback.sql`. O da Fase C **contém a definição COMPLETA da RPC de 6 params** (corpo idêntico ao de `20260809120000_...`), na ordem correta (UNIQUEs de telefone → FK de `estado_conversa` → `DROP NOT NULL` → RPC de 6 → drop da de 9). Os blocos comentados de rollback no rodapé das migrations foram substituídos por um ponteiro para esses arquivos. |
+
+### 7ª rodada — só texto (6ª revisão)
+
+O comando de promoção da Fase C usava o wildcard
+`git mv src/supabase/migrations-pendentes-fase-c/*.sql src/supabase/migrations/`,
+que moveria **também** o `..._fase_c_rollback.sql` para o path escaneado pela
+CLI. Corrigido em **todas as ocorrências** (handoff, comentário da Fase A,
+comentário da Fase C, comentário do rollback da Fase C) para **dois `git mv`
+de caminho explícito**:
+
+```
+git mv src/supabase/migrations-pendentes-fase-c/20260907130000_iris_nova_contato_multiplos_pacientes_v1_fase_c.sql src/supabase/migrations/
+git mv src/supabase/migrations-pendentes-fase-c/20260907130000_iris_nova_contato_multiplos_pacientes_v1_fase_c_rollback.sql src/supabase/rollbacks/
+supabase db push
+```
+
+**Sem mudança de SQL, código de produção, spec ou banco.**
 
 ## Arquivos alterados
 
@@ -86,10 +104,21 @@ teste da frente (teste 19 A/B + 3 testes) · Edge (paridade).
 | `src/supabase/migrations-pendentes-fase-c/20260907130000_..._v1_fase_c.sql` | **movido** de `migrations/` para cá (fora do path da CLI) + **re-backfill + guarda `RAISE`** antes do `SET NOT NULL`; rollback comentado substituído por ponteiro. |
 | `src/supabase/migrations-pendentes-fase-c/20260907130000_..._v1_fase_c_rollback.sql` | **novo** — rollback da Fase C, diretamente executável, **com a RPC de 6 params completa**. |
 
+### 7ª rodada — só comentários/texto
+| Arquivo | Mudança |
+|---|---|
+| `handoffs/2026-09-07-contato-multiplos-pacientes.md` | wildcard `git mv .../*.sql` → dois `git mv` de caminho explícito, em todas as 3 ocorrências. |
+| `src/supabase/migrations/20260907120000_..._v1_fase_a.sql` | idem, nos 2 comentários que citavam o comando. |
+| `src/supabase/migrations-pendentes-fase-c/20260907130000_..._v1_fase_c.sql` | idem, no comentário "ONDE ESTE ARQUIVO VIVE". |
+| `src/supabase/migrations-pendentes-fase-c/20260907130000_..._v1_fase_c_rollback.sql` | idem, no comentário de cabeçalho. |
+
+Nenhuma linha executável de SQL alterada.
+
 ## Verificação
 
-- **Código de produção da 6ª rodada:** nenhuma mudança (congelado após a
+- **Código de produção:** nenhuma mudança desde a 5ª rodada (congelado após a
   aprovação da 5ª revisão). Os números abaixo são os da 5ª rodada, inalterados.
+- **SQL executável:** nenhuma mudança na 7ª rodada — só comentários/texto.
 - **Testes (suite completa):** `node --test "core/**/*.test.ts"` —
   **1786 pass / 0 fail / 7 skip** (1793 testes; os 7 skip são `AGUARDA_MIGRATION`).
 - **Runner focado da frente:** `node --test core/orquestrador-contato-multiplos-pacientes.test.ts`
@@ -150,20 +179,22 @@ Rollbacks — **arquivos dedicados, diretamente executáveis** (nada a colar):
    *Rollback da fase B:* redeploy da v114 (a Fase A é retrocompatível — a RPC
    de 6 params e as UNIQUEs ainda existem).
 
-3. **Fase C** — promover o arquivo para o path da CLI com **um comando único e
-   não-interativo** e aplicar, **imediatamente após B, SEM TESTE ENTRE B E C**
-   (o teste da sequência inteira já foi feito no branch descartável):
+3. **Fase C** — promover **com caminhos explícitos** (nunca wildcard: o
+   `..._fase_c_rollback.sql` **não pode** entrar em `src/supabase/migrations/`)
+   e aplicar, **imediatamente após B, SEM TESTE ENTRE B E C** (o teste da
+   sequência inteira já foi feito no branch descartável):
    ```
-   git mv src/supabase/migrations-pendentes-fase-c/*.sql src/supabase/migrations/
+   git mv src/supabase/migrations-pendentes-fase-c/20260907130000_iris_nova_contato_multiplos_pacientes_v1_fase_c.sql src/supabase/migrations/
+   git mv src/supabase/migrations-pendentes-fase-c/20260907130000_iris_nova_contato_multiplos_pacientes_v1_fase_c_rollback.sql src/supabase/rollbacks/
    supabase db push
    ```
    Nesse momento a Fase C é a **única** migration pendente — não há seleção
-   manual. O rollback da Fase C (`..._fase_c_rollback.sql`, mover junto para
-   `src/supabase/rollbacks/`) é **diretamente executável** e recria a RPC de
-   6 params por inteiro. **Válido apenas enquanto nenhum dado novo do modelo
-   multi-paciente existir** (nenhum dependente com telefone duplicado, nenhuma
-   seleção cross-contato gravada) — depois disso haverá linhas que violam as
-   UNIQUEs recriadas, e o rollback deixa de ser seguro.
+   manual. O rollback da Fase C, agora em `src/supabase/rollbacks/`, é
+   **diretamente executável** e recria a RPC de 6 params por inteiro.
+   **Válido apenas enquanto nenhum dado novo do modelo multi-paciente existir**
+   (nenhum dependente com telefone duplicado, nenhuma seleção cross-contato
+   gravada) — depois disso haverá linhas que violam as UNIQUEs recriadas, e o
+   rollback deixa de ser seguro.
 
 **Entre A e B a v114 ainda insere paciente sem `contato_id`** (a RPC de 6
 params não preenche a coluna). Por isso a **Fase C repete o backfill** —
@@ -212,25 +243,20 @@ A→B→C num branch descartável do Supabase de dev.
   medição com IA real mostrar falta de contexto, um marcador no payload é a
   extensão aditiva natural.
 
-## Para o Codex revisar (6ª rodada — só migrations)
+## Para o Codex revisar (7ª rodada — só a promoção da Fase C)
 
-- **Bloqueador 1** (seleção manual arriscada): a Fase C está em
-  `src/supabase/migrations-pendentes-fase-c/`, **fora** do path que
-  `supabase db push` escaneia. `db push` aplica só a Fase A. Depois do deploy
-  B, `git mv src/supabase/migrations-pendentes-fase-c/*.sql
-  src/supabase/migrations/` + `db push` — Fase C é a única pendente. Um comando
-  não-interativo, sem seleção.
-- **Bloqueador 2** (v114 insere sem `contato_id` entre A e B): a Fase C
-  **repete o backfill** (INSERT dos contatos faltantes + UPDATE dos órfãos) e
-  roda uma **guarda `RAISE` que aborta se restar `contato_id IS NULL`**,
-  imediatamente antes do `SET NOT NULL`.
-- **Bloqueador 3** (rollback da Fase C não-executável): rollbacks são
-  **arquivos dedicados diretamente executáveis**
-  (`src/supabase/rollbacks/..._fase_a_rollback.sql`,
-  `src/supabase/migrations-pendentes-fase-c/..._fase_c_rollback.sql`). O da
-  Fase C tem a **RPC de 6 params por inteiro** e a ordem correta (UNIQUEs de
-  telefone → FK de `estado_conversa` → `DROP NOT NULL` → recria RPC de 6 →
-  drop da de 9).
-- Código de produção **não foi tocado** nesta rodada (aprovado na 5ª revisão).
+- **Único ponto desta rodada:** a promoção da Fase C usa **dois `git mv` de
+  caminho explícito** — a migration para `src/supabase/migrations/`, o
+  `..._fase_c_rollback.sql` para `src/supabase/rollbacks/`. O wildcard
+  `migrations-pendentes-fase-c/*.sql` foi **removido de todas as ocorrências**
+  (handoff + comentários das duas migrations + comentário do rollback da Fase
+  C). O rollback **nunca** entra no path escaneado por `supabase db push`.
+- Rodadas anteriores (mantidas): Fase C + seu rollback fora do path da CLI;
+  Fase C repete o backfill e aborta com `RAISE` se restar `contato_id IS NULL`
+  antes do `SET NOT NULL`; rollbacks são arquivos dedicados diretamente
+  executáveis, o da Fase C com a RPC de 6 params por inteiro e a ordem correta
+  (UNIQUEs de telefone → FK de `estado_conversa` → `DROP NOT NULL` → recria RPC
+  de 6 → drop da de 9).
+- Nesta rodada **não** houve mudança de SQL, código de produção, spec ou banco.
 - As pendências abaixo: confirmar que são de execução (banco/IA/tipagem de
   dublê), não de spec.

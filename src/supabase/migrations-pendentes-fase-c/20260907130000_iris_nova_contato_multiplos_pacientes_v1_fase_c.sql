@@ -10,12 +10,15 @@
 -- dev; (2) autorizacao explicita do Gabriel, por acao.
 --
 -- ── ONDE ESTE ARQUIVO VIVE ─────────────────────────────────────────────
--- Enquanto a FASE A nao foi deployada (FASE B), este arquivo fica em
--- src/supabase/migrations-pendentes-fase-c/ -- FORA do diretorio que
--- `supabase db push` escaneia (src/supabase/migrations/). So depois do
--- deploy B ele e movido para src/supabase/migrations/ por um comando unico:
---   git mv src/supabase/migrations-pendentes-fase-c/*.sql src/supabase/migrations/
--- e so entao um novo `supabase db push` o aplica (unica migration pendente).
+-- Enquanto a FASE A nao foi deployada (FASE B), este arquivo (e seu
+-- _rollback.sql) ficam em src/supabase/migrations-pendentes-fase-c/ -- FORA
+-- do diretorio que `supabase db push` escaneia (src/supabase/migrations/).
+-- So depois do deploy B, por CAMINHOS EXPLICITOS (NUNCA wildcard -- o
+-- rollback nao pode entrar no caminho escaneado pela CLI):
+--   git mv src/supabase/migrations-pendentes-fase-c/20260907130000_iris_nova_contato_multiplos_pacientes_v1_fase_c.sql src/supabase/migrations/
+--   git mv src/supabase/migrations-pendentes-fase-c/20260907130000_iris_nova_contato_multiplos_pacientes_v1_fase_c_rollback.sql src/supabase/rollbacks/
+--   supabase db push
+-- Nesse momento a FASE C e a unica migration pendente.
 --
 -- ── O QUE ESTA FASE FAZ (e por que so aqui) ────────────────────────────
 -- Remove o que a v114 usava e que a FASE A deixou de pe para nao regredir:
