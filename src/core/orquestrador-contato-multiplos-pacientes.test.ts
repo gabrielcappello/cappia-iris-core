@@ -1195,3 +1195,136 @@ test('bloqueador 3: se a limpeza da selecao ao concluir FALHA, o turno NAO concl
   // conclusao silenciosa.
   assert.equal(tabelas.estado_conversa[0].paciente_id, martaId);
 });
+
+// ── 4a revisao, bloqueador 1: "numero proprio" MULTI-TURNO, cadastro e
+//    dados operacionais chegando SEPARADOS, sem repetir procedimento/data ──
+
+test('numero proprio multi-turno (nome, cpf, procedimento e data em turnos diferentes) -> reserva_criada sem repetir nada', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const clinicaId = semearClinica(tabelas);
+  const proc = tabelas.procedimentos_catalogo[0].id as string;
+  const dent = (tabelas.clinicas[0].dentistas as Record<string, unknown>[])[0].id as string;
+  const contatoCarlos = semearContato(tabelas, clinicaId);
+  const carlosId = semearPaciente(tabelas, clinicaId, contatoCarlos, { nome: 'Carlos', vinculo: 'titular' });
+  semearConversa(tabelas, clinicaId); // Carlos e o unico paciente -> resolvido pelo fallback; paciente_id nunca gravado
+
+  const novoPacienteId = crypto.randomUUID();
+  const agId = crypto.randomUUID();
+  // RPC falsa que TAMBEM materializa a ficha criada em `tabelas.pacientes`
+  // (a RPC real faz o INSERT) -- sem isso o turno seguinte re-resolveria o
+  // contato de destino como "sem paciente" e reentraria na criacao.
+  const rpc = new ClienteRpcFalso({
+    cappia_persistir_paciente: { data: { sucesso: true, paciente_id: novoPacienteId }, error: null },
+    cappia_reservar_agendamento: {
+      data: { sucesso: true, agendamento_id: agId, dentista_id: dent, duracao_min: 30, data: '2026-08-03', horario: '10:00' },
+      error: null,
+    },
+  });
+  const rpcOriginal = rpc.rpc.bind(rpc);
+  (rpc as unknown as { rpc: typeof rpcOriginal }).rpc = async (nome: string, params: Record<string, unknown>) => {
+    const res = await rpcOriginal(nome, params);
+    if (nome === 'cappia_persistir_paciente' && !params.p_paciente_id) {
+      tabelas.pacientes.push({
+        id: novoPacienteId,
+        clinica_id: params.p_clinica_id,
+        contato_id: params.p_contato_id,
+        telefone_normalizado: params.p_telefone_normalizado,
+        nome: params.p_nome,
+        vinculo: params.p_vinculo ?? 'titular',
+        documento: params.p_documento,
+        data_nascimento: params.p_data_nascimento,
+      });
+    }
+    return res;
+  };
+  const banco = new ClienteFalso(tabelas);
+  const turno = async (saida: Record<string, unknown>, msg: string) => {
+    const m = new ClienteModeloFalso([{ natureza_mensagem: 'resposta', alteracoes: {}, ...saida }]);
+    const r = await processarMensagem(m, banco, rpc, {
+      provider: PROVIDER,
+      instancia_whatsapp: INSTANCIA,
+      telefone_normalizado: TELEFONE,
+      mensagens_atuais: [msg],
+      instante_atual: INSTANTE_ATUAL,
+    });
+    return { decisao: r.decisao, payloadUltimo: m.chamadas[0].payload as Record<string, unknown> };
+  };
+
+  // T1: "e para a minha mae, ela tem numero proprio" -> pede vinculo/telefone.
+  const t1 = await turno(
+    { natureza_mensagem: 'pedido', alteracoes: { vinculo_novo_paciente: { acao: 'informar', valor: 'numero_proprio' } }, atendimento_para_terceiro: true },
+    'e para a minha mae, ela tem numero proprio'
+  );
+  assert.ok(['pedir_telefone_paciente_novo', 'pedir_vinculo_paciente_novo'].includes(t1.decisao.tipo), `T1: ${t1.decisao.tipo}`);
+
+  // T2: telefone da mae (contato de destino ainda nao existe) -> pede cadastro.
+  const t2 = await turno(
+    { alteracoes: { telefone_novo_paciente: { acao: 'informar', valor: TELEFONE_MARTA } } },
+    TELEFONE_MARTA
+  );
+  assert.equal(t2.decisao.tipo, 'cadastro_necessario');
+
+  // T3: SO o nome dela.
+  const t3 = await turno({ alteracoes: { nome: { acao: 'informar', valor: 'Marta Prado' } } }, 'e a Marta Prado');
+  assert.equal(t3.decisao.tipo, 'cadastro_necessario');
+
+  // T4: procedimento + data DELA -- ainda falta cadastro, entao continua
+  // pedindo, mas procedimento/data NAO podem se perder.
+  const t4 = await turno(
+    {
+      alteracoes: {
+        procedimento_id: { acao: 'informar', valor: proc },
+        data_texto: { acao: 'informar', valor: 'hoje' },
+        horario_texto: { acao: 'informar', valor: '10:00' },
+      },
+    },
+    'e uma limpeza, hoje as 10h'
+  );
+  assert.equal(t4.decisao.tipo, 'cadastro_necessario');
+
+  // Estado apos T4: nome + procedimento/data/horario acumulados; falta CPF + nascimento.
+  const dadosAposT4 = tabelas.estado_conversa[0].dados as Record<string, unknown>;
+  assert.equal(dadosAposT4.nome, 'Marta Prado');
+  assert.equal(dadosAposT4.procedimento_id, proc);
+  assert.equal(dadosAposT4.data_texto, 'hoje');
+  assert.equal(dadosAposT4.horario_texto, '10:00');
+
+  // T5: data de nascimento dela (mais um turno de cadastro isolado).
+  const t5 = await turno(
+    { alteracoes: { data_nascimento: { acao: 'informar', valor: '1950-07-07' } } },
+    'nasceu em 07/07/1950'
+  );
+  assert.equal(t5.decisao.tipo, 'cadastro_necessario');
+
+  // T6: o CPF que faltava. Cadastro completo -> cria a Marta no contato de
+  // DESTINO e o fluxo encadeia direto: nome/nascimento/procedimento/data
+  // NUNCA foram repetidos pela Iris.
+  const t6 = await turno({ alteracoes: { cpf: { acao: 'informar', valor: '52998224725' } } }, 'CPF 529.982.247-25');
+  assert.notEqual(t6.decisao.tipo, 'cadastro_necessario');
+  assert.notEqual(t6.decisao.tipo, 'aguardando_procedimento');
+  assert.notEqual(t6.decisao.tipo, 'aguardando_data_horario');
+
+  // T7: confirmacao -> reserva.
+  const t7 = await turno({ alteracoes: { confirmacao: { acao: 'informar', valor: 'sim' } } }, 'pode confirmar');
+  assert.equal(t7.decisao.tipo, 'reserva_criada');
+
+  // a Marta foi criada no contato de DESTINO, com o cadastro dela;
+  const criacao = rpc.chamadas.find((c) => c.nome === 'cappia_persistir_paciente')!;
+  const contatoDestino = tabelas.contatos_whatsapp.find((c) => c.telefone_normalizado === TELEFONE_MARTA)!;
+  assert.equal(criacao.parametros.p_contato_id, contatoDestino.id);
+  assert.notEqual(criacao.parametros.p_contato_id, contatoCarlos);
+  assert.equal(criacao.parametros.p_nome, 'Marta Prado');
+  assert.equal(criacao.parametros.p_documento, '52998224725');
+  assert.equal(criacao.parametros.p_data_nascimento, '1950-07-07');
+
+  // a reserva usou EXCLUSIVAMENTE o paciente/telefone da Marta.
+  const reserva = rpc.chamadas.find((c) => c.nome === 'cappia_reservar_agendamento')!;
+  assert.equal(reserva.parametros.p_paciente_id, novoPacienteId);
+  assert.notEqual(reserva.parametros.p_paciente_id, carlosId);
+  assert.equal(reserva.parametros.p_telefone, TELEFONE_MARTA);
+
+  // persistirPaciente chamada UMA vez (o INSERT) -- nenhum UPDATE redundante.
+  assert.equal(rpc.chamadas.filter((c) => c.nome === 'cappia_persistir_paciente').length, 1);
+  // ficha do Carlos intacta.
+  assert.equal(tabelas.pacientes.find((p) => p.id === carlosId)!.nome, 'Carlos');
+});

@@ -1393,6 +1393,14 @@ async function resolverSelecaoDePaciente(ctx: {
    * limpeza da troca os PRESERVA (spec secao 4.4).
    */
   camposEmitidosNoTurno: ReadonlySet<CampoDadosConversa>;
+  /**
+   * O fluxo "outra pessoa" (`vinculo_novo_paciente` / `telefone_novo_paciente`)
+   * ja estava aberto em `dados` ANTES deste turno. Quando true, o
+   * desacoplamento do paciente anterior JA aconteceu num turno passado -- a
+   * limpeza "upfront" nao pode rodar de novo e apagar o cadastro multi-turno
+   * da propria pessoa nova (bloqueador da 4a revisao).
+   */
+  fluxoOutraPessoaJaAbertoAntesDoTurno: boolean;
   atendimentoParaTerceiro: boolean;
   outraPessoaAlemDasListadas: boolean;
 }): Promise<ResultadoSelecaoPaciente> {
@@ -1412,6 +1420,7 @@ async function resolverSelecaoDePaciente(ctx: {
     telefoneDaListaDeEscolha,
     dados,
     camposEmitidosNoTurno,
+    fluxoOutraPessoaJaAbertoAntesDoTurno,
     atendimentoParaTerceiro,
     outraPessoaAlemDasListadas,
   } = ctx;
@@ -1437,31 +1446,29 @@ async function resolverSelecaoDePaciente(ctx: {
     telefone_normalizado: telefoneNormalizado,
   };
 
-  // HA UM PACIENTE ANTERIOR cujo snapshot em `dados` precisa ser limpo? (spec
-  // secao 4.4). Duas situacoes disparam:
-  //   - uma selecao GRAVADA de verdade em `estado_conversa.paciente_id`; OU
-  //   - `atendimento_para_terceiro` NESTE turno com um paciente resolvido
-  //     (ainda que so pelo fallback "unico paciente do contato"): "na verdade
-  //     e para minha mae" logo apos Carlos ter dado procedimento/data DELE --
-  //     esse snapshot e do Carlos e nao pode ir para a mae.
-  // Fora desses casos, `selecaoGravada === null` significa que o `dados`
-  // acumulado pertence ao fluxo em curso da propria pessoa nova -- nao se
-  // apaga.
-  const haPacienteAnteriorParaLimpar =
-    selecaoGravada !== null || (atendimentoParaTerceiro && pacienteSelecionadoAtual !== null);
-
   // MUTAVEL: apos qualquer limpeza aqui, e o `dados` RELIDO do banco que segue
   // para o resto do turno -- nunca o objeto antigo em memoria.
   let dadosCorrente = dados;
 
-  // DESACOPLAR DO PACIENTE ANTERIOR -- feito UMA vez, no primeiro turno em que
-  // o fluxo deixa de ser sobre o paciente resolvido (spec secao 4.4). Vale
-  // mesmo quando o desfecho deste turno e so uma pergunta
-  // (`pedir_vinculo_paciente_novo` / `pedir_telefone_paciente_novo`): o
-  // snapshot do Carlos nao pode sobreviver ate o turno em que a dependente e
-  // criada. Preserva o que o turno emitiu para o terceiro. ESTRITO: se a
-  // limpeza falhar, propaga e nada muda.
-  if (haPacienteAnteriorParaLimpar && selecaoGravada === null && pacienteIdEmitido === undefined) {
+  // DESACOPLAR DO PACIENTE ANTERIOR -- feito UMA UNICA vez, no PRIMEIRO turno
+  // em que o fluxo deixa de ser sobre o paciente resolvido (spec secao 4.4).
+  // Condicoes (todas): `atendimento_para_terceiro` neste turno; um paciente
+  // resolvido so pelo fallback "unico paciente" (`selecaoGravada === null`);
+  // a IA nao emitiu `paciente_id` neste turno; e o fluxo "outra pessoa" NAO
+  // estava aberto antes deste turno. Essa ultima e o que impede a limpeza de
+  // rodar de novo num turno seguinte e apagar o cadastro multi-turno da
+  // propria pessoa nova (bloqueador da 4a revisao). Vale mesmo quando o
+  // desfecho e so uma pergunta (`pedir_vinculo` / `pedir_telefone`). Preserva
+  // o que o turno emitiu para o terceiro. ESTRITO: se falhar, propaga.
+  // (Sair de uma selecao GRAVADA de verdade e tratado por `trocarSelecaoPara`
+  // mais abaixo, nao aqui.)
+  if (
+    atendimentoParaTerceiro &&
+    pacienteSelecionadoAtual !== null &&
+    selecaoGravada === null &&
+    pacienteIdEmitido === undefined &&
+    !fluxoOutraPessoaJaAbertoAntesDoTurno
+  ) {
     dadosCorrente = await limparSnapshotDoPacienteAnterior(
       clienteBanco,
       contextoConversa,
@@ -1600,6 +1607,15 @@ async function resolverSelecaoDePaciente(ctx: {
       telefoneNormalizadoDaConversa: telefoneNormalizado,
       dados: dadosCorrente,
       camposEmitidosNoTurno,
+      // A limpeza do snapshot do paciente ANTERIOR so e devida aqui no TURNO
+      // em que o fluxo "outra pessoa" ABRE e havia uma selecao GRAVADA de
+      // verdade da qual sair. Depois de aberto (`fluxoOutraPessoaJaAbertoAntes
+      // DoTurno`), o `dados` acumulado e da PROPRIA pessoa nova, entre turnos
+      // (nome, cpf, nascimento, procedimento, data) -- reaplicar a limpeza
+      // aqui apagaria esse cadastro e obrigaria a Iris a repetir perguntas
+      // (bloqueador da 4a revisao). O caso `selecaoGravada === null` ja e
+      // coberto pela limpeza "upfront", uma unica vez.
+      limparPacienteAnterior: selecaoGravada !== null && !fluxoOutraPessoaJaAbertoAntesDoTurno,
     });
   }
 
@@ -1646,6 +1662,14 @@ async function decidirCadastroPacienteNumeroProprio(ctx: {
   telefoneNormalizadoDaConversa: string;
   dados: Record<string, string | undefined>;
   camposEmitidosNoTurno: ReadonlySet<CampoDadosConversa>;
+  /**
+   * `true` somente quando ainda ha um SNAPSHOT de paciente anterior a limpar
+   * (havia selecao gravada de verdade). `false` quando o fluxo "numero
+   * proprio" ja foi desacoplado do paciente anterior em turno anterior -- ai
+   * `dados` e PURAMENTE o cadastro/operacional que a propria pessoa nova
+   * acumulou entre turnos, e NAO pode ser apagado (bloqueador da 4a revisao).
+   */
+  limparPacienteAnterior: boolean;
 }): Promise<ResultadoSelecaoPaciente> {
   const {
     clienteRpc,
@@ -1656,6 +1680,7 @@ async function decidirCadastroPacienteNumeroProprio(ctx: {
     telefoneNormalizadoDaConversa,
     dados,
     camposEmitidosNoTurno,
+    limparPacienteAnterior,
   } = ctx;
 
   // Visao efetiva do cadastro da PESSOA NOVA vem SO de `dados` (nunca de uma
@@ -1692,14 +1717,21 @@ async function decidirCadastroPacienteNumeroProprio(ctx: {
   }
 
   // Troca de selecao para a pessoa recem-criada (cross-contato, spec secao
-  // 4.5, passo 5): PRIMEIRO limpa o snapshot acumulado do paciente anterior
-  // (estrito -- lanca se falhar), SO ENTAO grava a selecao. Os campos que o
-  // turno emitiu para ela (cadastrais E operacionais) sao preservados.
-  const dadosLimpos = await limparSnapshotDoPacienteAnterior(
-    clienteBanco,
-    { conversa_id: conversaId, clinica_id: clinicaId, telefone_normalizado: telefoneNormalizadoDaConversa },
-    camposEmitidosNoTurno
-  );
+  // 4.5, passo 5): grava a selecao. A limpeza do snapshot do paciente
+  // ANTERIOR so acontece quando ela ainda e devida (`limparPacienteAnterior`);
+  // se o fluxo ja foi desacoplado em turno anterior, `dados` e o que a
+  // PROPRIA pessoa nova acumulou entre turnos (nome/cpf/procedimento/data) e
+  // NAO pode ser apagado -- so os campos deste turno sobreviveriam, obrigando
+  // a Iris a repetir perguntas (bloqueador da 4a revisao). ESTRITO quando
+  // roda: se a limpeza falhar, propaga e a selecao nao muda.
+  let dadosResultantes = dados;
+  if (limparPacienteAnterior) {
+    dadosResultantes = await limparSnapshotDoPacienteAnterior(
+      clienteBanco,
+      { conversa_id: conversaId, clinica_id: clinicaId, telefone_normalizado: telefoneNormalizadoDaConversa },
+      camposEmitidosNoTurno
+    );
+  }
   await gravarSelecaoPaciente(
     clienteBanco,
     clinicaId,
@@ -1711,7 +1743,7 @@ async function decidirCadastroPacienteNumeroProprio(ctx: {
   // conversa. Uma divergencia cadastral posterior deve ir para esse contato.
   return {
     pacienteId: persistencia.paciente_id,
-    dados: dadosLimpos,
+    dados: dadosResultantes,
     cadastroDoSelecionado: visaoEfetiva,
     contatoDoSelecionado: contatoDestinoId,
     telefoneDoSelecionado: telefoneNovo,
@@ -2381,6 +2413,14 @@ async function decidir(
       (campo) => lerAlteracaoStringInformada(alteracoesDoTurno[campo]) !== undefined
     )
   );
+  // O fluxo "outra pessoa" ja estava aberto ANTES deste turno = o campo esta
+  // em `dados` E nao foi emitido AGORA. Depois de aberto, o desacoplamento do
+  // paciente anterior ja aconteceu e nao se repete (bloqueador da 4a revisao).
+  const emitidoNesteTurno = (campo: CampoDadosConversa): boolean =>
+    lerAlteracaoStringInformada(alteracoesDoTurno[campo]) !== undefined;
+  const fluxoOutraPessoaJaAbertoAntesDoTurno =
+    (dados.vinculo_novo_paciente !== undefined && !emitidoNesteTurno('vinculo_novo_paciente')) ||
+    (dados.telefone_novo_paciente !== undefined && !emitidoNesteTurno('telefone_novo_paciente'));
   const selecao = await resolverSelecaoDePaciente({
     clienteBanco,
     clienteRpc,
@@ -2398,6 +2438,7 @@ async function decidir(
     telefoneDaListaDeEscolha,
     dados,
     camposEmitidosNoTurno,
+    fluxoOutraPessoaJaAbertoAntesDoTurno,
     atendimentoParaTerceiro,
     outraPessoaAlemDasListadas,
   });
