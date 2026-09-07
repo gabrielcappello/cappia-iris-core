@@ -1,4 +1,4 @@
-import { identificarConversa } from './identificacao.ts';
+import { identificarConversa, gravarSelecaoPaciente } from './identificacao.ts';
 import { interpretarEAplicar } from './interpretar-e-aplicar.ts';
 import { resolverDentista } from './resolver-dentista.ts';
 import { resolverDuracao } from './resolver-duracao.ts';
@@ -1101,61 +1101,87 @@ async function aplicarCorrecaoCadastro(
 }
 
 /**
- * Decide, ANTES de qualquer fluxo de agendamento/cadastro, se o turno precisa
- * de uma escolha de paciente (specs/contato-multiplos-pacientes-v1.md secao
- * 4.5, passo 1). Puro -- nao le banco, nao escreve.
+ * Decide, ANTES de qualquer fluxo de agendamento/cadastro, o que fazer com a
+ * escolha de paciente (specs/contato-multiplos-pacientes-v1.md secao 4.4/4.5).
+ * Puro -- nao le banco, nao escreve; quem grava a selecao e o chamador.
+ *
+ * Retorno:
+ *   - `{ selecionar: id }`  -- a IA emitiu um `paciente_id` VALIDO neste turno
+ *     (ja passou por `validarEscolhaPaciente`): o Core grava a selecao e o
+ *     fluxo segue, sem pergunta. Caso "para minha mae Marta".
+ *   - `{ decisao }`         -- e preciso perguntar (escolha entre os listados,
+ *     ou vinculo de pessoa nova).
+ *   - `null`                -- nada a fazer aqui; o fluxo segue com o
+ *     `pacienteId` ja resolvido pela identificacao.
  *
  * Regra, nesta ordem:
- *   1. `outra_pessoa_alem_das_listadas` -> `pedir_vinculo_paciente_novo`
- *      (segue direto para a pergunta de vinculo, sem tentar casar contra a
- *      lista -- a pessoa pode ou nao ter cadastro, isso e resolvido depois).
- *   2. `atendimento_para_terceiro` presente, `pacienteId` NAO resolvido, e
- *      ha pelo menos um paciente vinculado alem do titular
- *      (`pacientesDoContato.length > 1`, ou == 1 com vinculo 'dependente')
- *      -> `aguardando_escolha_paciente` ("e um deles ou outra pessoa?").
- *   3. `atendimento_para_terceiro` presente, `pacienteId` NAO resolvido, e o
- *      contato so tem o titular -> `pedir_vinculo_paciente_novo` (nao ha
- *      escolha a oferecer -- pergunta direto numero proprio vs. vinculado).
- *   4. caso contrario -> `null`: nada a decidir aqui, o fluxo segue com o
- *      `pacienteId` ja resolvido pela identificacao.
+ *   1. `pacienteIdEmitido` presente -> `{ selecionar }` (a IA identificou
+ *      quem e; `validarEscolhaPaciente` ja garantiu que pertence ao contato).
+ *   2. `outra_pessoa_alem_das_listadas` -> `pedir_vinculo_paciente_novo`
+ *      (segue direto para a pergunta de vinculo, sem casar contra a lista).
+ *   3. `atendimento_para_terceiro` e o turno NAO identificou quem
+ *      (`pacienteIdEmitido` ausente):
+ *        - ha paciente vinculado alem do proprio contato (a lista
+ *          `pacientesDoContato` -- que so chega com >1 -- nao esta vazia) ->
+ *          `aguardando_escolha_paciente` ("e um deles ou outra pessoa?");
+ *        - so o titular -> `pedir_vinculo_paciente_novo`.
+ *   4. caso contrario -> `null`.
  *
- * `pacienteId` resolvido (nao nulo) significa que a pessoa ja esta
- * identificada -- nenhuma pergunta, mesmo com `atendimento_para_terceiro`
- * (o turno "para minha mae Marta" que ja emitiu o paciente_id dela).
+ * `atendimento_para_terceiro` NAO e curto-circuitado por `pacienteId`
+ * resolvido: com contato de 1 paciente, a identificacao auto-resolve o
+ * titular, mas "e pra minha mae" continua NAO sendo para o titular -- a
+ * pergunta ainda precisa acontecer.
  */
+/**
+ * O valor `informar`/`corrigir` de uma alteracao, quando presente e nao
+ * vazio. `undefined` para ausente ou para `remover`.
+ */
+function lerAlteracaoStringInformada(alteracao: { acao: string; valor?: string } | undefined): string | undefined {
+  if (alteracao === undefined || alteracao.acao === 'remover') return undefined;
+  const valor = alteracao.valor;
+  return typeof valor === 'string' && valor.trim() !== '' ? valor : undefined;
+}
+
 function decidirEscolhaPaciente(entrada: {
   pacienteId: string | null;
+  pacienteIdEmitido: string | undefined;
   pacientesDoContato: readonly { paciente_id: string; nome: string; vinculo: 'titular' | 'dependente' }[];
   atendimentoParaTerceiro: boolean;
   outraPessoaAlemDasListadas: boolean;
-}): DecisaoOrquestrador | null {
-  const { pacienteId, pacientesDoContato, atendimentoParaTerceiro, outraPessoaAlemDasListadas } = entrada;
+}): { selecionar: string } | { decisao: DecisaoOrquestrador } | null {
+  const { pacienteIdEmitido, pacientesDoContato, atendimentoParaTerceiro, outraPessoaAlemDasListadas } = entrada;
 
-  if (outraPessoaAlemDasListadas) {
-    return { tipo: 'pedir_vinculo_paciente_novo' };
+  if (pacienteIdEmitido !== undefined) {
+    return { selecionar: pacienteIdEmitido };
   }
 
-  if (!atendimentoParaTerceiro || pacienteId !== null) {
+  if (outraPessoaAlemDasListadas) {
+    return { decisao: { tipo: 'pedir_vinculo_paciente_novo' } };
+  }
+
+  if (!atendimentoParaTerceiro) {
     return null;
   }
 
-  // Ha "outros" pacientes alem do titular quando a lista tem mais de um, ou
-  // tem exatamente um cujo vinculo e 'dependente' (o titular sozinho nunca
-  // aparece em `pacientes_do_contato` -- ele e o caso 1 telefone = 1
-  // paciente resolvido pela identificacao).
+  // "Ha quem escolher" = ha um paciente vinculado alem do titular: a lista
+  // tem mais de um item, OU tem exatamente um cujo vinculo e 'dependente'.
+  // Um contato so com o titular (lista de 1 item 'titular', ou vazia) nao
+  // oferece escolha -- pergunta direto o vinculo da pessoa nova.
   const temOutros =
     pacientesDoContato.length > 1 ||
     (pacientesDoContato.length === 1 && pacientesDoContato[0].vinculo === 'dependente');
 
   if (temOutros) {
     return {
-      tipo: 'aguardando_escolha_paciente',
-      pacientes: pacientesDoContato.map((p) => ({ nome: p.nome, vinculo: p.vinculo })),
+      decisao: {
+        tipo: 'aguardando_escolha_paciente',
+        pacientes: pacientesDoContato.map((p) => ({ nome: p.nome, vinculo: p.vinculo })),
+      },
     };
   }
 
   // Contato so com o titular: nao ha escolha a oferecer -- pergunta direto.
-  return { tipo: 'pedir_vinculo_paciente_novo' };
+  return { decisao: { tipo: 'pedir_vinculo_paciente_novo' } };
 }
 
 function camposParaLimparAoConcluir(
@@ -1756,6 +1782,9 @@ async function decidir(
   clienteRpc: ClienteRpc,
   clinicaId: string,
   contatoId: string,
+  // MUTAVEL: reatribuido quando a IA emite um `paciente_id` valido neste
+  // turno (spec contato-multiplos-pacientes secao 4.4) -- dai em diante o
+  // fluxo inteiro usa o paciente selecionado.
   pacienteId: string | null,
   telefoneNormalizado: string,
   dados: Record<string, string | undefined>,
@@ -1771,33 +1800,36 @@ async function decidir(
   atendimentoParaTerceiro: boolean,
   outraPessoaAlemDasListadas: boolean
 ): Promise<{ decisao: DecisaoOrquestrador; substituicao?: { dentista_nome_exibido: string } }> {
-  // ESCOLHA DE PACIENTE (specs/contato-multiplos-pacientes-v1.md secao 4.5).
+  // ESCOLHA DE PACIENTE (specs/contato-multiplos-pacientes-v1.md secao 4.4/4.5).
   //
   // Vem ANTES de qualquer decisao de agendamento/cadastro: enquanto o Core
   // nao sabe PARA QUEM e o atendimento, nao pode aplicar dado nenhum a um
-  // paciente. A regra de decisao segue o passo 1 da secao 4.5:
-  //
-  //   - `outra_pessoa_alem_das_listadas` -> segue para a pergunta de vinculo
-  //     (pedir_vinculo_paciente_novo), sem tentar casar contra a lista;
-  //   - `atendimento_para_terceiro` sem paciente_id resolvido e com OUTROS
-  //     pacientes vinculados alem do titular -> aguardando_escolha_paciente;
-  //   - `atendimento_para_terceiro` sem paciente_id e contato so com o
-  //     titular -> segue DIRETO para a pergunta de vinculo (nao ha escolha a
-  //     oferecer);
-  //   - caso contrario: nada a decidir aqui, o fluxo segue normalmente com o
-  //     `pacienteId` ja resolvido pela identificacao.
-  //
-  // `pacienteId` aqui ja e o RESOLVIDO (identificacao.ts): selecao valida OU
-  // unico paciente do contato. Se ele veio preenchido, a pessoa ja esta
-  // identificada -- nenhuma pergunta.
+  // paciente. O `paciente_id` que a IA emitiu neste turno ja passou por
+  // `validarEscolhaPaciente` (interpretar-e-aplicar.ts) -- se sobreviveu em
+  // `alteracoesDoTurno`, pertence ao contato.
+  const pacienteIdEmitido = lerAlteracaoStringInformada(alteracoesDoTurno.paciente_id);
   const escolhaPaciente = decidirEscolhaPaciente({
     pacienteId,
+    pacienteIdEmitido,
     pacientesDoContato,
     atendimentoParaTerceiro,
     outraPessoaAlemDasListadas,
   });
   if (escolhaPaciente !== null) {
-    return { decisao: escolhaPaciente };
+    if ('selecionar' in escolhaPaciente) {
+      // A IA identificou quem e -- grava a selecao em
+      // `estado_conversa.paciente_id` (spec secao 4.4) e o fluxo segue com
+      // ela dai em diante (reatribuicao do parametro `pacienteId`). A limpeza
+      // de `dados` acumulados do paciente anterior na TROCA (spec secao 4.4,
+      // "limpeza na troca") fica para uma revisao dedicada -- ver o TODO em
+      // orquestrador-contato-multiplos-pacientes.test.ts.
+      if (escolhaPaciente.selecionar !== pacienteId) {
+        await gravarSelecaoPaciente(clienteBanco, clinicaId, telefoneNormalizado, escolhaPaciente.selecionar);
+        pacienteId = escolhaPaciente.selecionar;
+      }
+    } else {
+      return { decisao: escolhaPaciente.decisao };
+    }
   }
 
   // CORRECAO DE CADASTRO FORA DO AGENDAMENTO (2026-09-01,
