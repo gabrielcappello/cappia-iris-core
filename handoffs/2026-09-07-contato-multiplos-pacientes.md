@@ -1,18 +1,17 @@
 # Handoff — implementação de `specs/contato-multiplos-pacientes-v1.md`
 
-**Data:** 2026-09-08 (8ª rodada — validação A→B→C **em produção** + defeito)
+**Data:** 2026-09-08 (9ª rodada — **feature congelada**; estado estável restaurado em produção)
 **Branch:** `feat/contato-multiplos-pacientes` (a partir de `main`)
-**Estado:** Fases A e C **aplicadas em `udizowyfjnhuhgxkeayk` (produção)**; Edge
-`iris-nova-mensagem` **v115** publicada. O teste sintético das RPCs revelou um
-**defeito real**: a RPC `cappia_persistir_paciente` de 9 params grava na coluna
-gerada `telefone_normalizado` (deveria ser a coluna-fonte `telefone`) →
-**criação/atualização de paciente quebrada em produção**. Migração corretiva +
-rollback corrigido + teste SQL **criados localmente, NÃO aplicados**. Auditoria
-achou o índice legado `pacientes_clinica_telefone_unique` que conflita com o
-modelo mas sustenta `cappia_confirmar_acao_pendente` — **decisão para o Codex**.
-Sem merge, sem push, sem aplicar a correção, sem rollback, sem deploy.
-Detalhes na seção "8ª rodada" abaixo.
-Nada aplicado em banco, nenhum push/merge/deploy, nenhuma chamada paga à IA.
+**Estado:** **funcionalidade congelada por decisão do Gabriel** (não é urgente).
+Produção `udizowyfjnhuhgxkeayk` **restaurada ao estado estável**: Fase C
+**revertida** (migration `20260908190625`), **Fase A mantida** (aditiva,
+compatível com a v114), Edge `iris-nova-mensagem` **redeployada como v117**
+(= v114 completa, `verify_jwt: true`; carga confirmada por smoke-test HTTP →
+403 `instancia_nao_autorizada`; a v116 incompleta foi incidente temporário),
+RPC ativa = `cappia_persistir_paciente` **de 6 params** (versão coluna-fonte).
+Teste transacional da RPC de 6 params (sintético, `ROLLBACK`): 5/5 PASS. Sem
+dados sintéticos; 21 pacientes; sem merge, sem push. Detalhes na seção "9ª
+rodada" abaixo; a "8ª rodada" (defeito da RPC de 9 params) fica como histórico.
 
 ## O que foi feito
 
@@ -285,6 +284,120 @@ removido (0 registros sintéticos, banco em 21/21).
 **Estado de produção agora:** Fases A e C aplicadas, Edge v115, **RPC de 9
 params quebrada** (defeito acima). O rollback local corrigido (Fase C → Fase A
 + redeploy v114) está pronto, se a decisão for reverter.
+
+## 9ª rodada — **feature congelada**; restauração do estado estável em produção
+
+Decisão do Gabriel (2026-09-08): a funcionalidade **não é urgente e foi
+congelada**. Sem tentar corrigir/completar o modelo multi-paciente. Executada
+**apenas** a restauração do estado estável em `udizowyfjnhuhgxkeayk`. **Fase A
+não foi revertida** (aditiva, compatível com a v114).
+
+### 1. Preflight read-only (antes de qualquer escrita) — tudo zero
+| Verificação | Resultado |
+|---|---|
+| telefones duplicados por clínica (`telefone` e `telefone_normalizado`) | **0 / 0** |
+| dependentes (`vinculo <> 'titular'`) / vínculo nulo | **0 / 0** (21 pacientes, todos `titular`) |
+| seleções cross-contato em `estado_conversa` | **0** |
+| pacientes / contatos / clínicas sintéticos | **0 / 0 / 0** |
+| contatos com >1 paciente (uso da feature) | **0** |
+| `pacientes.contato_id` preenchido | **21/21** (`contatos_whatsapp` = 21) |
+
+### 2. Rollback da Fase C aplicado como migration registrada
+- Via `mcp__claude_ai_Supabase__apply_migration`, `project_id=udizowyfjnhuhgxkeayk`.
+- Corpo = `src/supabase/rollbacks/20260907130000_iris_nova_contato_multiplos_pacientes_v1_fase_c_rollback.sql`
+  (SHA-256 `b2b4cfc283a29c276fa765670e18822ecb85fc914efc5e8da9b03dbd7b3279ec`, 175 linhas);
+  os `begin;`/`commit;` do arquivo omitidos porque `apply_migration` já roda
+  tudo numa transação — os statements são idênticos.
+- **`version` remoto: `20260908190625`** · `name`:
+  `rollback_iris_nova_contato_multiplos_pacientes_v1_fase_c`.
+
+### 3. Verificação pós-rollback — schema estável restaurado
+| Objeto | Depois do rollback |
+|---|---|
+| RPC `cappia_persistir_paciente` **6 params** `(uuid,text,text,text,date,text)` | **presente** — corpo coluna-fonte de `20260810182322` (`substr(v_telefone,3)` → INSERT em `telefone`); grant só `service_role` |
+| RPC `cappia_persistir_paciente` **9 params** | **removida** |
+| UNIQUE `pacientes_clinica_id_telefone_normalizado_key` `(clinica_id, telefone_normalizado)` | **recriada** |
+| UNIQUE `pacientes_id_clinica_telefone_key` `(id, clinica_id, telefone_normalizado)` | **recriada** |
+| FK `estado_conversa` | **`(paciente_id, clinica_id, telefone_normalizado)` → `pacientes(id, clinica_id, telefone_normalizado)`** (forma antiga) |
+| `pacientes.contato_id` | **`NULLABLE`** (`DROP NOT NULL`) |
+| índice bare `pacientes_clinica_telefone_unique` `(clinica_id, telefone)` | **intacto** (a Fase C nunca o removeu; o rollback não mexe) |
+
+### 4-5. Redeploy da Edge v114 + status
+- **O backup `backups/edge-v114-preflight-2026-09-08/` está incompleto**: só
+  62 dos 69 arquivos que a v114 importa. Faltavam 7 módulos de tipo
+  (`tipos.ts`, `mensagens-recebidas-tipos.ts`, `procedimento-tipos.ts`,
+  `dentista-tipos.ts`, `orquestrador-tipos.ts`, `duracao-tipos.ts`,
+  `resultado-iris-tipos.ts`) — `index.ts` e outros os importam.
+- Fonte da verdade da v114 = commit **`0705c37`** (ponto de ramificação do
+  branch, de onde a v114 foi publicada): **todos os 62 arquivos do backup
+  batem byte a byte com esse commit**. Os 7 ausentes foram recuperados do
+  blob de `0705c37` (LF).
+- 1º deploy (`--use-api`, `--project-ref udizowyfjnhuhgxkeayk`, sem
+  `--linked`/`--prune`/`--no-verify-jwt`) subiu só os 62 → **v116, incompleta**
+  (7 imports quebrados). Corrigido pelo redeploy do conjunto completo (69
+  arquivos) → **v117**.
+- **`iris-nova-mensagem` v117 · `status: ACTIVE` · `verify_jwt: true` ·
+  `import_map: false`** · `ezbr_sha256 fba9bfcb…`.
+- Árvore de trabalho da Edge restaurada para `HEAD` (`bf40b3a`) após o deploy —
+  `git status` limpo nesse diretório.
+
+#### 🟠 Incidente temporário da v116 (registro)
+O `deploy_edge_function` publica a nova versão como `ACTIVE` **assim que o
+upload dos assets termina** — não valida que o grafo de imports resolve. A
+v116 ficou `ACTIVE` por alguns minutos com 7 módulos ausentes: o isolado
+**falharia no cold-start** (erro de import), sem que `list_edge_functions`
+distinguisse isso de uma versão sã. Só um **carregamento real** confirma a
+versão. Corrigido pela v117 (conjunto completo) — e comprovado pelo smoke-test
+abaixo.
+
+### 7. Smoke-test HTTP da v117 (1 chamada, sem OpenAI, sem Core, sem WhatsApp)
+- **1 POST** a `https://udizowyfjnhuhgxkeayk.supabase.co/functions/v1/iris-nova-mensagem`.
+- `Authorization: Bearer <chave do cofre>` (carregada de
+  `C:\Users\Gabriel\.iris-secrets\supabase.env`, nunca impressa).
+- Payload **estruturalmente válido** — exatamente as 4 chaves de
+  `PayloadEntrada` (`provider`, `instancia_whatsapp`, `telefone_normalizado`,
+  `mensagem`), todas string não-vazia.
+- **`instancia_whatsapp` deliberadamente falsa**
+  (`instancia-fake-smoke-test-v117-nao-existe`); telefone sintético
+  `5599999990001`; a instância real **não** foi usada.
+- **Resultado: `HTTP 403` + `{"erro":"instancia_nao_autorizada"}`** — exatamente
+  o exigido.
+- A checagem de instância ([`index.ts:228`](../supabase/functions/iris-nova-mensagem/index.ts)) roda
+  **antes** da chamada ao Core ([`index.ts:258`](../supabase/functions/iris-nova-mensagem/index.ts))
+  e antes de qualquer chamada à OpenAI. Um 403 **com o corpo JSON exato do
+  handler** só é possível se o isolado da v117 **carregou e resolveu todos os
+  módulos** — um import quebrado (como na v116) devolveria erro de boot, não
+  este 403 limpo. **v117 confirmada sã.**
+
+### 6. Teste transacional da RPC de 6 params (sintético, `ROLLBACK`, sem IA/WhatsApp)
+`DO $$ … $$; rollback;` em `udizowyfjnhuhgxkeayk`. 5 cenários, todos **PASS**:
+- **A** criação (INSERT): grava a **coluna-fonte** `telefone=99000008001`, gerada
+  `telefone_normalizado=5599000008001`; `nome` gravado.
+- **B** 2ª chamada mesmo telefone → **UPDATE do mesmo `paciente_id`**; `nome`/`email`
+  novos; `documento` **preservado** pelo `coalesce`.
+- **C** CPF repetido na mesma clínica → `motivo = cpf_ja_cadastrado`.
+- **D** telefone fora do formato canônico (`11987654321`) → `check_violation`
+  (falha fechado).
+- **E** `clinica_id` nulo → `motivo = clinica_id_ausente`.
+
+Pós-teste: `ROLLBACK` confirmado — 0 sintéticos, 21 pacientes, 0 dependentes,
+0 telefones duplicados, RPC 6-params = 1, RPC 9-params = 0.
+
+### Estado de produção após a 9ª rodada
+- **Fase A: mantida** (aditiva — `contatos_whatsapp`, `pacientes.contato_id`
+  nullable + `vinculo`, `pacientes_id_clinica_key`, FK
+  `pacientes_contato_clinica_fk`, índice `pacientes_contato_id_idx`,
+  RPC de 9 params **não existe mais**).
+- **Fase C: revertida** (migration `20260908190625`).
+- **Edge `iris-nova-mensagem`: v117** = v114 completa (`0705c37`),
+  `verify_jwt: true`, **carga confirmada por smoke-test HTTP (403
+  `instancia_nao_autorizada`)**. A v116 (incompleta) foi um incidente
+  temporário, já superado.
+- RPC ativa: `cappia_persistir_paciente` **de 6 params**, versão coluna-fonte.
+- Nenhum dado sintético; 21 pacientes; migrations A/C aplicadas **não** foram
+  alteradas; artefatos locais da correção (migração corretiva `20260908180000`
+  + seu teste) seguem **modificados no working tree e não aplicados** — feature
+  congelada, sem merge, sem push.
 
 ## O que continua pendente (NÃO são requisitos funcionais da spec)
 

@@ -69,6 +69,10 @@
 -- FORA do escopo desta correcao pontual e precisa de decisao explicita +
 -- revisao do Codex. Ver o bloco "DECISAO PENDENTE" no rodape.
 
+-- Funcao + ACLs na MESMA transacao: ou o CREATE OR REPLACE e os REVOKE/GRANT
+-- entram juntos, ou nada entra.
+begin;
+
 create or replace function public.cappia_persistir_paciente(
   p_clinica_id           uuid,
   p_contato_id           uuid,
@@ -203,6 +207,8 @@ revoke all on function public.cappia_persistir_paciente(uuid, uuid, text, text, 
 revoke all on function public.cappia_persistir_paciente(uuid, uuid, text, text, text, uuid, text, date, text) from authenticated;
 grant execute on function public.cappia_persistir_paciente(uuid, uuid, text, text, text, uuid, text, date, text) to service_role;
 
+commit;
+
 -- ── DECISAO PENDENTE (revisao do Codex): indice pacientes_clinica_telefone_unique
 --
 -- Estado de producao lido em 2026-09-08, apos as FASES A e C:
@@ -212,23 +218,33 @@ grant execute on function public.cappia_persistir_paciente(uuid, uuid, text, tex
 --
 -- Conflito: titular e dependente do MESMO contato compartilham o mesmo
 -- `telefone`. Com este indice, o 2o INSERT (o dependente) viola a unicidade
--- (clinica_id, telefone) -- a feature aprovada nao funciona.
+-- (clinica_id, telefone) -- A FEATURE APROVADA CONTINUA IMPOSSIVEL enquanto
+-- este indice existir. Esta migration corretiva NAO o remove: ela so conserta
+-- a coluna-fonte. A remocao do indice depende da decisao abaixo e vira numa
+-- MIGRATION SEPARADA (ver os dois caminhos no handoff, secao "8ª rodada").
 --
 -- Bloqueio para remove-lo agora: `cappia_confirmar_acao_pendente` (pipeline
--- legado, ainda presente) faz `INSERT INTO pacientes (...) ON CONFLICT
--- (clinica_id, telefone) DO UPDATE`, que INFERE pelo par de colunas. Apos a
--- FASE C este e o unico indice que satisfaz esse par. Dropar o indice sem
--- tratar aquela RPC a quebra (SQLSTATE 42P10). As tabelas do pipeline
--- (acoes_pendentes, acoes_outbox) estao VAZIAS -- nenhuma atividade
--- registrada --, mas isso nao prova que o fluxo esta desligado.
+-- legado, ainda presente no banco) IDENTIFICA PACIENTE PELO TELEFONE
+-- (`INSERT INTO pacientes (...) ON CONFLICT (clinica_id, telefone) DO UPDATE`
+-- + a propria assinatura recebe `p_telefone`), o que e CONCEITUALMENTE
+-- INCOMPATIVEL com varios pacientes no mesmo numero. Nao ha reescrita
+-- silenciosa possivel: mudar aquela RPC para (clinica_id, telefone_normalizado)
+-- so troca a coluna, nao resolve a ambiguidade "qual dos pacientes deste
+-- numero". Ela depende do par (clinica_id, telefone) ser unico -- premissa
+-- que a feature aprovada quebra.
 --
--- Opcoes para a proxima decisao (fora do escopo desta correcao pontual):
---   (a) DROP INDEX pacientes_clinica_telefone_unique + reescrever o ON
---       CONFLICT de cappia_confirmar_acao_pendente para
---       (clinica_id, telefone_normalizado) OU para nao usar ON CONFLICT;
---   (b) confirmar com o Gabriel que o pipeline legado (n8n/acoes_pendentes)
---       esta desativado e entao so DROP INDEX;
---   (c) manter o indice e aceitar que "dependente no mesmo numero" continua
---       bloqueado ate a decisao (a) ou (b) -- estado atual apos esta migration.
+-- As tabelas do pipeline (acoes_pendentes, acoes_outbox) estao VAZIAS em
+-- producao (2026-09-08). ISSO NAO PROVA AUSENCIA DE CONSUMIDOR EXTERNO: um
+-- n8n/Evolution ou outro caller pode invocar `cappia_confirmar_acao_pendente`
+-- e limpar/ignorar as linhas, ou o fluxo pode estar so temporariamente
+-- ocioso. So a confirmacao explicita do Gabriel de que o pipeline antigo esta
+-- DESATIVADO libera a remocao.
 --
--- Esta migration NAO toca o indice. A correcao aqui e SO a coluna-fonte.
+-- DOIS CAMINHOS (nenhum e feito aqui):
+--   - pipeline antigo CONFIRMADO desativado -> migration SEPARADA que
+--     (1) retira a autoridade / remove `cappia_confirmar_acao_pendente` (e as
+--     RPCs `acoes_pendentes`/`acoes_outbox` correlatas, se orfas) e
+--     (2) `DROP INDEX pacientes_clinica_telefone_unique`;
+--   - pipeline antigo AINDA ATIVO -> a remocao do indice fica BLOQUEADA ate o
+--     consumidor legado ser migrado para fora da identificacao por telefone.
+--     "dependente no mesmo numero" permanece impossivel ate la.
