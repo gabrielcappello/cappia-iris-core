@@ -122,3 +122,17 @@ test('instrucoes: duvida real sobre horario continua omitindo o campo (mesma reg
   const trechoHorario = INSTRUCOES_EXTRATOR.slice(INSTRUCOES_EXTRATOR.indexOf('Horarios sao normalizados'));
   assert.match(trechoHorario, /Em duvida real sobre qual horario foi mencionado, omita horario_texto/);
 });
+
+test('instrucoes: primeira pessoa sozinha ("para mim") NAO identifica paciente -- nem o titular -- em pacientes_do_contato', () => {
+  const trecho = INSTRUCOES_EXTRATOR.slice(
+    INSTRUCOES_EXTRATOR.indexOf('"pacientes_do_contato" (quando presente)')
+  );
+  // nome/vinculo explicitos continuam identificando
+  assert.match(trecho, /pelo nome \("para a Marta"\), pelo vinculo, ou por uma combinacao/);
+  // primeira pessoa sozinha nao identifica -- inclui explicitamente o titular
+  assert.match(trecho, /Primeira pessoa sozinha \("para mim", "pra mim", "meu atendimento"/);
+  assert.match(trecho, /NAO identifica nenhum paciente -- nem mesmo o de vinculo "titular"/);
+  assert.match(trecho, /o sistema nao sabe quem esta escrevendo/);
+  // nesse caso: omitir paciente_id e deixar o Core perguntar
+  assert.match(trecho, /omita "paciente_id" e deixe o sistema perguntar qual paciente/);
+});
