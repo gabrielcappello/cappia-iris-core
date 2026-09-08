@@ -1,0 +1,259 @@
+{
+  "slug": "iris-nova-mensagem",
+  "version": 114,
+  "verify_jwt": true,
+  "entrypoint": "/tmp/user_fn_udizowyfjnhuhgxkeayk_edbdd9dd-9639-4e62-bcf0-72dd5aaa1fb7_114/source/supabase/functions/iris-nova-mensagem/index.ts",
+  "import_map": false,
+  "capturado_em": "2026-09-08",
+  "proposito": "preflight A->B->C: fonte da Edge Function iris-nova-mensagem v114 publicada, para rollback do deploy B",
+  "arquivos": [
+    {
+      "nome": "index.ts",
+      "bytes": 24322
+    },
+    {
+      "nome": "orquestrador.ts",
+      "bytes": 123521
+    },
+    {
+      "nome": "identificacao.ts",
+      "bytes": 14504
+    },
+    {
+      "nome": "erros.ts",
+      "bytes": 2441
+    },
+    {
+      "nome": "telefone.ts",
+      "bytes": 377
+    },
+    {
+      "nome": "contexto-horarios.ts",
+      "bytes": 26462
+    },
+    {
+      "nome": "gerar-resposta-paciente.ts",
+      "bytes": 23349
+    },
+    {
+      "nome": "historico-conversa.ts",
+      "bytes": 7642
+    },
+    {
+      "nome": "aguardando-resposta.ts",
+      "bytes": 3313
+    },
+    {
+      "nome": "resultado-iris-validador.ts",
+      "bytes": 29571
+    },
+    {
+      "nome": "interpretar-e-aplicar.ts",
+      "bytes": 45440
+    },
+    {
+      "nome": "aplicar-dados.ts",
+      "bytes": 15717
+    },
+    {
+      "nome": "interpretacao-extrator.ts",
+      "bytes": 38425
+    },
+    {
+      "nome": "cadastro-paciente.ts",
+      "bytes": 4250
+    },
+    {
+      "nome": "interpretacao-tipos.ts",
+      "bytes": 19499
+    },
+    {
+      "nome": "interpretacao-instrucoes.ts",
+      "bytes": 31772
+    },
+    {
+      "nome": "pre-aplicacao.ts",
+      "bytes": 1705
+    },
+    {
+      "nome": "validar-cadastro.ts",
+      "bytes": 5735
+    },
+    {
+      "nome": "guarda-nome-escolha-dentista.ts",
+      "bytes": 4270
+    },
+    {
+      "nome": "guarda-lista-vazia-dentistas.ts",
+      "bytes": 3300
+    },
+    {
+      "nome": "dentista-do-tratamento.ts",
+      "bytes": 7410
+    },
+    {
+      "nome": "procedimento-do-anuncio.ts",
+      "bytes": 4032
+    },
+    {
+      "nome": "dentista-preferido-do-paciente.ts",
+      "bytes": 9710
+    },
+    {
+      "nome": "resolver-dentista.ts",
+      "bytes": 8835
+    },
+    {
+      "nome": "resolver-duracao.ts",
+      "bytes": 11111
+    },
+    {
+      "nome": "montar-fatos-temporais.ts",
+      "bytes": 10798
+    },
+    {
+      "nome": "normalizacao-texto.ts",
+      "bytes": 2442
+    },
+    {
+      "nome": "resolver-temporal.ts",
+      "bytes": 50193
+    },
+    {
+      "nome": "temporal-tipos.ts",
+      "bytes": 10501
+    },
+    {
+      "nome": "carregar-disponibilidade.ts",
+      "bytes": 18844
+    },
+    {
+      "nome": "resolver-disponibilidade.ts",
+      "bytes": 29801
+    },
+    {
+      "nome": "disponibilidade-tipos.ts",
+      "bytes": 11242
+    },
+    {
+      "nome": "gerar-opcoes.ts",
+      "bytes": 4564
+    },
+    {
+      "nome": "intervalo.ts",
+      "bytes": 4541
+    },
+    {
+      "nome": "carregar-catalogo.ts",
+      "bytes": 16939
+    },
+    {
+      "nome": "clinica-conhecida.ts",
+      "bytes": 6619
+    },
+    {
+      "nome": "precos-clinica.ts",
+      "bytes": 6611
+    },
+    {
+      "nome": "dentistas-da-clinica.ts",
+      "bytes": 4289
+    },
+    {
+      "nome": "reservar-agendamento.ts",
+      "bytes": 7404
+    },
+    {
+      "nome": "buscar-agendamento-ativo.ts",
+      "bytes": 8360
+    },
+    {
+      "nome": "remarcar-agendamento.ts",
+      "bytes": 7262
+    },
+    {
+      "nome": "cancelar-agendamento.ts",
+      "bytes": 5564
+    },
+    {
+      "nome": "persistir-paciente.ts",
+      "bytes": 6705
+    },
+    {
+      "nome": "trocar-telefone-paciente.ts",
+      "bytes": 5441
+    },
+    {
+      "nome": "correcao-cadastro.ts",
+      "bytes": 8329
+    },
+    {
+      "nome": "declarar-pergunta-pendente.ts",
+      "bytes": 8432
+    },
+    {
+      "nome": "sombra-contexto-unificado.ts",
+      "bytes": 15275
+    },
+    {
+      "nome": "guarda-contexto-unificado.ts",
+      "bytes": 4950
+    },
+    {
+      "nome": "contexto-unificado-tipos.ts",
+      "bytes": 7927
+    },
+    {
+      "nome": "dentistas-historicos.ts",
+      "bytes": 6338
+    },
+    {
+      "nome": "tratamentos-aprovados.ts",
+      "bytes": 7814
+    },
+    {
+      "nome": "agendamento-pela-data.ts",
+      "bytes": 3505
+    },
+    {
+      "nome": "gerar-resposta-conversacional.ts",
+      "bytes": 8846
+    },
+    {
+      "nome": "fatos-autorizados.ts",
+      "bytes": 46819
+    },
+    {
+      "nome": "guarda-resposta-redatora.ts",
+      "bytes": 14423
+    },
+    {
+      "nome": "redator-instrucoes.ts",
+      "bytes": 28572
+    },
+    {
+      "nome": "cliente-modelo-openai.ts",
+      "bytes": 49381
+    },
+    {
+      "nome": "cliente-modelo-redator-openai.ts",
+      "bytes": 9026
+    },
+    {
+      "nome": "sombra-capacidade-v2.ts",
+      "bytes": 13855
+    },
+    {
+      "nome": "sombra-resultado-iris.ts",
+      "bytes": 8774
+    },
+    {
+      "nome": "resultado-iris-instrucoes.ts",
+      "bytes": 8345
+    },
+    {
+      "nome": "auditoria-conversas.ts",
+      "bytes": 5414
+    }
+  ]
+}

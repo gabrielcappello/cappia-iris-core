@@ -1,15 +1,17 @@
 # Handoff — implementação de `specs/contato-multiplos-pacientes-v1.md`
 
-**Data:** 2026-09-07 (7ª rodada, após 6ª revisão do Codex)
+**Data:** 2026-09-08 (8ª rodada — validação A→B→C **em produção** + defeito)
 **Branch:** `feat/contato-multiplos-pacientes` (a partir de `main`)
-**Estado:** **escopo funcional da spec fechado e aprovado na 5ª revisão** (código
-de produção **congelado**). 6ª rodada mexeu só nas migrations; 7ª rodada corrige
-**apenas texto/comentários**: (a) o comando de promoção da Fase C — wildcard →
-dois `git mv` explícitos; (b) a afirmação falsa "o teste da sequência inteira já
-foi feito" → "deverá ser testada em branch descartável antes da produção".
-Revisão de código e de desenho das migrations **encerrada favoravelmente**;
-pendentes antes da produção: teste real A→B→C em ambiente descartável, medição
-curta com IA e autorização explícita do Gabriel.
+**Estado:** Fases A e C **aplicadas em `udizowyfjnhuhgxkeayk` (produção)**; Edge
+`iris-nova-mensagem` **v115** publicada. O teste sintético das RPCs revelou um
+**defeito real**: a RPC `cappia_persistir_paciente` de 9 params grava na coluna
+gerada `telefone_normalizado` (deveria ser a coluna-fonte `telefone`) →
+**criação/atualização de paciente quebrada em produção**. Migração corretiva +
+rollback corrigido + teste SQL **criados localmente, NÃO aplicados**. Auditoria
+achou o índice legado `pacientes_clinica_telefone_unique` que conflita com o
+modelo mas sustenta `cappia_confirmar_acao_pendente` — **decisão para o Codex**.
+Sem merge, sem push, sem aplicar a correção, sem rollback, sem deploy.
+Detalhes na seção "8ª rodada" abaixo.
 Nada aplicado em banco, nenhum push/merge/deploy, nenhuma chamada paga à IA.
 
 ## O que foi feito
@@ -219,6 +221,70 @@ imediatamente antes do `SET NOT NULL`.
 **Nada disso foi executado.** Os arquivos são candidatos locais; a aplicação
 depende de autorização explícita por ação e de teste prévio da sequência
 A→B→C num branch descartável do Supabase de dev.
+
+## 8ª rodada — validação A→B→C **em produção** (`udizowyfjnhuhgxkeayk`) e defeito encontrado
+
+Autorização explícita do Gabriel (2026-09-08) para executar A→B→C diretamente
+em produção, substituindo "ambiente descartável", com dados de teste. Via MCP
+`apply_migration` (não `supabase db push`, autorizado no lugar).
+
+### O que foi aplicado (rastreabilidade local ↔ remoto)
+
+| Fase | Arquivo local | SHA-256 do arquivo | `version` remoto (MCP gera o timestamp na aplicação) | `name` remoto |
+|---|---|---|---|---|
+| **A** | `src/supabase/migrations/20260907120000_iris_nova_contato_multiplos_pacientes_v1_fase_a.sql` (283 linhas) | `498b38b1b4cc47ae7bfd5f5e42875d294fa4edb0f17d997fc2725311eb2afb21` | `20260908153001` | `iris_nova_contato_multiplos_pacientes_v1_fase_a` |
+| **B (deploy)** | Edge `iris-nova-mensagem`, branch @ `8c9a8cf`, `--use-api` | — | **v114 → v115**, ACTIVE, `verify_jwt: true` (preservado); `ezbr_sha256 4a7ee73e… → ab5d4ad9…` | — |
+| **C** | `src/supabase/migrations/20260907130000_iris_nova_contato_multiplos_pacientes_v1_fase_c.sql` (148 linhas) | `04938509f882b9b756f7cd411242666261ff11168d4d5714d191eebab2d3ae13` | `20260908175301` | `iris_nova_contato_multiplos_pacientes_v1_fase_c` |
+
+**Backup da Edge v114** (para rollback do deploy B): fonte completa em
+`backups/edge-v114-preflight-2026-09-08/` (62 arquivos + `_MANIFEST.json`).
+
+### Schema pós-A e pós-C — verificado por leitura, tudo conforme
+- Fase A: `contatos_whatsapp` (RLS on, 21 linhas), `pacientes.contato_id` backfill 21/21, `vinculo=titular` ×21, `pacientes_id_clinica_key` + FK composta + índice; **v114 não regride** (UNIQUEs de telefone + FK antiga de `estado_conversa` intactas); **RPCs de 6 e 9 params coexistindo**.
+- Fase C: UNIQUEs de telefone (constraints) **removidas**; `pacientes.contato_id` **NOT NULL**; FK de `estado_conversa` = `(paciente_id, clinica_id)` (sem telefone); FK de `agendamentos` intocada (simples); **RPC de 9 params é a única**; **RPC de 6 params removida**. Advisors sem problema novo.
+
+### 🛑 Defeito encontrado no teste sintético das RPCs (parada)
+
+Ao testar `cappia_persistir_paciente` de 9 params via INSERT sintético:
+```
+ERROR: 428C9: cannot insert a non-DEFAULT value into column "telefone_normalizado"
+DETAIL: Column "telefone_normalizado" is a generated column.
+```
+**Causa:** em produção `pacientes.telefone_normalizado` é
+`GENERATED ALWAYS AS ('55' || telefone) STORED` — a coluna de entrada é
+`telefone`. A RPC de 9 params (escrita a partir da migration de **dev**
+`20260809120000`, não da irmã de produção `migrations-legado/20260810182322`)
+faz `INSERT ... telefone_normalizado` → impossível nesse schema. **Nenhuma
+criação/atualização de paciente via a nova RPC funciona em produção.** O código
+v115 já em produção chama essa RPC.
+
+### Auditoria read-only de `public.pacientes` (constraints + índices)
+Além das constraints, existe o **índice UNIQUE bare `pacientes_clinica_telefone_unique`
+sobre `(clinica_id, telefone)`** (a coluna-fonte). A Fase C **não o removeu**
+(só removia constraints por nome). Ele **conflita com o modelo aprovado**
+(titular + dependente do mesmo contato têm o mesmo `telefone`), **mas**
+`cappia_confirmar_acao_pendente` (pipeline legado, ainda no banco;
+`acoes_pendentes`/`acoes_outbox` vazias) faz `INSERT ... ON CONFLICT
+(clinica_id, telefone) DO UPDATE`, que **infere pelo par e depende desse
+índice** após a Fase C. Removê-lo sem tratar aquela RPC a quebra (SQLSTATE
+42P10). **Decisão fora do escopo desta correção — vai para a revisão do Codex.**
+
+### Artefatos locais da correção (criados nesta rodada, **não aplicados**)
+
+| Arquivo | O que faz |
+|---|---|
+| `src/supabase/migrations/20260908180000_iris_nova_persistir_paciente_9p_coluna_fonte.sql` | **novo** — `CREATE OR REPLACE` da RPC de 9 params reutilizando a tradução comprovada de `20260810182322`: valida `^55[0-9]{10,11}$` (RAISE `check_violation` fora disso), `v_telefone_bruto := substr(v_telefone, 3)`, INSERT na coluna-fonte `telefone`. UPDATE inalterado (não toca telefone). **NÃO** toca o índice `pacientes_clinica_telefone_unique` — a decisão fica documentada no rodapé para o Codex. |
+| `src/supabase/rollbacks/20260907130000_..._fase_c_rollback.sql` | **corrigido** — a RPC de 6 params que ele recria passou a ser a versão **coluna-fonte** de `20260810182322` (antes recriava a de `20260809120000`, que grava na coluna gerada e falha 428C9). Não recria o índice bare (a Fase C nunca o removeu). |
+| `src/supabase/tests/20260908180000_..._9p_coluna_fonte_constraints.sql` | **novo** — bateria SQL determinística (transação com `ROLLBACK` final, dados sintéticos) para um branch descartável: (1) criar paciente número próprio; (2) criar dependente no mesmo número — assere os dois estados possíveis conforme o índice legado; (3) UPDATE por `(id, contato_id)`; (4) `paciente_nao_encontrado` para contato incompatível; (5) `cpf_ja_cadastrado`. |
+
+**Nada disso foi aplicado.** Migração corretiva não aplicada, rollback não
+executado, sem deploy, sem push, sem novos testes com dados em produção.
+Limpeza: o único `contatos_whatsapp` sintético criado durante o teste foi
+removido (0 registros sintéticos, banco em 21/21).
+
+**Estado de produção agora:** Fases A e C aplicadas, Edge v115, **RPC de 9
+params quebrada** (defeito acima). O rollback local corrigido (Fase C → Fase A
++ redeploy v114) está pronto, se a decisão for reverter.
 
 ## O que continua pendente (NÃO são requisitos funcionais da spec)
 
