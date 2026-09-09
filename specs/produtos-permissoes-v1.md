@@ -245,6 +245,9 @@ já usado no projeto), numa transação:
 
 1. `ALTER TABLE clinicas ADD COLUMN produto text DEFAULT 'iris_completa';`
    — o default já entra aqui (§2.3) e preenche as linhas existentes.
+   **Sem `IF NOT EXISTS`:** a coluna foi confirmada ausente; se o banco
+   estiver em estado diferente, a migration deve falhar de forma clara, não
+   esconder a divergência.
 2. `UPDATE clinicas SET produto = 'iris_completa' WHERE produto IS NULL;` —
    rede de segurança explícita para as clínicas existentes (§5.1). Com o
    default do passo 1 nenhuma linha deve sobrar nula; o `UPDATE` garante
@@ -340,19 +343,30 @@ const CATALOGO: Record<Produto, readonly Capacidade[]> = {
 };
 
 /**
- * Capacidades de um produto.
+ * O valor de `clinicas.produto` é um Produto conhecido?
+ *
+ * A validação mora aqui, na fronteira, porque o tipo gerado do banco é
+ * `string` -- exigir `Produto` das funções abaixo obrigaria cada consumidor
+ * a fazer um cast inseguro, que é justamente o que não queremos espalhar.
+ */
+export function ehProduto(valor: unknown): valor is Produto {
+  return typeof valor === "string" && (PRODUTOS as readonly string[]).includes(valor);
+}
+
+/**
+ * Capacidades de um produto, a partir do valor CRU do banco.
  *
  * NÃO existe fallback: `clinicas.produto` é NOT NULL + CHECK, então um
  * valor fora do catálogo é impossível por construção. Se ainda assim
- * chegar aqui (tipo mentindo, dado montado à mão), o resultado é NENHUMA
+ * chegar aqui (nulo, ausente, string desconhecida), o resultado é NENHUMA
  * capacidade — falha fechada, nunca concessão parcial. Ver spec §5.2.
  */
-export function capacidadesDe(produto: Produto): readonly Capacidade[] {
-  return CATALOGO[produto] ?? [];
+export function capacidadesDe(produto: unknown): readonly Capacidade[] {
+  return ehProduto(produto) ? CATALOGO[produto] : [];
 }
 
 /** Pergunta única que todo consumidor (tela ou rota) faz. */
-export function temCapacidade(produto: Produto, capacidade: Capacidade): boolean {
+export function temCapacidade(produto: unknown, capacidade: Capacidade): boolean {
   return capacidadesDe(produto).includes(capacidade);
 }
 ```
@@ -369,10 +383,14 @@ export function temCapacidade(produto: Produto, capacidade: Capacidade): boolean
   deveria tê-la) fica impossível.
 - **`odontograma` é literal:** é justamente a lista que precisa de decisão
   explícita do Gabriel, item por item. Derivá-la seria adivinhar.
-- **`Produto` e `Capacidade` são unions, não string livre:** o
-  `next build` type-checka e é o portão real de CI (`AGENTS.md` do portal).
-  Um cadeado que peça uma capacidade inexistente não compila até ela ser
-  adicionada de propósito aqui.
+- **`Capacidade` é union, não string livre:** o `next build` type-checka e
+  é o portão real de CI (`AGENTS.md` do portal). Um cadeado que peça uma
+  capacidade inexistente não compila até ela ser adicionada de propósito
+  aqui.
+- **A entrada de produto é crua (`unknown`), validada na fronteira:** o
+  tipo gerado do banco é `string`, então exigir `Produto` nos parâmetros
+  empurraria um cast inseguro para cada consumidor. `ehProduto` concentra
+  a validação num lugar só, e quem chama passa o valor como veio.
 
 ---
 
@@ -446,10 +464,12 @@ Duas barreiras, nesta ordem:
 
 1. **É impossível por construção.** `NOT NULL` + `CHECK` no banco (§2.1).
    Não existe linha de clínica com produto ausente ou inválido.
-2. **Se ainda assim chegar ao código, falha fechada.** `capacidadesDe`
-   devolve **nenhuma capacidade** (`[]`) para um valor fora do catálogo —
-   não `odontograma`, não `iris_completa`. Sem acesso é um estado
-   diagnosticável; produto parcial silencioso não é.
+2. **Se ainda assim chegar ao código, falha fechada.** `capacidadesDe` e
+   `temCapacidade` recebem o valor **cru** (`unknown`) e o validam por
+   `ehProduto`. Valor válido usa o catálogo; **inválido, nulo ou ausente
+   devolve nenhuma capacidade** (`[]`) — não `odontograma`, não
+   `iris_completa`. Sem acesso é um estado diagnosticável; produto parcial
+   silencioso não é.
 
 Não há "modo de compatibilidade", flag de transição nem fallback no código.
 
@@ -524,12 +544,18 @@ de sessão, banco, rota ou tela.
    consta de `CAPACIDADES` como entrada independente. (Trava da correção 2:
    dentistas não pode ter sido agrupado dentro de outra capacidade ampla.)
 
-5. **Valor fora do catálogo não concede nada.**
-   `capacidadesDe("plano_qualquer" as Produto)` devolve `[]`, e
-   `temCapacidade("plano_qualquer" as Produto, "odontograma") === false`.
-   Verifica explicitamente que **não** virou `odontograma` nem
-   `iris_completa`. (Trava da correção 3: falha fechada, nunca produto
+5. **Valor cru inválido, nulo ou ausente não concede nada.**
+   Para cada entrada em `["plano_qualquer", "profissional", "", null,
+   undefined, 42]`: `capacidadesDe(v)` devolve `[]` e `temCapacidade(v, …)`
+   é `false`. Sem cast — é o próprio contrato da função que aceita valor
+   não validado. Verifica explicitamente que **não** virou `odontograma`
+   nem `iris_completa`. (Trava da correção 3: falha fechada, nunca produto
    parcial.)
+
+5.1. **`ehProduto` aceita só os produtos conhecidos.**
+   `true` para cada item de `PRODUTOS`; `false` para `"profissional"`,
+   `"1_dentista"`, `""`, `null`, `undefined` e um número. (Trava a
+   validação de fronteira que dispensa casts nos consumidores.)
 
 6. **O catálogo cobre todo `Produto` declarado.**
    Para todo `p` de `PRODUTOS`, `CATALOGO[p]` existe e é não-vazio. Falha
