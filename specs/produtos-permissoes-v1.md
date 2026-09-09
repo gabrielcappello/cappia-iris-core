@@ -1,10 +1,9 @@
 # Base de produtos e permissões no portal Cappia — spec v1
 
 **Status:** **aprovada, ainda não implementada.** Aprovada pelo Gabriel em
-2026-09-08, após três rodadas de revisão, sem bloqueadores. Recebeu uma
-**correção factual de produto em 2026-09-09** (4ª rodada, §1.2) que não
-altera o desenho aprovado: `clinicas.produto` continua exatamente como
-aprovada e segue sendo a única informação que define os acessos. **Nada
+2026-09-08, após três rodadas de revisão, sem bloqueadores. Ajuste em
+2026-09-09 sobre o papel de `plano` e `max_dentistas` (§1.2); o desenho não
+muda — `clinicas.produto` + fonte central de capacidades. **Nada
 implementado:** sem código, sem migration criada, sem alteração no portal
 ou na Edge Function `criar-clinica`, sem deploy. A implementação depende de
 autorização própria (processo em `AGENTS.md`).
@@ -69,7 +68,7 @@ Levantado direto de `iris-portal-v2/src` e do banco de produção
 `udizowyfjnhuhgxkeayk`. **Usado só como evidência do estado atual, não como
 arquitetura obrigatória.**
 
-### 1.1 `clinicas.plano` existe, não é produto — e é um rótulo legado
+### 1.1 `clinicas.plano` existe e não é produto
 
 - `clinicas.plano` — `text | null` (`src/lib/database.types.ts:329`).
 - Lida no admin em `src/app/admin/page.tsx:16,178` e
@@ -77,47 +76,32 @@ arquitetura obrigatória.**
   coluna da tabela de clínicas. Nenhuma lógica de portal ramifica nela hoje.
 - Exposta no tipo `Clinica` (`src/lib/supabase.ts:273`) como `plano?: string`.
 
-### 1.2 Valores reais hoje — e por que não são fonte confiável de nada
+### 1.2 Valores reais hoje (2 clínicas no banco, 2026-09-09)
 
-Lido do banco de produção em 2026-09-09 (2 clínicas), cruzando o rótulo com
-os dentistas realmente cadastrados no jsonb `clinicas.dentistas`:
+| clínica | `plano` | `max_dentistas` | dentistas ativos |
+|---|---|---|---|
+| Cleardent (teste) | `"profissional"` | `10` | 3 |
+| teste 1 | `"1_dentista"` | `1` | 0 |
 
-| clínica | `plano` | `max_dentistas` | dentistas cadastrados | dentistas ativos |
-|---|---|---|---|---|
-| Cleardent (teste) | `"profissional"` | `10` | **3** | **3** |
-| teste 1 | `"1_dentista"` | `1` | **0** | **0** |
+Nenhum dos dois valores de `plano` é um produto — é a evidência de que
+produto é um eixo separado, e o motivo de `clinicas.produto` existir.
 
-> **Correção registrada (4ª rodada, Gabriel, 2026-09-09).** As versões
-> anteriores desta spec afirmavam que `plano` e `max_dentistas` "continuam
-> sendo porte e faixa comercial". **Isso está errado e foi retirado.**
-> `clinicas.plano` guarda **rótulos legados** que já não refletem a
-> realidade de forma confiável — a Cleardent aparece como `profissional`
-> tendo **três dentistas** ativos, e `1_dentista` está numa clínica com
-> **nenhum** dentista cadastrado. Nem o rótulo nem `max_dentistas` batem
-> com o dado real.
+`plano` e `max_dentistas` são **campos legados** e **não são fonte de
+produto, acesso, preço nem quantidade ativa**. Esta spec não os lê, não os
+usa e não os redefine. Os dentistas em si estão corretos: a Cleardent tem
+três profissionais ativos, e é isso que o `jsonb clinicas.dentistas`
+mostra.
 
-Consequência para esta spec: os valores atuais continuam servindo como
-**prova de que produto é um eixo separado** (nenhum deles é um produto) —
-que é o motivo de `clinicas.produto` existir. Mas **nenhum dos dois campos
-é tratado como fonte canônica de faixa, porte, quantidade ou preço**, e
-esta spec **não os usa, não os lê e não os redefine**.
+**Decisões já tomadas, fora do escopo desta implementação:**
 
-### 1.2.1 Quantidade de dentistas: registro do que já foi decidido
-
-Registrado a pedido do Gabriel, **sem implementação nesta spec nem em
-nenhuma etapa dela**:
-
-- A quantidade usada futuramente na cobrança será a **quantidade real de
-  dentistas ativos da clínica**, calculada a partir do dado vivo — nunca um
-  rótulo.
-- **Essa quantidade não deve ser copiada para `clinicas.plano`** (nem para
-  outra coluna de rótulo): copiar duplicaria o dado e permitiria que ele
-  voltasse a divergir do real, que é exatamente o defeito observado acima.
-- O **painel administrativo** poderá, futuramente, exibir **produto +
-  quantidade ativa calculada**, em vez de confiar no rótulo legado.
-- O **papel futuro de `clinicas.plano` e `max_dentistas`** — manter,
-  renomear, esvaziar ou remover — **será auditado na frente comercial**.
-  Esta spec não decide isso.
+- `max_dentistas` **não terá função no novo modelo**; toda clínica pode
+  cadastrar quantos dentistas quiser. A remoção do limite é uma **frente
+  posterior**.
+- O único número relevante é a **quantidade real de dentistas com
+  `ativo: true`**, que futuramente determina o valor mensal. Não é copiada
+  para `plano` nem para outra coluna — é calculada do dado vivo.
+- A interface hoje mostra `3/10` porque ainda usa `max_dentistas`;
+  futuramente mostrará **só os 3 ativos, sem limite**.
 
 ### 1.3 Como o portal resolve "qual clínica" e onde já existe proteção real
 
@@ -181,11 +165,9 @@ produto, planos ou capacidades. Não há spec anterior sobre o assunto. Esta
 > pequena é o preço correto a pagar. `plano` continua existindo, intocada,
 > com os mesmos valores.
 >
-> **Reforçado na 4ª rodada (§1.2):** além de não ser produto, `plano` é um
-> **rótulo legado que já não reflete a realidade**. Isso não enfraquece a
-> decisão — fortalece: escrever produto numa coluna cujo conteúdo atual é
-> comprovadamente não confiável seria pior ainda. `clinicas.produto` nasce
-> limpa, com `CHECK`, e é a **única** informação que define acessos.
+> `plano` é um campo legado (§1.2), o que reforça a decisão: produto nasce
+> em coluna própria, com `CHECK`, e é a única informação que define
+> acessos.
 
 ### 2.1 Forma da coluna
 
@@ -487,9 +469,6 @@ e nada mais.
   upgrade posterior os devolve como estavam.
 - **Sem efeito colateral:** a troca não dispara migration, não mexe em
   `plano`, não mexe em `max_dentistas`, não toca em nenhuma outra tabela.
-  `plano` e `max_dentistas` permanecem exatamente como estão — inclusive
-  divergentes do real (§1.2); corrigi-los ou aposentá-los é assunto da
-  frente comercial, não desta troca.
 - **Quem troca:** o Gabriel, direto no banco ou por onde ele já edita
   clínica. Tela de admin para isso está **fora de escopo**.
 
@@ -548,10 +527,9 @@ de sessão, banco, rota ou tela.
    Para todo `p` de `PRODUTOS`, `CATALOGO[p]` existe e é não-vazio. Falha
    se alguém acrescentar um produto sem mapear capacidades.
 
-7. **Rótulo legado de `plano` não é produto.**
-   Os valores legados reais `"profissional"` e `"1_dentista"` não pertencem
-   a `PRODUTOS`. (Trava da correção 1: eixos separados — e da correção 4:
-   um rótulo legado nunca vira produto por semelhança.)
+7. **Valor legado de `plano` não é produto.**
+   `"profissional"` e `"1_dentista"` não pertencem a `PRODUTOS`. (Trava da
+   correção 1: eixos separados.)
 
 **O que estes testes deliberadamente NÃO cobrem:** o `DEFAULT` da coluna
 (§2.3) é comportamento do Postgres, não do módulo — nenhum teste puro pode
@@ -568,28 +546,18 @@ próxima frente traz o comportamento e o teste dele junto.
 
 ## 8.1 Regras comerciais decididas — registro, FORA DE ESCOPO
 
-Decisões comerciais já tomadas pelo Gabriel, registradas aqui **somente
-para que não se percam** e para que a frente comercial parta delas.
-
-**Nada disto é implementado por esta spec ou pela frente que ela abre.**
-Não há cálculo de preço, contagem para cobrança, vencimento, cobrança,
-limite de dentistas nem alteração de painel em nenhum ponto desta
-implementação.
+Registradas para não se perderem. **Nada disto é implementado aqui:** sem
+cálculo de preço, contagem para cobrança, vencimento, cobrança, limite de
+dentistas ou alteração de painel.
 
 | Produto | Período grátis | Depois | Dentista ativo adicional |
 |---|---|---|---|
 | `iris_completa` | 30 dias | R$ 400/mês, incluindo 1 dentista ativo | + R$ 200 cada |
 | `odontograma` | 90 dias | R$ 19,90/mês, incluindo 1 dentista ativo | + R$ 9,90 cada |
 
-Observações que ligam este registro ao resto da spec:
-
-- A contagem que vale para a cobrança é a de **dentistas ativos reais**
-  (§1.2.1) — não `max_dentistas`, não o rótulo de `plano`.
-- Período grátis, vencimento e `expira_em` **não são tratados aqui** e
-  seguem fora de escopo, como desde a 1ª versão.
-- Nada em `produtos.ts` conhece preço. A fonte central converte produto em
-  **capacidades**, nunca em valor — misturar as duas coisas recriaria
-  exatamente a confusão que motivou separar produto de plano.
+A contagem que vale é a de **dentistas com `ativo: true`** (§1.2). Nada em
+`produtos.ts` conhece preço: a fonte central converte produto em
+capacidades, nunca em valor.
 
 ---
 
@@ -600,12 +568,11 @@ Observações que ligam este registro ao resto da spec:
    `DEFAULT 'iris_completa'`. **`clinicas.produto` é a única informação que
    define os acessos.** `clinicas.plano` é preservada intocada — produto e
    plano comercial são eixos diferentes.
-2. **`clinicas.plano` e `max_dentistas` NÃO são fonte canônica de faixa,
-   porte, quantidade ou preço** — são rótulos legados que já divergem do
-   real (§1.2). Esta spec **não os lê, não os usa e não os redefine**; o
-   papel futuro deles será auditado na frente comercial. A quantidade que
-   valerá para cobrança é a de **dentistas ativos reais**, calculada, nunca
-   copiada para um rótulo (§1.2.1).
+2. **`clinicas.plano` e `max_dentistas` são legados** e não são fonte de
+   produto, acesso, preço nem quantidade ativa (§1.2). Esta spec não os lê,
+   não os usa e não os redefine. `max_dentistas` não terá função no novo
+   modelo — sua remoção é frente posterior; a quantidade que valerá é a de
+   dentistas com `ativo: true`, calculada.
 3. **`iris-portal-v2/src/lib/produtos.ts`** é a **única** fonte que
    converte produto em capacidades, pela função `temCapacidade`.
 4. Capacidades registradas agora: **`pacientes`, `dentistas`,
