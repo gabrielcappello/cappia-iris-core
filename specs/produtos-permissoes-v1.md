@@ -3,10 +3,18 @@
 **Status:** **aprovada, ainda não implementada.** Aprovada pelo Gabriel em
 2026-09-08, após três rodadas de revisão, sem bloqueadores. Ajuste em
 2026-09-09 sobre o papel de `plano` e `max_dentistas` (§1.2); o desenho não
-muda — `clinicas.produto` + fonte central de capacidades. **Nada
-implementado:** sem código, sem migration criada, sem alteração no portal
-ou na Edge Function `criar-clinica`, sem deploy. A implementação depende de
-autorização própria (processo em `AGENTS.md`).
+muda — `clinicas.produto` + fonte central de capacidades.
+
+**Fundação implementada em 2026-09-09** (branch
+`feat/produtos-permissoes-base` do portal, commit `dcbba27`), aguardando
+revisão do Codex: migration escrita, `src/lib/produtos.ts` e os sete testes
+de §8. **A migration NÃO foi aplicada em nenhum banco**, nenhuma rota
+bloqueia e nenhuma tela esconde — isso é a próxima frente (§4.2).
+
+**Pendente para depois da aplicação da migration:** regerar
+`iris-portal-v2/src/lib/database.types.ts` (arquivo gerado a partir do
+banco; não foi editado à mão, e não havia o que gerar com a coluna ainda
+inexistente no banco).
 
 **Aderência a `docs/00-principios.md`:** sim.
 - *Responsabilidade correta:* isto é puramente Core determinístico (validar
@@ -481,7 +489,7 @@ e nada mais.
 | migration SQL versionada | **Descrita em §2.2, não criada nesta etapa.** Adiciona `clinicas.produto` com `NOT NULL` + `CHECK` + `DEFAULT 'iris_completa'` e deixa `iris_completa` nas clínicas existentes. |
 | `iris-portal-v2/src/lib/produtos.ts` | **Novo.** Conteúdo de §3.3. Único artefato de código novo. |
 | `iris-portal-v2/src/lib/produtos.test.ts` | **Novo.** Testes de §8. |
-| `iris-portal-v2/src/lib/database.types.ts` | Regerado após a migration (arquivo gerado, nunca editado à mão). |
+| `iris-portal-v2/src/lib/database.types.ts` | **Não tocado nesta etapa.** É gerado a partir do banco; regerar só **depois** de a migration ser aplicada. Nunca editado à mão. |
 
 **Não há nesta frente:** alteração em rota `/api/secure/*`, cadeado de
 tela, **alteração na Edge Function `criar-clinica`**, tabela nova,
