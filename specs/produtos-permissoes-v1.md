@@ -1,20 +1,31 @@
 # Base de produtos e permissões no portal Cappia — spec v1
 
-**Status:** **aprovada, ainda não implementada.** Aprovada pelo Gabriel em
-2026-09-08, após três rodadas de revisão, sem bloqueadores. Ajuste em
-2026-09-09 sobre o papel de `plano` e `max_dentistas` (§1.2); o desenho não
-muda — `clinicas.produto` + fonte central de capacidades.
+**Status:** **fundação concluída e em produção** (2026-09-09). Aprovada pelo
+Gabriel em 2026-09-08 após três rodadas de revisão; ajuste em 2026-09-09
+sobre o papel de `plano` e `max_dentistas` (§1.2). Desenho final:
+`clinicas.produto` + fonte central de capacidades.
 
-**Fundação implementada em 2026-09-09** (branch
-`feat/produtos-permissoes-base` do portal, commit `dcbba27`), aguardando
-revisão do Codex: migration escrita, `src/lib/produtos.ts` e os sete testes
-de §8. **A migration NÃO foi aplicada em nenhum banco**, nenhuma rota
-bloqueia e nenhuma tela esconde — isso é a próxima frente (§4.2).
+**O que está em produção:**
 
-**Pendente para depois da aplicação da migration:** regerar
-`iris-portal-v2/src/lib/database.types.ts` (arquivo gerado a partir do
-banco; não foi editado à mão, e não havia o que gerar com a coluna ainda
-inexistente no banco).
+- **Migration aplicada** no projeto `udizowyfjnhuhgxkeayk` como
+  `20260909040927_clinicas_produto` (version e nome conferem exatamente
+  com `supabase_migrations.schema_migrations`). Coluna `produto` verificada
+  por leitura: `text`, `NOT NULL`, `DEFAULT 'iris_completa'`, constraint
+  aceitando somente `odontograma` e `iris_completa`. Todas as clínicas
+  existentes com `iris_completa`; `plano` e `max_dentistas` intactos.
+- **Compatibilidade do cadastro testada de ponta a ponta** pela rota real
+  `/api/onboarding` (que chama `criar-clinica`), com dados sintéticos: o
+  cadastro concluiu sem enviar `produto` e a clínica nasceu
+  `iris_completa`, confirmando o `DEFAULT` (§2.3). Registros sintéticos
+  removidos e limpeza comprovada por leitura.
+- **`src/lib/produtos.ts`** e os testes de §8, no portal.
+- **Tipos regenerados e sincronizados** com o schema de produção pelo
+  mecanismo oficial, no commit `b780abd` (portal). Resolve a pendência que
+  esta seção registrava.
+
+**O que NÃO está feito, por decisão:** nenhuma rota bloqueia e nenhuma tela
+esconde. **As permissões por área ficam para a próxima frente** (§4.2), e só
+serão ligadas juntas, depois do mapa de telas.
 
 **Aderência a `docs/00-principios.md`:** sim.
 - *Responsabilidade correta:* isto é puramente Core determinístico (validar
@@ -506,10 +517,10 @@ e nada mais.
 
 | Arquivo | Mudança |
 |---|---|
-| migration SQL versionada | **Descrita em §2.2, não criada nesta etapa.** Adiciona `clinicas.produto` com `NOT NULL` + `CHECK` + `DEFAULT 'iris_completa'` e deixa `iris_completa` nas clínicas existentes. |
+| `iris-portal-v2/supabase/migrations/20260909040927_clinicas_produto.sql` | **Aplicada** em `udizowyfjnhuhgxkeayk`. Adiciona `clinicas.produto` com `NOT NULL` + `CHECK` + `DEFAULT 'iris_completa'` e deixa `iris_completa` nas clínicas existentes. |
 | `iris-portal-v2/src/lib/produtos.ts` | **Novo.** Conteúdo de §3.3. Único artefato de código novo. |
 | `iris-portal-v2/src/lib/produtos.test.ts` | **Novo.** Testes de §8. |
-| `iris-portal-v2/src/lib/database.types.ts` | **Não tocado nesta etapa.** É gerado a partir do banco; regerar só **depois** de a migration ser aplicada. Nunca editado à mão. |
+| `iris-portal-v2/src/lib/database.types.ts` | **Regenerado e sincronizado** com o schema de produção pelo mecanismo oficial (commit `b780abd`), depois de a migration ser aplicada. Nunca editado à mão. |
 
 **Não há nesta frente:** alteração em rota `/api/secure/*`, cadeado de
 tela, **alteração na Edge Function `criar-clinica`**, tabela nova,
