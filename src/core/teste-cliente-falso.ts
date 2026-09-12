@@ -250,6 +250,15 @@ export class ClienteFalso implements ClienteBancoDados {
         this.estatisticas.chamadasUpdate[nome] = (this.estatisticas.chamadasUpdate[nome] ?? 0) + 1;
         return new AtualizacaoFalsa(linhas, valores, []);
       },
+      // Espelha PostgrestFilterBuilder.insert() -- cada chamada gera uma
+      // linha nova e independente, sem checagem de conflito (specs/
+      // auditoria-conversas-admin-v1.md: a tabela real nao tem constraint
+      // unica, diferente de estado_conversa que usa upsert).
+      insert: (valores: Record<string, unknown>): ConsultaEncadeavel => {
+        const nova = { id: crypto.randomUUID(), ...valores };
+        linhas.push(nova);
+        return new ConsultaFalsa(linhas, [nova], null);
+      },
     };
   }
 }

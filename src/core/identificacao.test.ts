@@ -340,10 +340,10 @@ function clienteParaReconsultaInvalida(
   return {
     from(nome: string) {
       if (nome === 'clinicas') {
-        return { select: () => consultaFixa({ id: clinicaId }), upsert: () => consultaFixa(null), update: () => consultaFixa(null) };
+        return { select: () => consultaFixa({ id: clinicaId }), upsert: () => consultaFixa(null), update: () => consultaFixa(null), insert: () => consultaFixa(null) };
       }
       if (nome === 'pacientes') {
-        return { select: () => consultaFixa({ id: pacienteId }), upsert: () => consultaFixa(null), update: () => consultaFixa(null) };
+        return { select: () => consultaFixa({ id: pacienteId }), upsert: () => consultaFixa(null), update: () => consultaFixa(null), insert: () => consultaFixa(null) };
       }
       // estado_conversa: 1a select = linha existente sem paciente vinculado
       // (entra em vincularPacienteAoEstado); update com paciente_id IS NULL
@@ -359,6 +359,7 @@ function clienteParaReconsultaInvalida(
         },
         upsert: () => consultaFixa(null),
         update: () => consultaFixa(null),
+        insert: () => consultaFixa(null),
       };
     },
   };

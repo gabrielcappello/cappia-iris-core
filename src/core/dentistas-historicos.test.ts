@@ -254,7 +254,7 @@ test('ISOLAMENTO: atendimento passado nao entra em agendamentos_do_paciente nem 
     instante_atual: AGORA,
   });
 
-  const payload = modelo.chamadas[0].payload as Record<string, unknown>;
+  const payload = modelo.chamadas[0].payload as unknown as Record<string, unknown>;
 
   // 1. o atendimento passado NAO pode aparecer como agendamento do paciente.
   assert.ok(

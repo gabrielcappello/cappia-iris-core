@@ -55,6 +55,7 @@ function clienteComErroDeUpdate(mensagemErro: string): ClienteBancoDados {
       select: () => consultaComErro,
       upsert: () => consultaComErro,
       update: () => consultaComErro,
+      insert: () => consultaComErro,
     }),
   };
 }

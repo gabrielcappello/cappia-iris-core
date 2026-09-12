@@ -670,6 +670,7 @@ function clienteComUpdateInvalido(estadoInicial: Record<string, unknown>, dadosI
       select: () => consultaFixa(estadoInicial),
       upsert: () => consultaFixa(null),
       update: () => consultaFixa({ id: estadoInicial.id, dados: dadosInvalidosNoUpdate }),
+      insert: () => consultaFixa(null),
     }),
   };
 }

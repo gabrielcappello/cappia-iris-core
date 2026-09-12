@@ -54,7 +54,7 @@ const FATOS = derivarFatosAutorizados(
   undefined,
   undefined,
   undefined,
-  true, // paciente novo na clinica -- o caso real
+  undefined, // paciente_novo_na_clinica: parametro desativado desde 2026-08-31 (fatos-autorizados.ts)
   undefined,
   NOME_AVALIACAO
 );

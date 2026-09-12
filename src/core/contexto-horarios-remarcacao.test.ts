@@ -116,6 +116,7 @@ function clienteQueRegistraUpdate(): { cliente: ClienteBancoDados; capturado: { 
           capturado.valores = valores;
           return consulta;
         },
+        insert: () => consulta,
       }),
     },
     capturado,

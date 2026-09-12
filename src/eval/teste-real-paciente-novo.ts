@@ -40,11 +40,18 @@ const MENCIONA_PRIMEIRA_VEZ = /primeira (vez|consulta)|nunca (veio|esteve)|novo 
 const CASOS: readonly Caso[] = Object.freeze([
   // Cenario 6 (spec secao 6): paciente novo, duvida real -- sugere avaliacao
   // e explica o motivo.
+  //
+  // CORRECAO (2026-09-12, mesma razao do cenario 7 abaixo): `paciente_novo_
+  // na_clinica` foi DESATIVADO em 2026-08-31 (fatos-autorizados.ts) -- o
+  // orquestrador nao deriva mais esse fato, e o parametro correspondente em
+  // `derivarFatosAutorizados` virou `never` de proposito. O campo nunca
+  // chega de verdade a producao; mede-se aqui so o comportamento da
+  // redatora com os fatos que ela realmente recebe hoje.
   {
     titulo: '6. paciente novo, duvida real: sugere avaliacao e explica a metodologia',
     mensagemPaciente: 'sinto uma dor no dente, não sei o que é',
     naturezaMensagem: 'duvida',
-    fatos: { objetivo: 'pedir_procedimento', dados_faltantes: ['procedimento'], paciente_novo_na_clinica: true },
+    fatos: { objetivo: 'pedir_procedimento', dados_faltantes: ['procedimento'] },
     verificarTexto: (texto) => {
       const mencionaAvaliacao = MENCIONA_AVALIACAO.test(texto);
       return {
@@ -87,7 +94,8 @@ const CASOS: readonly Caso[] = Object.freeze([
     titulo: '8. paciente novo, ja explicado no historico: nao repete a metodologia de forma mecanica',
     mensagemPaciente: 'e demora quanto tempo a avaliação?',
     naturezaMensagem: 'duvida',
-    fatos: { objetivo: 'pedir_procedimento', dados_faltantes: ['procedimento'], paciente_novo_na_clinica: true },
+    // paciente_novo_na_clinica desativado -- ver nota no cenario 6.
+    fatos: { objetivo: 'pedir_procedimento', dados_faltantes: ['procedimento'] },
     historicoRecente: historicoDeUmTurno(
       'sinto uma dor no dente, não sei o que é',
       'Como é a primeira vez que você vem aqui, o ideal é começar com uma avaliação: o dentista examina, define o tratamento e depois organizamos os próximos passos juntos. Posso agendar essa avaliação?'
