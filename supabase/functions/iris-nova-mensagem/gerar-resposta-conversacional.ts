@@ -32,7 +32,9 @@ export type MotivoFallbackResposta =
   // ter executado, e citou data que não estava nos fatos. Ver
   // `guarda-resposta-redatora.ts`.
   | 'execucao_nao_autorizada'
-  | 'data_nao_autorizada';
+  | 'data_nao_autorizada'
+  // PROPOSTA C (2026-09-16) -- ver guarda-resposta-redatora.ts.
+  | 'link_pos_consulta_nao_autorizado';
 
 export interface ResultadoRespostaConversacional {
   resposta: string;
@@ -107,6 +109,13 @@ export interface GerarRespostaConversacionalEntrada {
    * nomes de TODOS os procedimentos ativos, SO em `duvida_livre`.
    */
   procedimentosAtivosDaClinica?: string[];
+  /**
+   * PROPOSTA C (2026-09-16, reviews/revisao-pos-consulta-conversacional-v1.md,
+   * segunda revisao): fato aditivo de pos-consulta -- ver o mesmo campo em
+   * fatos-autorizados.ts. Ausente em 100% do trafego que nao passa pela
+   * integracao de mensagem mista (pos-consulta-processar-mensagem-mista.ts).
+   */
+  posConsultaAditivo?: { classificacao: 'positiva' | 'nao_positiva' | 'incerta'; linkAvaliacaoGoogle?: string };
 
   /**
    * Cadastro ja conhecido do paciente -- a visao EFETIVA do turno (ficha do
@@ -151,7 +160,8 @@ export async function gerarRespostaConversacional(
     // `_pacienteNovoNaClinicaRemovido` em fatos-autorizados.ts.
     undefined,
     entrada.procedimentosAtivosDaClinica,
-    entrada.procedimentoAvaliacaoDisponivel
+    entrada.procedimentoAvaliacaoDisponivel,
+    entrada.posConsultaAditivo
   );
   const historicoParaEnvio = historicoValidoParaEnvio(entrada.historicoConversa, Date.now());
 

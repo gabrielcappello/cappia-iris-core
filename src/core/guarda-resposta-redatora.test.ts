@@ -484,3 +484,61 @@ test('execucao COM agendamento existente, particípio fora da excecao -- "foi re
   );
   assert.deepEqual(r, { aprovado: false, motivo: 'execucao_nao_autorizada' });
 });
+
+// ── PROPOSTA C (2026-09-16) -- checagem de link de pos-consulta ─────────
+const LINK_POS_CONSULTA = 'https://g.page/r/exemplo/review';
+
+test('pos_consulta_classificacao ausente: nunca ativa a checagem de link (zero mudanca de comportamento existente)', () => {
+  const resultado = verificarRespostaRedatora(`Avalie aqui: ${LINK_POS_CONSULTA}`, fatos({ objetivo: 'cumprimentar_e_oferecer_ajuda' }));
+  assert.deepEqual(resultado, { aprovado: true });
+});
+
+test('classificacao presente SEM link autorizado: qualquer URL no texto e reprovada', () => {
+  const resultado = verificarRespostaRedatora(
+    `Que bom! Avalie aqui: ${LINK_POS_CONSULTA}`,
+    fatos({ objetivo: 'cumprimentar_e_oferecer_ajuda', pos_consulta_classificacao: 'positiva' })
+  );
+  assert.deepEqual(resultado, { aprovado: false, motivo: 'link_pos_consulta_nao_autorizado' });
+});
+
+test('classificacao presente SEM link autorizado, texto sem nenhuma URL: aprovado normalmente', () => {
+  const resultado = verificarRespostaRedatora(
+    'Que bom saber! Vamos la para o seu novo agendamento.',
+    fatos({ objetivo: 'cumprimentar_e_oferecer_ajuda', pos_consulta_classificacao: 'positiva' })
+  );
+  assert.deepEqual(resultado, { aprovado: true });
+});
+
+test('classificacao + link autorizado, texto com o link exato: aprovado', () => {
+  const resultado = verificarRespostaRedatora(
+    `Que bom! Avalie aqui: ${LINK_POS_CONSULTA}`,
+    fatos({
+      objetivo: 'cumprimentar_e_oferecer_ajuda',
+      pos_consulta_classificacao: 'positiva',
+      pos_consulta_link_avaliacao_google: LINK_POS_CONSULTA,
+    })
+  );
+  assert.deepEqual(resultado, { aprovado: true });
+});
+
+test('classificacao + link autorizado, texto com URL DIFERENTE: reprovado (nao so a ausencia da correta)', () => {
+  const resultado = verificarRespostaRedatora(
+    'Que bom! Avalie aqui: https://outro-dominio.exemplo/x',
+    fatos({
+      objetivo: 'cumprimentar_e_oferecer_ajuda',
+      pos_consulta_classificacao: 'positiva',
+      pos_consulta_link_avaliacao_google: LINK_POS_CONSULTA,
+    })
+  );
+  assert.deepEqual(resultado, { aprovado: false, motivo: 'link_pos_consulta_nao_autorizado' });
+});
+
+test('checagem de link de pos-consulta independe do objetivo (roda mesmo fora de OBJETIVOS_COM_HORARIO_DATA_FISCALIZADOS)', () => {
+  // 'acolher_e_retomar' nao esta na lista fiscalizada de horario/data --
+  // prova que a checagem de link nao depende dela.
+  const resultado = verificarRespostaRedatora(
+    `Entendi! Avalie aqui: ${LINK_POS_CONSULTA}`,
+    fatos({ objetivo: 'acolher_e_retomar', pos_consulta_classificacao: 'positiva' })
+  );
+  assert.deepEqual(resultado, { aprovado: false, motivo: 'link_pos_consulta_nao_autorizado' });
+});

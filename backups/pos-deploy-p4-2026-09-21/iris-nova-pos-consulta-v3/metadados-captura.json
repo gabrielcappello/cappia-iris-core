@@ -1,0 +1,19 @@
+{
+  "slug": "iris-nova-pos-consulta",
+  "capturado_em": "2026-09-21T22:47:15.820Z",
+  "origem": "MCP get_edge_function pos-deploy P4 (somente leitura)",
+  "meta": {
+    "id": "8a136e19-0942-4dc4-869c-927deafa512c",
+    "slug": "iris-nova-pos-consulta",
+    "name": "iris-nova-pos-consulta",
+    "status": "ACTIVE",
+    "version": 3,
+    "created_at": 1789852508161,
+    "updated_at": 1790030806339,
+    "verify_jwt": true,
+    "import_map": false,
+    "entrypoint_path": "/tmp/user_fn_udizowyfjnhuhgxkeayk_8a136e19-0942-4dc4-869c-927deafa512c_3/source/supabase/functions/iris-nova-pos-consulta/index.ts",
+    "ezbr_sha256": "073a7d5f54f50205fc0a0368c0eb00e1181b3e5e284d5ae5f90a6939cad75eac"
+  },
+  "total_arquivos": 20
+}

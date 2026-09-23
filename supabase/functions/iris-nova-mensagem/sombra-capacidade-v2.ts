@@ -98,6 +98,12 @@ export function mapearDecisaoParaCapacidadeV2(tipo: DecisaoOrquestrador['tipo'])
     // a Iris esta conversando para desfazer uma ambiguidade -- pergunta qual
     // procedimento vem primeiro, sem consultar nem alterar nada no sistema.
     case 'pedido_multiplo_detectado':
+    // Correcao de cadastro fora do agendamento (2026-09-01,
+    // specs/correcao-cadastro-conversacional-v1.md): grava/recusa um dado
+    // do paciente, nunca consulta nem altera agendamento/disponibilidade --
+    // mesma logica de troca_telefone_pendente/recusada acima.
+    case 'cadastro_atualizado':
+    case 'correcao_cadastro_invalida':
       return 'nenhuma_apenas_conversar';
     case 'sem_dentista_disponivel':
     case 'combinacao_indisponivel':
@@ -124,6 +130,9 @@ export function mapearDecisaoParaCapacidadeV2(tipo: DecisaoOrquestrador['tipo'])
     case 'erro_catalogo_dentista':
     case 'duracao_nao_configurada':
     case 'erro_configuracao_duracao':
+    // Gravacao da correcao de cadastro nao confirmada pelo banco -- falha
+    // tecnica real, nao corresponde a nenhuma capacidade de agendamento.
+    case 'correcao_cadastro_falhou':
       return 'indeterminado';
   }
 }

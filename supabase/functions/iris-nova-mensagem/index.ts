@@ -36,11 +36,25 @@ import {
   registrarMedicaoUnificada,
 } from "./sombra-contexto-unificado.ts";
 import { medirResultadoIris, registrarMedicaoIris } from "./sombra-resultado-iris.ts";
-import { gravarAuditoriaSucesso, gravarAuditoriaFalha, type ResultadoTurno } from "./auditoria-conversas.ts";
+import { gravarAuditoriaSucesso, gravarAuditoriaFalha, type MotivoFallbackAuditavel, type ResultadoTurno } from "./auditoria-conversas.ts";
 import { ClinicaNaoEncontradaError, EntradaInvalidaError } from "./erros.ts";
 import type { ClienteBancoDados } from "./tipos.ts";
 import type { ClienteRpc } from "./mensagens-recebidas-tipos.ts";
 import type { InstanteAtual } from "./disponibilidade-tipos.ts";
+// PROPOSTA C (2026-09-16, reviews/revisao-pos-consulta-conversacional-v1.md,
+// segunda revisao, aprovada pelo Gabriel): integracao de "mensagem mista"
+// com a jornada de pos-consulta. Todo o bloco marcado "POS-CONSULTA" abaixo
+// e ADITIVO -- quando nao ha jornada aberta para a clinica+telefone deste
+// turno (o caso de HOJE, para 100% do trafego), o comportamento e
+// IDENTICO ao de antes desta integracao.
+import { buscarJornadaAbertaPosConsulta } from "./pos-consulta-buscar-jornada-aberta.ts";
+import { reivindicarRoteamentoMensagemMista } from "./pos-consulta-processar-mensagem-mista.ts";
+import { gerarRespostaPosConsulta } from "./pos-consulta-gerar-resposta.ts";
+import {
+  criarClienteRedatorPosConsultaOpenAI,
+  TIMEOUT_REDATOR_POS_CONSULTA_MS_APROVADO,
+} from "./cliente-modelo-redator-pos-consulta-openai.ts";
+import { criarClienteClassificadorPosConsultaOpenAI } from "./cliente-modelo-classificador-pos-consulta-openai.ts";
 
 interface PayloadEntrada {
   provider: string;
@@ -250,6 +264,21 @@ async function handler(req: Request): Promise<Response> {
     timeoutMs: TIMEOUT_REDATOR_MS_APROVADO,
   });
 
+  // POS-CONSULTA (Proposta C) -- dois clientes dedicados, so usados quando
+  // ha uma jornada aberta para este turno (ver dentro do try). Criar aqui,
+  // incondicionalmente, e barato (nenhuma chamada de rede) e evita repetir
+  // a mesma construcao em dois lugares.
+  const clienteRedatorPosConsulta = criarClienteRedatorPosConsultaOpenAI({
+    chaveApi: openaiKey,
+    modelo: MODELO_IRIS_NOVA,
+    timeoutMs: TIMEOUT_REDATOR_POS_CONSULTA_MS_APROVADO,
+  });
+  const clienteClassificadorPosConsulta = criarClienteClassificadorPosConsultaOpenAI({
+    chaveApi: openaiKey,
+    modelo: MODELO_IRIS_NOVA,
+    timeoutMs: TIMEOUT_REDATOR_POS_CONSULTA_MS_APROVADO,
+  });
+
   try {
     // UMA leitura do instante por turno, compartilhada entre a decisao e os
     // fatos da redatora: e o que garante que a relacao "hoje/amanha" entregue
@@ -263,11 +292,49 @@ async function handler(req: Request): Promise<Response> {
       instante_atual: instanteAtual,
     });
 
+    // ── POS-CONSULTA (Proposta C) ──────────────────────────────────────
+    // Best-effort, ADITIVO: qualquer falha aqui (banco, RPC, classificador)
+    // cai em `roteamentoPosConsulta = null`, e o turno segue EXATAMENTE
+    // como antes desta integracao -- nunca impede a Iris de responder.
+    // So verifica jornada aberta DEPOIS que a decisao principal ja existe,
+    // porque o roteamento depende de `resultado.decisao.tipo`.
+    const jornadaPosConsultaAberta = await buscarJornadaAbertaPosConsulta(clienteBanco, {
+      clinica_id: resultado.clinica_id,
+      telefone_normalizado: payload.telefone_normalizado,
+    }).catch(() => ({ tipo: "nenhuma" as const }));
+
+    const roteamentoPosConsulta =
+      jornadaPosConsultaAberta.tipo === "encontrada"
+        ? await reivindicarRoteamentoMensagemMista(clienteRpc, clienteClassificadorPosConsulta, {
+            clinicaId: resultado.clinica_id,
+            jornada: {
+              agendamentoId: jornadaPosConsultaAberta.jornada.agendamento_id,
+              modo: jornadaPosConsultaAberta.jornada.modo,
+            },
+            mensagemPaciente: payload.mensagem,
+            decisaoPrincipalTipo: resultado.decisao.tipo,
+            ...(jornadaPosConsultaAberta.jornada.link_avaliacao_google !== undefined
+              ? { linkAvaliacaoGoogle: jornadaPosConsultaAberta.jornada.link_avaliacao_google }
+              : {}),
+          }).catch(() => null)
+        : null;
+
+    const posConsultaAditivo =
+      roteamentoPosConsulta?.tipo === "roteada" && roteamentoPosConsulta.roteamento.tipo === "usar_redator_principal"
+        ? {
+            classificacao: roteamentoPosConsulta.roteamento.classificacao,
+            ...(roteamentoPosConsulta.roteamento.linkAvaliacaoGoogle !== undefined
+              ? { linkAvaliacaoGoogle: roteamentoPosConsulta.roteamento.linkAvaliacaoGoogle }
+              : {}),
+          }
+        : undefined;
+    // ── fim do bloco de preparacao POS-CONSULTA ─────────────────────────
+
     // specs/resposta-conversacional-v1.md: todo desfecho passa pela IA
     // redatora, com fallback deterministico em qualquer falha -- a Iris
     // nunca fica calada (`resposta` nunca e null). `motivo_fallback' e so
     // telemetria interna, nunca exposto ao paciente.
-    const { resposta, motivo_fallback, resposta_rejeitada_pelo_fiscal } = await gerarRespostaConversacional(clienteRedator, {
+    const entradaRedatorPrincipal = {
       decisao: resultado.decisao,
       mensagemPaciente: payload.mensagem,
       naturezaMensagem: resultado.natureza_mensagem,
@@ -323,9 +390,55 @@ async function handler(req: Request): Promise<Response> {
       ...(resultado.tratamentos_aprovados !== undefined
         ? { tratamentosAprovados: resultado.tratamentos_aprovados }
         : {}),
-    });
+      // POS-CONSULTA (Proposta C) -- AUSENTE em 100% do trafego que nao
+      // passa por uma jornada aberta com pedido operacional concorrente.
+      ...(posConsultaAditivo !== undefined ? { posConsultaAditivo } : {}),
+    };
+
+    let resposta: string;
+    let motivo_fallback: MotivoFallbackAuditavel | null;
+    let resposta_rejeitada_pelo_fiscal: string | null;
+
+    if (roteamentoPosConsulta?.tipo === "roteada" && roteamentoPosConsulta.roteamento.tipo === "usar_redator_pos_consulta") {
+      // Sem pedido operacional concorrente -- o redator PROPRIO de
+      // pos-consulta responde este turno inteiro (specs/pos-consulta-
+      // conversacional-v1.md), nunca o principal.
+      const decisaoPosConsulta =
+        roteamentoPosConsulta.roteamento.linkAvaliacaoGoogle !== undefined
+          ? ({ tipo: "agradecer_e_convidar_avaliacao_google" } as const)
+          : ({ tipo: "agradecer_sem_convite" } as const);
+      const r = await gerarRespostaPosConsulta(clienteRedatorPosConsulta, {
+        decisao: decisaoPosConsulta,
+        mensagemPaciente: payload.mensagem,
+        contexto:
+          roteamentoPosConsulta.roteamento.linkAvaliacaoGoogle !== undefined
+            ? { linkAvaliacaoGoogle: roteamentoPosConsulta.roteamento.linkAvaliacaoGoogle }
+            : {},
+      });
+      resposta = r.resposta;
+      motivo_fallback = r.motivo_fallback;
+      resposta_rejeitada_pelo_fiscal = null;
+    } else {
+      const r = await gerarRespostaConversacional(clienteRedator, entradaRedatorPrincipal);
+      resposta = r.resposta;
+      motivo_fallback = r.motivo_fallback;
+      resposta_rejeitada_pelo_fiscal = r.resposta_rejeitada_pelo_fiscal;
+    }
+
     if (motivo_fallback !== null) {
       console.log(`resposta_conversacional_fallback decisao=${resultado.decisao.tipo} motivo=${motivo_fallback}`);
+    }
+
+    // POS-CONSULTA -- CORRECAO C1 (terceira revisao): esta Edge Function
+    // NUNCA confirma a entrega. `entrega_id`/`claim_token` vao na resposta
+    // HTTP (abaixo) para o TRANSPORTE (n8n) confirmar SO DEPOIS que a
+    // Evolution aceitar o envio, chamando iris-nova-pos-consulta com
+    // acao "confirmar". Confirmar aqui, antes do envio real, marcaria a
+    // etapa (e, quando aplicavel, `convite_google_em`) como concluida mesmo
+    // que o envio falhe ou nunca aconteca -- a mesma classe de defeito que
+    // B2 ja tinha corrigido para a primeira entrega.
+    if (roteamentoPosConsulta?.tipo === "roteada") {
+      console.log(`pos_consulta_mensagem_mista roteamento=${roteamentoPosConsulta.roteamento.tipo} entrega_pendente=true`);
     }
 
     // specs/historico-conversacional-v1.md: gravada DEPOIS que a resposta
@@ -442,7 +555,27 @@ async function handler(req: Request): Promise<Response> {
       EdgeRuntime.waitUntil(promessaAuditoria);
     }
 
-    return jsonResponse({ resposta }, 200);
+    // POS-CONSULTA (C1) -- entrega_id/claim_token so vao na resposta quando
+    // ha uma entrega de pos-consulta reservada e pendente de confirmacao
+    // (roteamento "roteada"). O n8n deve enviar `resposta` pela Evolution e,
+    // SOMENTE se aceito, chamar iris-nova-pos-consulta (acao "confirmar")
+    // com estes dois valores -- ver workflow em
+    // supabase/functions/iris-nova-pos-consulta/n8n-workflow-minimo.md.
+    return jsonResponse(
+      {
+        resposta,
+        ...(roteamentoPosConsulta?.tipo === "roteada"
+          ? {
+              pos_consulta_confirmacao: {
+                agendamento_id: roteamentoPosConsulta.agendamentoId,
+                entrega_id: roteamentoPosConsulta.entregaId,
+                claim_token: roteamentoPosConsulta.claimToken,
+              },
+            }
+          : {}),
+      },
+      200
+    );
   } catch (erro) {
     // AUDITORIA DE FALHA (specs/auditoria-conversas-admin-v1.md, secao
     // 1.2): so dentro deste catch -- ou seja, so depois que o metodo, o

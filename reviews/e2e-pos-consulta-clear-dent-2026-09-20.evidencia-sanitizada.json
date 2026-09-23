@@ -1,0 +1,335 @@
+{
+  "descricao": "Evidencia sanitizada do E2E controlado da pos-consulta na Clear Dent. Sem telefone, sem texto de paciente; nome do paciente mascarado.",
+  "gerado_em": "2026-09-20T17:04:42.182Z",
+  "janela": {
+    "inicio_t0": "2026-09-19 21:52:28.105329+00"
+  },
+  "destino": {
+    "unico_autorizado_mascarado": "55*********11"
+  },
+  "envios_iniciados_por_script_guardado": {
+    "total": 3,
+    "todos_para_o_autorizado": true,
+    "entregas": [
+      {
+        "fixture": "A",
+        "enviado_em": "2026-09-20T14:26:04.037Z",
+        "destino_mascarado": "55*********11",
+        "texto_len": 119,
+        "texto_sha256_16": "0ba94e628e5935bd",
+        "evolution": {
+          "http": 201,
+          "key_id_presente": true
+        },
+        "confirmar": "confirmada",
+        "etapa_apos_confirmar": "aguardando_satisfacao"
+      },
+      {
+        "fixture": "B",
+        "enviado_em": "2026-09-20T15:35:28.901Z",
+        "destino_mascarado": "55*********11",
+        "texto_len": 149,
+        "texto_sha256_16": "39e7c29ccfa633e7",
+        "evolution": {
+          "http": 201,
+          "key_id_presente": true
+        },
+        "confirmar": "confirmada",
+        "etapa_apos_confirmar": "aguardando_satisfacao"
+      },
+      {
+        "fixture": "C",
+        "enviado_em": "2026-09-20T16:38:27.256Z",
+        "destino_mascarado": "55*********11",
+        "texto_len": 139,
+        "texto_sha256_16": "c5a54f460549099f",
+        "evolution": {
+          "http": 201,
+          "key_id_presente": true
+        },
+        "confirmar": "confirmada",
+        "etapa_apos_confirmar": "aguardando_satisfacao"
+      }
+    ]
+  },
+  "turnos_reativos_do_autorizado": {
+    "total": 4,
+    "turnos": [
+      {
+        "auditoria_criada_em": "2026-09-20 14:26:52.230153+00",
+        "resultado_turno": "sucesso",
+        "motivo_fallback": null,
+        "mensagem_paciente": {
+          "len": 32,
+          "sha256_12": "63b688774596"
+        },
+        "resposta_iris": {
+          "len": 161,
+          "sha256_12": "bfbbf0a34d3d",
+          "texto": "Ficamos muito felizes em saber! 😊 Se quiser, você pode compartilhar sua experiência avaliando nossa clínica no Google: https://maps.app.goo.gl/XGjRHbujaTZC1JzH9"
+        },
+        "resposta_rejeitada_pelo_fiscal": false,
+        "execucao_n8n": {
+          "id": "168945",
+          "status": "success",
+          "iniciada_em": "2026-09-20T14:26:43.340Z"
+        },
+        "remetente_da_execucao_eh_o_autorizado": true,
+        "evolution": {
+          "success": true,
+          "key_id_presente": true,
+          "destino_da_resposta_eh_o_autorizado": true
+        },
+        "pos_consulta_confirmacao_no_payload": true,
+        "confirmar_executado": true,
+        "confirmar_resultado": "confirmada"
+      },
+      {
+        "auditoria_criada_em": "2026-09-20 15:37:13.745603+00",
+        "resultado_turno": "sucesso",
+        "motivo_fallback": null,
+        "mensagem_paciente": {
+          "len": 66,
+          "sha256_12": "ddfb142dbebe"
+        },
+        "resposta_iris": {
+          "len": 145,
+          "sha256_12": "1e9372e62cf5",
+          "texto": "Agradeço por compartilhar seu feedback com sinceridade. Sinto muito que sua experiência com o dentista e a recepcionista não tenha sido positiva."
+        },
+        "resposta_rejeitada_pelo_fiscal": false,
+        "execucao_n8n": {
+          "id": "169036",
+          "status": "success",
+          "iniciada_em": "2026-09-20T15:37:02.710Z"
+        },
+        "remetente_da_execucao_eh_o_autorizado": true,
+        "evolution": {
+          "success": true,
+          "key_id_presente": true,
+          "destino_da_resposta_eh_o_autorizado": true
+        },
+        "pos_consulta_confirmacao_no_payload": true,
+        "confirmar_executado": true,
+        "confirmar_resultado": "confirmada"
+      },
+      {
+        "auditoria_criada_em": "2026-09-20 16:02:02.793749+00",
+        "resultado_turno": "sucesso",
+        "motivo_fallback": null,
+        "mensagem_paciente": {
+          "len": 36,
+          "sha256_12": "8596a4eda1c0"
+        },
+        "resposta_iris": {
+          "len": 200,
+          "sha256_12": "0fea2b10fe6b",
+          "texto": "Claro, [nome do paciente]. Sua opinião fica registrada, e agradeço por compartilhar o que aconteceu. Você gostaria de agendar o canal do dente 12, indicado pelo Dr. Pablo Arruda, ou tratar de outro procedimento?"
+        },
+        "resposta_rejeitada_pelo_fiscal": false,
+        "execucao_n8n": {
+          "id": "169068",
+          "status": "success",
+          "iniciada_em": "2026-09-20T16:01:52.551Z"
+        },
+        "remetente_da_execucao_eh_o_autorizado": true,
+        "evolution": {
+          "success": true,
+          "key_id_presente": true,
+          "destino_da_resposta_eh_o_autorizado": true
+        },
+        "pos_consulta_confirmacao_no_payload": false,
+        "confirmar_executado": false,
+        "confirmar_resultado": null
+      },
+      {
+        "auditoria_criada_em": "2026-09-20 16:49:58.98084+00",
+        "resultado_turno": "sucesso",
+        "motivo_fallback": null,
+        "mensagem_paciente": {
+          "len": 85,
+          "sha256_12": "c1571497dc47"
+        },
+        "resposta_iris": {
+          "len": 246,
+          "sha256_12": "3cadd2536594",
+          "texto": "Que bom que foi ótimo, [nome do paciente]! Se quiser, você também pode deixar uma avaliação no Google: https://maps.app.goo.gl/XGjRHbujaTZC1JzH9\n\nPara a limpeza, qual desses profissionais você prefere?\n\n* Dr. Diego Perez\n* Dr. Diego Ramoz\n* Dr. Pablo Arruda"
+        },
+        "resposta_rejeitada_pelo_fiscal": false,
+        "execucao_n8n": {
+          "id": "169136",
+          "status": "success",
+          "iniciada_em": "2026-09-20T16:49:46.172Z"
+        },
+        "remetente_da_execucao_eh_o_autorizado": true,
+        "evolution": {
+          "success": true,
+          "key_id_presente": true,
+          "destino_da_resposta_eh_o_autorizado": true
+        },
+        "pos_consulta_confirmacao_no_payload": true,
+        "confirmar_executado": true,
+        "confirmar_resultado": "confirmada"
+      }
+    ]
+  },
+  "execucoes_n8n_desde_t0": {
+    "disparo_a_recorrente": {
+      "total": 0,
+      "observacao": "inativo; gatilho desabilitado; nunca executado"
+    },
+    "legado_google": {
+      "total_auditado": 80,
+      "por_periodo": {
+        "A_antes_da_mudanca_temporaria_ate_0137Z": {
+          "execucoes": 15,
+          "sucesso": 0,
+          "falha": 15,
+          "candidatos_por_execucao": 20
+        },
+        "B_config_ambos_0145Z_a_1700Z": {
+          "execucoes": 62,
+          "sucesso": 62,
+          "falha": 0,
+          "candidatos_por_execucao": 0
+        },
+        "C_depois_da_restauracao_google_1715Z_a_1745Z": {
+          "execucoes": 3,
+          "sucesso": 0,
+          "falha": 3,
+          "candidatos_por_execucao": 20
+        }
+      },
+      "falhas_reais": 18,
+      "causa": "Evolution 400 Bad Request, exists=false (numero sem WhatsApp); sempre o mesmo numero (hash 51692127) e sempre o primeiro da fila (18/18): bloqueio de cabeca de fila, os outros 19 itens nunca sao tentados",
+      "envios_concluidos": 0,
+      "fila": {
+        "linhas_por_lote": 20,
+        "telefones_distintos": 12,
+        "max_agendamentos_por_telefone": 4,
+        "clinicas": 1,
+        "instancias": 1,
+        "agendamentos_de": "2026-08-24",
+        "agendamentos_ate": "2026-08-31",
+        "lote_sempre_o_mesmo": true
+      },
+      "configuracao": {
+        "modo_simulacao": false,
+        "lote_limite": 20,
+        "instancia_evolution": "open",
+        "clinica_whatsapp_status": "conectado"
+      },
+      "mencionou_telefone_autorizado_ou_fixtures": false,
+      "risco": "sem janela maxima de idade: se o bloqueio desaparecer, o legado enviaria pedidos reais de avaliacao Google a fila historica (lotes de 20 a cada 15 min)",
+      "contencao": {
+        "autorizada": "desativar somente este workflow",
+        "tentativa_api": "POST deactivate -> HTTP 403 (uma tentativa)",
+        "executada": "Gabriel, pela interface do n8n (Despublicar)",
+        "confirmacao_get": {
+          "lido_em": "2026-09-20T19:56:35Z",
+          "legado_active": false,
+          "iris_oficial_active": true,
+          "disparo_a_active": false,
+          "legado_estrutura_identica": true,
+          "iris_oficial_identico": true,
+          "disparo_a_identico": true
+        },
+        "ultima_execucao_registrada": "169360 @ 19:45:42Z (erro); nao se sabe se anterior a despublicacao",
+        "confirmacao_posterior_somente_leitura": {
+          "lido_em": "2026-09-20T20:02:30Z",
+          "execucao_no_ciclo_2000_42Z": false,
+          "ultima_execucao_permaneceu": "169360 @ 19:45:42Z",
+          "legado_active": false,
+          "iris_oficial_active": true,
+          "disparo_a_active": false
+        },
+        "status": "CONCLUIDA: legado desativado ate correcao da janela maxima e revisao final do Codex"
+      },
+      "observacao": "substitui o retrato anterior (77 execucoes)"
+    },
+    "iris_oficial_total_todas_as_clinicas": 4,
+    "iris_oficial_do_autorizado": 4,
+    "observacao": "as demais execucoes do Iris Oficial sao trafego normal de outros pacientes; nao foram iniciadas nem lidas por este teste"
+  },
+  "jornadas_das_fixtures": [
+    {
+      "fixture": "A",
+      "etapa": "encerrada",
+      "modo": "ambos",
+      "classificacao": "positiva",
+      "convite_pendente": false,
+      "convite_google_gravado": true,
+      "sem_token_e_lease": true
+    },
+    {
+      "fixture": "B",
+      "etapa": "encerrada",
+      "modo": "ambos",
+      "classificacao": "nao_positiva",
+      "convite_pendente": false,
+      "convite_google_gravado": false,
+      "sem_token_e_lease": true
+    },
+    {
+      "fixture": "C",
+      "etapa": "encerrada",
+      "modo": "ambos",
+      "classificacao": "positiva",
+      "convite_pendente": false,
+      "convite_google_gravado": true,
+      "sem_token_e_lease": true
+    }
+  ],
+  "rpc_candidatos_ampla_executada": false,
+  "estado_final_pos_limpeza": {
+    "workflows": {
+      "iris_oficial": {
+        "id": "8oNbqLc9QLaHz8lF",
+        "active": true,
+        "gatilhos_desabilitados": [
+          "Webhook Evolution:habilitado"
+        ],
+        "active_no_inventario_pre_teste": true,
+        "nodes": 23
+      },
+      "legado_google": {
+        "id": "h8HxxQK7T6et4tYP",
+        "active": true,
+        "gatilhos_desabilitados": [
+          "Schedule Trigger:habilitado"
+        ],
+        "active_no_inventario_pre_teste": true,
+        "nodes": 15,
+        "nota": "ativo no momento da limpeza; DESATIVADO (despublicado) por Gabriel depois, confirmado por GET em 2026-09-20T19:56:35Z"
+      },
+      "disparo_a": {
+        "id": "Y6oMf0xBYWVi14Rh",
+        "active": false,
+        "gatilhos_desabilitados": [
+          "A cada 15 minutos:desabilitado"
+        ],
+        "active_no_inventario_pre_teste": "(nao estava no inventario)",
+        "nodes": 9
+      }
+    },
+    "banco": {
+      "jornadas": 0,
+      "fixtures_restantes": 0,
+      "pos_consulta_tipo": "google",
+      "fila_apos_t0": 0,
+      "tabela_nova_existe": 1,
+      "rpcs_novas": 4
+    },
+    "estrutura_nova_mantida": true
+  },
+  "reconciliacao_auditorias": {
+    "baseline_t0_clinica_telefone": 24,
+    "preservadas_anteriores_a_t0_hoje": 12,
+    "apagadas_do_teste": 4,
+    "causa_da_diferenca_24_para_12": "job de retencao pg_cron (job 1, 03:00 UTC, delete criado_em < now()-7 dias); 20/09 03:00Z DELETE 14 (tabela inteira), antes de qualquer turno do teste",
+    "contabilidade": "n_tup_del 77 = 73 (soma de 15 execucoes do job desde 06/09) + 4 (limpeza do teste por IDs explicitos com criado_em >= t0)",
+    "hash_lista_ids_sobreviventes": "2da950db5a65",
+    "hash_conteudo_sobreviventes": "5f090e66de7c",
+    "limite": "nao ha lista de IDs anterior ao teste; prova contabil, nao comparacao de IDs"
+  }
+}

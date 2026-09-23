@@ -1,0 +1,129 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "/* Mesma classificacao conservadora usada no Disparo A (n8n-workflow-pos-consulta-iniciar.json) e no workflow legado de pos-consulta (producao): so 'sucesso' com key.id explicito confirma o envio de fato. D4 (quarta revisao): sem isso, a segunda entrega seria confirmada so por 'o node anterior nao lancou excecao', o que e mais fraco do que a garantia real da correcao C1 exige. E2 (quinta revisao): 'Chamar Iris Nova' NAO executa nos fallbacks de audio (fora do limite de 5min/15MB, ou falha/texto vazio na transcricao) -- 'Fallback: pedir reenvio' vai direto pra 'Enviar resposta Evolution' sem passar por 'Chamar Iris Nova'. Ler esse node sem checar isExecuted antes lanca excecao no n8n e quebra o envio do fallback. Mesmo padrao de guarda (isExecuted) ja usado pelo proprio node 'Enviar resposta Evolution' para instanceName/remoteJid. */\nconst chamouIrisNova = $('Chamar Iris Nova').isExecuted;\nconst respostaIrisNova = chamouIrisNova ? $('Chamar Iris Nova').first().json : null;\nconst resp = $json;\nlet confirmado = false, motivo = null;\nif (resp && resp.success === true && resp.data && resp.data.key && resp.data.key.id) {\n  confirmado = true;\n} else if (resp && resp.error !== undefined) {\n  motivo = String(resp.error).slice(0, 300);\n} else {\n  motivo = 'resposta_sem_key_id_sem_erro_explicito';\n}\nreturn { json: { pos_consulta_confirmacao: respostaIrisNova ? respostaIrisNova.pos_consulta_confirmacao : undefined, envio_confirmado: confirmado, motivo_evolution: motivo } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -500,
+        620
+      ],
+      "id": "code-classificar-pos-consulta-d4",
+      "name": "Classificar resultado Evolution (pos-consulta)",
+      "notes": "D4 (quarta revisao, correcao C1 fim a fim): classifica a resposta REAL da Evolution (mesmo criterio de n8n-workflow-pos-consulta-iniciar.json) antes de decidir se confirma a entrega de pos-consulta. E2 (quinta revisao): funciona nos 4 casos reais do workflow -- texto normal, texto com jornada aberta, audio transcrito (com ou sem jornada) E os dois fallbacks de audio (fora do limite, falha/vazio na transcricao) -- SEM lancar excecao quando 'Chamar Iris Nova' nao executou (fallbacks). Testado em src/core/pos-consulta-n8n-confirmacao-reativa.test.ts, executando este MESMO jsCode (nao uma copia)."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond-pos-consulta-presente",
+              "leftValue": "={{ $json.pos_consulta_confirmacao ? 'sim' : '' }}",
+              "rightValue": "sim",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "cond-envio-confirmado",
+              "leftValue": "={{ $json.envio_confirmado }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -260,
+        620
+      ],
+      "id": "if-pos-consulta-confirmada-d4",
+      "name": "Pos-consulta: ha entrega pendente E Evolution confirmou?",
+      "notes": "D4: ramo verdadeiro SO quando (a) 'Chamar Iris Nova' devolveu 'pos_consulta_confirmacao' (ou seja, esta resposta veio de uma jornada de pos-consulta aberta -- praticamente 0% das mensagens) E (b) a Evolution de fato aceitou o envio (success+key.id, node anterior). Qualquer outro caso: ramo falso, nada muda -- exatamente o workflow de hoje."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://udizowyfjnhuhgxkeayk.supabase.co/functions/v1/iris-nova-pos-consulta",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ acao: \"confirmar\", provider: \"evolution\", instancia_whatsapp: $('Extrair campos').isExecuted ? $('Extrair campos').first().json.instancia : $('Montar mensagem transcrita').isExecuted ? $('Montar mensagem transcrita').first().json.instancia : $('Fallback: pedir reenvio').first().json.instancia, agendamento_id: $json.pos_consulta_confirmacao.agendamento_id, claim_token: $json.pos_consulta_confirmacao.claim_token }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -20,
+        620
+      ],
+      "id": "http-confirmar-pos-consulta-d4",
+      "name": "Chamar iris-nova-pos-consulta (confirmar)",
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "PREENCHER",
+          "name": "Iris Nova Pos-Consulta (chamada interna)"
+        }
+      },
+      "notes": "D4/C1: unica chamada de confirmacao de pos-consulta deste workflow, e SO acontece depois do IF anterior confirmar entrega pendente + envio real aceito. Mesma credencial 'Supabase Edge Functions (publishable key)' do Disparo A (n8n-workflow-pos-consulta-iniciar.json) -- criar essa credencial no n8n antes de importar. | Chamada INTERNA: a credencial Custom Auth 'Iris Nova Pos-Consulta (chamada interna)' carrega DOIS cabecalhos -- 'Authorization: Bearer <publishable key>' (verify_jwt da plataforma) e 'x-iris-pos-consulta-segredo: <segredo interno>' (autenticacao dedicada exigida pela Edge Function). A publishable key sozinha NAO autoriza. Nenhum valor secreto fica neste JSON. | retryOnFail (3x): confirmar acontece DEPOIS do envio real; se falhar de vez, a jornada fica pendente e a recuperacao pode REENVIAR (ao menos uma vez, max. 3 tentativas). O retry reduz essa duplicidade.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    }
+  ],
+  "connections": {
+    "Classificar resultado Evolution (pos-consulta)": {
+      "main": [
+        [
+          {
+            "node": "Pos-consulta: ha entrega pendente E Evolution confirmou?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pos-consulta: ha entrega pendente E Evolution confirmou?": {
+      "main": [
+        [
+          {
+            "node": "Chamar iris-nova-pos-consulta (confirmar)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "pinData": {}
+}

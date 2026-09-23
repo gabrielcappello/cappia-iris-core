@@ -1,6 +1,10 @@
 # Segredos
 .env
 .env.*
+*.pem
+*.key
+.iris-secrets/
+**/.iris-secrets/
 
 # Node / TypeScript
 node_modules/

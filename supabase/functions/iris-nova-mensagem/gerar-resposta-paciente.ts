@@ -135,6 +135,13 @@ export function gerarRespostaPaciente(decisao: DecisaoOrquestrador): string {
       // aquela ficha (spec secao 3, que revoga a regra antiga da
       // persistencia-v1.md secao 6).
       return 'Sem problema, deixo o cadastro como esta. Para seguir com esse agendamento, vou pedir para a recepcao te ajudar.';
+    // --- Correcao de cadastro fora do agendamento (2026-09-01,
+    // specs/correcao-cadastro-conversacional-v1.md). Texto natural e da
+    // redatora; isto so entra quando ela falha ou e reprovada. ---
+    case 'cadastro_atualizado':
+      return `Prontinho! Atualizei ${listarCamposEmPortugues(decisao.campos_atualizados)}.`;
+    case 'correcao_cadastro_invalida':
+      return `Não consegui confirmar ${listarCamposEmPortugues(decisao.campos_invalidos)} assim. Pode me passar de novo?`;
     case 'sem_dentista_disponivel':
       // A pergunta so e feita quando a alternativa EXISTE de verdade
       // (`procedimento_oferecido` presente). Ate 2026-08-09 ela era feita
@@ -194,12 +201,16 @@ export function gerarRespostaPaciente(decisao: DecisaoOrquestrador): string {
       // ele escolheu, mesmo perguntando, e o comportamento que esta spec
       // existe para eliminar.
       return `Não consigo agendar esse atendimento com ${decisao.dentista_nome_exibido}. Quer tentar outro procedimento com ${decisao.dentista_nome_exibido}?`;
-    // --- Os cinco estados de falha tecnica real ---
+    // --- Os seis estados de falha tecnica real ---
     case 'clinica_sem_catalogo':
     case 'erro_catalogo_dentista':
     case 'duracao_nao_configurada':
     case 'erro_configuracao_duracao':
     case 'reserva_falhou':
+    // A gravacao da correcao de cadastro nao foi confirmada pelo banco --
+    // nunca afirma sucesso sem sucesso (specs/correcao-cadastro-
+    // conversacional-v1.md).
+    case 'correcao_cadastro_falhou':
       return RESPOSTA_FALHA_TECNICA_GENERICA;
   }
 }

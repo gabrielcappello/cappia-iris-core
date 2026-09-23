@@ -1,0 +1,230 @@
+[
+  {
+    "id": "TgPIBZWz7xv4a44x",
+    "name": "Tool - Validar Agenda Google",
+    "active": true,
+    "updatedAt": "2026-06-16T22:26:27.647Z"
+  },
+  {
+    "id": "OkR9CNW95wEPZ9cc",
+    "name": "Painel — Buscar Calendário",
+    "active": true,
+    "updatedAt": "2026-07-06T00:30:13.770Z"
+  },
+  {
+    "id": "h8HxxQK7T6et4tYP",
+    "name": "Pos-Consulta - Avaliacao Google",
+    "active": true,
+    "updatedAt": "2026-08-21T17:57:19.333Z"
+  },
+  {
+    "id": "UqluzhjyYytr3zLB",
+    "name": "Validar Documento por Pais",
+    "active": false,
+    "updatedAt": "2026-07-26T04:11:25.663Z"
+  },
+  {
+    "id": "tUbDLqHxocwg8Dp7",
+    "name": "Cappia — Gerar Traduções i18n",
+    "active": false,
+    "updatedAt": "2026-06-13T21:40:42.939Z"
+  },
+  {
+    "id": "GPeD2VPkXOaBCX7U",
+    "name": "Confirmar Acao CANDIDATA LAB",
+    "active": false,
+    "updatedAt": "2026-07-26T04:12:37.575Z"
+  },
+  {
+    "id": "8oNbqLc9QLaHz8lF",
+    "name": "Iris Oficial",
+    "active": true,
+    "updatedAt": "2026-09-11T21:50:49.071Z"
+  },
+  {
+    "id": "xvIPLVSkGlFmZfra",
+    "name": "Iris Landing Page BR",
+    "active": false,
+    "updatedAt": "2026-06-04T00:45:30.353Z"
+  },
+  {
+    "id": "yLq2CynQJHx1ZYoU",
+    "name": "Tool - Buscar Paciente e Agendamentos LABOORATORIO",
+    "active": false,
+    "updatedAt": "2026-07-28T15:02:37.767Z"
+  },
+  {
+    "id": "pA0CW4ejgIGGKw6a",
+    "name": "Lembretes Automaticos - V2 LAB",
+    "active": true,
+    "updatedAt": "2026-08-21T17:49:51.973Z"
+  },
+  {
+    "id": "S2vhzMxeng380j6e",
+    "name": "Cappia — i18n Lote 252 Keys",
+    "active": false,
+    "updatedAt": "2026-07-02T21:26:50.414Z"
+  },
+  {
+    "id": "cbqQ82bMdvsMPwFy",
+    "name": "N8N Diagnóstico Cappello",
+    "active": false,
+    "updatedAt": "2026-06-06T16:02:48.391Z"
+  },
+  {
+    "id": "N9TBbBDz4XboJOck",
+    "name": "Tool - Buscar Preço",
+    "active": false,
+    "updatedAt": "2026-07-26T03:40:27.727Z"
+  },
+  {
+    "id": "IhsgJ51lanlliQ4A",
+    "name": "Tool - Consultar Disponibilidade Cappia CANDIDATA LAB",
+    "active": false,
+    "updatedAt": "2026-07-28T12:10:01.359Z"
+  },
+  {
+    "id": "zzq1G2nS9mcQlxoC",
+    "name": "Enviar Mensagem Manual",
+    "active": true,
+    "updatedAt": "2026-06-29T13:08:10.096Z"
+  },
+  {
+    "id": "0ofGBvoHxhY9BS3c",
+    "name": "Preparar Acao CANDIDATA LAB",
+    "active": false,
+    "updatedAt": "2026-07-28T13:28:05.442Z"
+  },
+  {
+    "id": "uuosZPU61Ahjec0a",
+    "name": "Onboarding Clínica",
+    "active": true,
+    "updatedAt": "2026-08-23T18:20:01.757Z"
+  },
+  {
+    "id": "jR6GhmHar8rANRYe",
+    "name": "Webhook Hotmart — Onboarding Clínica",
+    "active": true,
+    "updatedAt": "2026-08-23T18:20:03.236Z"
+  },
+  {
+    "id": "GmYX4aGuqd7ntMuX",
+    "name": "Tool - Buscar Paciente e Agendamentos CANDIDATA LAB",
+    "active": false,
+    "updatedAt": "2026-07-26T04:12:07.951Z"
+  },
+  {
+    "id": "r1xlEHwyE9hJ7d6w",
+    "name": "Processar Notificacao Outbox CANDIDATA LAB",
+    "active": true,
+    "updatedAt": "2026-07-26T15:30:39.584Z"
+  },
+  {
+    "id": "FzqFaXtQuXiq6g2S",
+    "name": "Config Clínica - Painel",
+    "active": false,
+    "updatedAt": "2026-05-26T17:48:35.080Z"
+  },
+  {
+    "id": "mHAeXCHsnyQxE9dr",
+    "name": "Iris - Desconectar WhatsApp Evolution",
+    "active": true,
+    "updatedAt": "2026-08-23T17:27:05.675Z"
+  },
+  {
+    "id": "igwaDkXWUAcVAq6Z",
+    "name": "Tool - Atualizar Dados do Paciente LABORATÓRIO",
+    "active": false,
+    "updatedAt": "2026-07-08T16:06:04.755Z"
+  },
+  {
+    "id": "nTfcKkwfLsQEO4tp",
+    "name": "Iris - Conectar WhatsApp Evolution",
+    "active": true,
+    "updatedAt": "2026-09-11T23:05:34.133Z"
+  },
+  {
+    "id": "GMU9ulbxuBxWwO7a",
+    "name": "C. odonto Iris — IRIS BR",
+    "active": false,
+    "updatedAt": "2026-07-28T21:39:29.618Z"
+  },
+  {
+    "id": "Lv7fRS34lQ4vHfR6",
+    "name": "Iris - Remarcacao em Massa",
+    "active": true,
+    "updatedAt": "2026-08-21T17:23:23.777Z"
+  },
+  {
+    "id": "d5HXC3A57Zqb8Aob",
+    "name": "Agente S - POC transcript (nao ativar sem revisao)",
+    "active": false,
+    "updatedAt": "2026-07-12T10:59:54.370Z"
+  },
+  {
+    "id": "96GKanSzrEA9jiEQ",
+    "name": "Tool - Atualizar Status Agendamento LABORATÓRIO",
+    "active": false,
+    "updatedAt": "2026-07-08T16:08:16.072Z"
+  },
+  {
+    "id": "84yzH1Twj0tnMKSM",
+    "name": "Tool - Listar Dentistas e Procedimentos LABORATORIO",
+    "active": false,
+    "updatedAt": "2026-07-20T22:59:20.532Z"
+  },
+  {
+    "id": "iDxTJdMwSbgoAnmH",
+    "name": "Tool - Enviar Mensagens em Massa",
+    "active": false,
+    "updatedAt": "2026-07-15T23:36:01.626Z"
+  },
+  {
+    "id": "l6pNUaIccr2h4Gid",
+    "name": "Tool - Buscar Agendamentos Confirmados Dentista Dia",
+    "active": false,
+    "updatedAt": "2026-07-15T23:35:14.207Z"
+  },
+  {
+    "id": "GIx20k4uatQBQPgf",
+    "name": "Tool - Cancelar Evento RPC CANDIDATA LAB",
+    "active": false,
+    "updatedAt": "2026-07-26T04:12:02.328Z"
+  },
+  {
+    "id": "71uxKcnXS0pY0mRX",
+    "name": "Tool - Criar Evento RPC CANDIDATA LAB",
+    "active": false,
+    "updatedAt": "2026-07-26T04:11:40.750Z"
+  },
+  {
+    "id": "BcGpkGpFRI0yjii4",
+    "name": "Tool Buscar Histórico de Agendamentos LABORATÓRIO",
+    "active": false,
+    "updatedAt": "2026-07-15T23:24:54.986Z"
+  },
+  {
+    "id": "tg17akTeEN8FC6oT",
+    "name": "Tool - Remarcar Evento RPC CANDIDATA LAB",
+    "active": false,
+    "updatedAt": "2026-07-26T04:11:53.369Z"
+  },
+  {
+    "id": "8mNSjhlN6UoGTONo",
+    "name": "Preparar Remarcacao CANDIDATA LAB",
+    "active": false,
+    "updatedAt": "2026-07-28T02:17:22.487Z"
+  },
+  {
+    "id": "nrHCh5pkVwnhvjef",
+    "name": "C. odonto Iris — V2 Laboratório",
+    "active": false,
+    "updatedAt": "2026-07-26T04:15:55.398Z"
+  },
+  {
+    "id": "KElTXbqVGi8tvy1u",
+    "name": "Portal - Enviar Orcamento WhatsApp",
+    "active": true,
+    "updatedAt": "2026-08-21T17:57:18.665Z"
+  }
+]

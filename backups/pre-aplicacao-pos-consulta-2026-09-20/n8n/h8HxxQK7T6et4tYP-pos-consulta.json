@@ -1,0 +1,521 @@
+{
+  "updatedAt": "2026-08-21T17:57:19.333Z",
+  "createdAt": "2026-07-23T18:59:46.943Z",
+  "id": "h8HxxQK7T6et4tYP",
+  "name": "Pos-Consulta - Avaliacao Google",
+  "description": null,
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "id": "pc-trigger-0001",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "pc-config-0002",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "MODO_SIMULACAO",
+              "value": false,
+              "type": "boolean"
+            },
+            {
+              "id": "a2",
+              "name": "LOTE_LIMITE",
+              "value": 20,
+              "type": "number"
+            },
+            {
+              "id": "a3",
+              "name": "INICIADO_EM",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "pc-nota-escopo-0003",
+      "name": "Nota - Escopo e Modo Simulacao",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        20
+      ],
+      "parameters": {
+        "content": "## Pos-Consulta - Avaliacao Google\n\nWorkflow NOVO e INDEPENDENTE. Nao compartilha tabela nem RPC com 'Lembretes Automaticos - V2 LAB' (lembretes_envios / lembretes_*). So le agendamentos.status='concluido' + agendamentos.pos_consulta_enviado + clinicas.automatizacoes.\n\nSomente a modalidade 'google' esta implementada (satisfacao / satisfacao+google ficam Em Construcao no painel).\n\nMODO_SIMULACAO (node Config): quando true, nunca chama Evolution nem faz PATCH - so produz auditoria (Registrar Simulacao). Definir false so apos autorizacao explicita para envio real.",
+        "height": 300,
+        "width": 480,
+        "color": 4
+      }
+    },
+    {
+      "id": "pc-http-candidatos-0004",
+      "name": "RPC pos_consulta_google_candidatos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://udizowyfjnhuhgxkeayk.supabase.co/rest/v1/rpc/pos_consulta_google_candidatos",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_limit: $('Config').first().json.LOTE_LIMITE }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "gzZQnN7xyi81dmw6",
+          "name": "Header Auth account 2"
+        }
+      }
+    },
+    {
+      "id": "pc-code-mensagem-0005",
+      "name": "Montar Mensagem Deterministica",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const LANG_MAP = {\n  'portugues':'pt', 'português':'pt',\n  'english':'en',\n  'espanol':'es', 'español':'es',\n  'francais':'fr', 'français':'fr',\n  'deutsch':'de',\n  'italiano':'it',\n  'русский':'ru',\n  'العربية':'ar'\n};\nfunction normalizeLang(idiomaRaw) {\n  if (!idiomaRaw) return 'pt';\n  const parte = String(idiomaRaw).split('-')[0].trim().toLowerCase();\n  return LANG_MAP[parte] || 'pt';\n}\n\nconst item = $json;\nconst lang = normalizeLang(item.idioma);\nconst nome = item.nome || '';\nconst clinicaNome = item.clinica_nome || 'nossa clinica';\nconst link = item.google_link;\nconst custom = String(item.mensagem_custom || '').trim();\n\nlet mensagem;\nif (custom) {\n  mensagem = custom\n    .split('{nome}').join(nome)\n    .split('{clinica}').join(clinicaNome)\n    .split('{link}').join(link);\n} else {\n  const textos = {\n    pt: `Ola, ${nome}! Obrigado por visitar a ${clinicaNome}. Se puder, deixe sua avaliacao no Google: ${link}`,\n    es: `Hola, ${nome}! Gracias por visitar ${clinicaNome}. Si puedes, deja tu resena en Google: ${link}`,\n    en: `Hi, ${nome}! Thank you for visiting ${clinicaNome}. If you have a moment, please leave us a Google review: ${link}`,\n    fr: `Bonjour ${nome}! Merci d'avoir visite ${clinicaNome}. Si possible, laissez-nous un avis Google: ${link}`,\n    de: `Hallo ${nome}! Danke fuer Ihren Besuch bei ${clinicaNome}. Bewerten Sie uns gerne auf Google: ${link}`,\n    it: `Ciao ${nome}! Grazie per aver visitato ${clinicaNome}. Se puoi, lasciaci una recensione su Google: ${link}`,\n    ru: `Здравствуйте, ${nome}! Спасибо за визит в ${clinicaNome}. Если можете, оставьте отзыв в Google: ${link}`,\n    ar: `مرحبا ${nome}! شكرا لزيارتك ${clinicaNome}. اذا امكن، اترك تقييما على Google: ${link}`,\n  };\n  mensagem = textos[lang] || textos.pt;\n}\n\nreturn {\n  json: {\n    ...item,\n    mensagem_montada: mensagem,\n  }\n};"
+      }
+    },
+    {
+      "id": "pc-if-simulacao-0006",
+      "name": "Modo Simulacao",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond-pc-sim-1",
+              "leftValue": "={{ $('Config').first().json.MODO_SIMULACAO === true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "pc-code-simulacao-0007",
+      "name": "Registrar Simulacao",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        140
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "function sanitizarTelefone(tel) {\n  if (!tel) return null;\n  const s = String(tel);\n  if (s.length <= 4) return '*'.repeat(s.length);\n  return s.slice(0, 4) + '*'.repeat(Math.max(0, s.length - 6)) + s.slice(-2);\n}\nconst item = $json;\nreturn {\n  json: {\n    tipo: 'pos_consulta_simulado',\n    agendamento_id: item.agendamento_id,\n    clinica_id: item.clinica_id,\n    instancia: item.whatsapp_instancia || null,\n    telefone_sanitizado: sanitizarTelefone(item.telefone),\n    mensagem_montada: item.mensagem_montada,\n  }\n};"
+      }
+    },
+    {
+      "id": "pc-evolution-0008",
+      "name": "Evolution Enviar Texto",
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        460
+      ],
+      "parameters": {
+        "resource": "messages-api",
+        "instanceName": "={{ $json.whatsapp_instancia }}",
+        "remoteJid": "={{ $json.telefone }}",
+        "messageText": "={{ $json.mensagem_montada }}",
+        "options_message": {}
+      },
+      "credentials": {
+        "evolutionApi": {
+          "id": "96W3h9YNHcqkdi52",
+          "name": "evolution_cloudfy"
+        }
+      }
+    },
+    {
+      "id": "pc-code-classificar-0009",
+      "name": "Classificar Resultado Evolution",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        460
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Classificacao conservadora (mesmo espirito do workflow de lembretes, simplificado\n// para 2 buckets: so 'sucesso' com key.id explicito marca o flag de idempotencia;\n// qualquer outra coisa (rejeicao HTTP, timeout, ambiguo) NAO marca -> sera\n// reavaliado no proximo ciclo (15min) enquanto pos_consulta_enviado continuar false.\nconst original = $('Montar Mensagem Deterministica').item.json;\nconst resp = $json;\n\nlet classificacao, keyId = null, motivo = null;\n\nif (resp && resp.success === true && resp.data && resp.data.key && resp.data.key.id) {\n  classificacao = 'sucesso';\n  keyId = resp.data.key.id;\n} else if (resp && resp.error !== undefined) {\n  classificacao = 'nao_enviado';\n  motivo = String(resp.error).slice(0, 300);\n} else {\n  classificacao = 'nao_enviado';\n  motivo = 'resposta_sem_key_id_sem_erro_explicito';\n}\n\nreturn {\n  json: {\n    ...original,\n    classificacao,\n    key_id: keyId,\n    motivo_evolution: motivo,\n  }\n};"
+      }
+    },
+    {
+      "id": "pc-if-confirmado-0010",
+      "name": "Envio Confirmado",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1540,
+        460
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond-pc-conf-1",
+              "leftValue": "={{ $json.classificacao === 'sucesso' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "pc-http-marcar-0011",
+      "name": "PATCH Marcar Enviado",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1760,
+        380
+      ],
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://udizowyfjnhuhgxkeayk.supabase.co/rest/v1/agendamentos?id=eq.{{ $json.agendamento_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=minimal"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"pos_consulta_enviado\": true}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "gzZQnN7xyi81dmw6",
+          "name": "Header Auth account 2"
+        }
+      }
+    },
+    {
+      "id": "pc-code-envioreal-0012",
+      "name": "Registrar Envio Real",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        380
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "function sanitizarTelefone(tel) {\n  if (!tel) return null;\n  const s = String(tel);\n  if (s.length <= 4) return '*'.repeat(s.length);\n  return s.slice(0, 4) + '*'.repeat(Math.max(0, s.length - 6)) + s.slice(-2);\n}\nconst item = $('Classificar Resultado Evolution').item.json;\nreturn {\n  json: {\n    tipo: 'pos_consulta_enviado_real',\n    agendamento_id: item.agendamento_id,\n    clinica_id: item.clinica_id,\n    telefone_sanitizado: sanitizarTelefone(item.telefone),\n    message_id: item.key_id,\n  }\n};"
+      }
+    },
+    {
+      "id": "pc-code-naoenviado-0013",
+      "name": "Registrar Nao Enviado",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        560
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const item = $json;\nreturn {\n  json: {\n    tipo: 'pos_consulta_nao_enviado',\n    agendamento_id: item.agendamento_id,\n    clinica_id: item.clinica_id,\n    classificacao: item.classificacao,\n    motivo: item.motivo_evolution,\n  }\n};"
+      }
+    },
+    {
+      "id": "pc-nota-contrato-0014",
+      "name": "Nota - Contrato de Envio (simplificado)",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1320,
+        620
+      ],
+      "parameters": {
+        "content": "## Contrato de envio (versao minima)\n\n1. Sucesso (key.id presente) -> PATCH agendamentos.pos_consulta_enviado=true. Nunca mais entra na consulta (RPC ja filtra pos_consulta_enviado=false).\n2. Qualquer outro resultado (rejeicao HTTP, timeout, ambiguo) -> NAO marca. O agendamento volta a aparecer no proximo ciclo (15min) enquanto continuar elegivel.\n\nDiferenca deliberada vs. Lembretes V2 LAB: aqui nao ha fila de reserva/claim nem contador de tentativas (fora do escopo minimo combinado). Risco aceito e registrado: uma resposta ambigua da Evolution (mensagem pode ter sido entregue mesmo sem confirmacao) pode gerar um reenvio no proximo ciclo.",
+        "height": 260,
+        "width": 520,
+        "color": 5
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://udizowyfjnhuhgxkeayk.supabase.co/rest/v1/rpc/iris_nova_registrar_mensagem_enviada",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_clinica_id: $('Montar Mensagem Deterministica').item.json.clinica_id, p_telefone_normalizado: $('Montar Mensagem Deterministica').item.json.telefone, p_conteudo: $('Montar Mensagem Deterministica').item.json.mensagem_montada }) }}",
+        "options": {},
+        "onError": "continueRegularOutput"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        900
+      ],
+      "id": "51979168-21a8-47e9-bf9d-fd34e2a36157",
+      "name": "Registrar no Historico",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "JmOmGMwFfFQLJ2sT",
+          "name": "Header Auth account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "RPC pos_consulta_google_candidatos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RPC pos_consulta_google_candidatos": {
+      "main": [
+        [
+          {
+            "node": "Montar Mensagem Deterministica",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar Mensagem Deterministica": {
+      "main": [
+        [
+          {
+            "node": "Modo Simulacao",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Modo Simulacao": {
+      "main": [
+        [
+          {
+            "node": "Registrar Simulacao",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Evolution Enviar Texto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evolution Enviar Texto": {
+      "main": [
+        [
+          {
+            "node": "Registrar no Historico",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classificar Resultado Evolution": {
+      "main": [
+        [
+          {
+            "node": "Envio Confirmado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Envio Confirmado": {
+      "main": [
+        [
+          {
+            "node": "PATCH Marcar Enviado",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Registrar Nao Enviado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PATCH Marcar Enviado": {
+      "main": [
+        [
+          {
+            "node": "Registrar Envio Real",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Registrar no Historico": {
+      "main": [
+        [
+          {
+            "node": "Classificar Resultado Evolution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": {
+    "node:Schedule Trigger": {
+      "recurrenceRules": []
+    }
+  },
+  "meta": null,
+  "pinData": null,
+  "versionId": "ed56f054-c924-4af6-bc1d-c8ac0d58a509",
+  "activeVersionId": null,
+  "versionCounter": 19,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-07-23T18:59:46.943Z",
+      "createdAt": "2026-07-23T18:59:46.943Z",
+      "role": "workflow:owner",
+      "workflowId": "h8HxxQK7T6et4tYP",
+      "projectId": "4GYloibuIHCEPct2",
+      "project": {
+        "updatedAt": "2026-04-26T11:53:35.308Z",
+        "createdAt": "2026-04-26T11:47:19.743Z",
+        "id": "4GYloibuIHCEPct2",
+        "name": "GABRIEL CAPPELLO <agentesia.cappello@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "d12afd30-9651-4d9b-8ea4-773be700b0ce"
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": null
+}

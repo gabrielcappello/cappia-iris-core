@@ -39,8 +39,7 @@
 // Uma decisao que olhasse so as alteracoes aplicadas nunca veria uma data
 // malformada -- e o paciente ouviria o mesmo silencio de sempre.
 
-import type { AlteracoesDados } from './tipos.ts';
-import type { CadastroPaciente } from './cadastro-paciente.ts';
+import type { AlteracoesDados, CadastroPaciente } from './tipos.ts';
 import type { CampoCadastralInterpretacao } from './interpretacao-tipos.ts';
 
 /**

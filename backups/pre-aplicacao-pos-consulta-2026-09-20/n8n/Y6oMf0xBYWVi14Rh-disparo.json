@@ -1,0 +1,382 @@
+{
+  "updatedAt": "2026-09-19T21:54:03.574Z",
+  "createdAt": "2026-09-19T21:54:03.574Z",
+  "id": "Y6oMf0xBYWVi14Rh",
+  "name": "Iris Nova - Pos-Consulta (Disparo A) [INATIVO - teste controlado Clear Dent]",
+  "description": null,
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1840,
+        300
+      ],
+      "id": "trigger-001",
+      "name": "A cada 15 minutos",
+      "notes": "Mesma cadencia do workflow legado. Nunca ativar sem antes confirmar com o Gabriel que o corte foi autorizado.",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://udizowyfjnhuhgxkeayk.supabase.co/rest/v1/rpc/cappia_pos_consulta_candidatos",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ p_limit: 50 }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "id": "http-candidatos-001",
+      "name": "Buscar candidatos (RPC cappia_pos_consulta_candidatos)",
+      "position": [
+        -1600,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "gzZQnN7xyi81dmw6",
+          "name": "Header Auth account 2"
+        }
+      },
+      "notes": "PRE-FILTRO barato, NAO autoritativo -- migration 20260915120000_iris_nova_pos_consulta_v1.sql, secao 2d (D3). MESMO mecanismo real ja usado em producao por 'Pos-Consulta - Avaliacao Google' (node 'RPC pos_consulta_google_candidatos'): RPC via PostgREST, credencial httpHeaderAuth guardando apikey+Authorization (service_role) -- NUNCA um valor de credencial visivel neste JSON. Toda a elegibilidade real (status, concluido_em, configuracao vigente, prazo, telefone) e RELIDA de novo dentro da Edge Function (C2) -- esta query so reduz volume. Credencial 'Supabase REST (service_role)' precisa ser criada no n8n antes de importar (id 'PREENCHER' e um placeholder)."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://udizowyfjnhuhgxkeayk.supabase.co/functions/v1/iris-nova-pos-consulta",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ acao: \"iniciar\", provider: \"evolution\", instancia_whatsapp: $json.instancia_whatsapp, agendamento_id: $json.agendamento_id, paciente_id: $json.paciente_id, procedimento_nome_exibido: $json.procedimento_nome_exibido, dentista_nome_exibido: $json.dentista_nome_exibido, nome_clinica: $json.nome_clinica }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1360,
+        300
+      ],
+      "id": "http-iniciar-001",
+      "name": "Chamar iris-nova-pos-consulta (iniciar)",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "rMC2RuMcCeEcgrln",
+          "name": "Supabase Edge Functions (publishable key)"
+        }
+      },
+      "notes": "So envia IDENTIFICADORES e fatos COSMETICOS (C2) -- nunca status, concluido_em, modo, prazo, link ou 'agora': a Edge Function rele tudo isso sozinha. Autenticacao (D3): Edge Functions do projeto exigem JWT por padrao (verify_jwt=true); o node 'Chamar Iris Nova' do workflow reativo real ('Iris Oficial', 8oNbqLc9QLaHz8lF) usa 'Authorization: Bearer <publishable key>' -- aqui o mesmo header vive DENTRO da credencial httpHeaderAuth 'Supabase Edge Functions (publishable key)' (nunca hardcoded no JSON). Criar essa credencial no n8n com o MESMO valor publishable key ja usado pelo node 'Chamar Iris Nova' antes de importar. E1 (quinta revisao): o campo `instancia_whatsapp` enviado aqui e o usado por pos-consulta-resolver-clinica.ts para AUTENTICAR/RESOLVER a clinica dentro da Edge Function -- NAO e o mesmo campo usado pra enviar a mensagem (`whatsapp_instancia`, so no node Evolution). Nunca trocar um pelo outro."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond-entrega-pendente",
+              "leftValue": "={{ $json.resultado }}",
+              "rightValue": "entrega_pendente",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -1120,
+        300
+      ],
+      "id": "if-entrega-pendente-001",
+      "name": "Ha entrega pendente?",
+      "notes": "'em_andamento', 'ja_existia', 'conflito_telefone_ativo' e 'nao_elegivel' NUNCA enviam mensagem -- o ramo falso deste IF termina o item aqui, sem efeito nenhum."
+    },
+    {
+      "parameters": {
+        "resource": "messages-api",
+        "instanceName": "={{ $('Buscar candidatos (RPC cappia_pos_consulta_candidatos)').item.json.whatsapp_instancia }}",
+        "remoteJid": "={{ $json.telefone_normalizado }}",
+        "messageText": "={{ $json.resposta }}",
+        "options_message": {}
+      },
+      "type": "n8n-nodes-evolution-api.evolutionApi",
+      "typeVersion": 1,
+      "position": [
+        -880,
+        220
+      ],
+      "id": "evo-iniciar-001",
+      "name": "Enviar via Evolution",
+      "credentials": {
+        "evolutionApi": {
+          "id": "96W3h9YNHcqkdi52",
+          "name": "evolution_cloudfy"
+        }
+      },
+      "notes": "Node/credencial REAIS -- mesmo tipo (n8n-nodes-evolution-api.evolutionApi, resource messages-api, credencial 'evolutionApi') ja usado em producao tanto pelo workflow reativo ('Iris Oficial', node 'Enviar resposta Evolution') quanto pelo legado de pos-consulta (node 'Evolution Enviar Texto'). E1 (quinta revisao): 'instanceName' usa `whatsapp_instancia` -- campo distinto de `instancia_whatsapp`, que e so para autenticar a Edge Function (no schema operacional `instancia_whatsapp` e coluna GERADA igual a `whatsapp_instancia`, entao hoje os valores coincidem; a separacao protege contra o dia em que deixarem de coincidir). Ver nota do node 'Chamar iris-nova-pos-consulta (iniciar)', o comentario da RPC na migration e src/core/pos-consulta-n8n-instancias.test.ts (testa com valores diferentes). 'remoteJid' usa `telefone_normalizado` -- o telefone RELIDO em fonte autoritativa e devolvido pela propria Edge Function (D3), nunca o candidato pre-filtro."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Mesma classificacao conservadora do workflow legado de pos-consulta\n// (node 'Classificar Resultado Evolution', producao): so 'sucesso' com\n// key.id explicito confirma o envio. Qualquer outra coisa (rejeicao HTTP,\n// timeout, resposta ambigua) NAO confirma -- a jornada fica 'finalizando',\n// expira e sera reclamada no proximo ciclo (comportamento aceito e\n// documentado, mesmo espirito do legado).\nconst resp = $json;\nlet confirmado = false, messageId = null, motivo = null;\nif (resp && resp.success === true && resp.data && resp.data.key && resp.data.key.id) {\n  confirmado = true;\n  messageId = resp.data.key.id;\n} else if (resp && resp.error !== undefined) {\n  motivo = String(resp.error).slice(0, 300);\n} else {\n  motivo = 'resposta_sem_key_id_sem_erro_explicito';\n}\nreturn { json: { envio_confirmado: confirmado, message_id: messageId, motivo_evolution: motivo } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -640,
+        220
+      ],
+      "id": "code-classificar-001",
+      "name": "Classificar resultado Evolution",
+      "notes": "Extraido do node 'Enviar via Evolution' para o IF seguinte nunca precisar acessar um campo aninhado opcional (data.key.id) direto numa condicao -- reduz risco de o IF quebrar quando a resposta vem em formato inesperado."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "cond-envio-confirmado",
+              "leftValue": "={{ $json.envio_confirmado }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -400,
+        220
+      ],
+      "id": "if-envio-confirmado-001",
+      "name": "Evolution aceitou o envio?",
+      "notes": "CORRECAO C1: NUNCA chamar 'confirmar' no ramo falso. Critical: usa o resultado REAL classificado pelo node anterior (success===true && data.key.id), nao mais um 'statusCode' hipotetico."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://udizowyfjnhuhgxkeayk.supabase.co/functions/v1/iris-nova-pos-consulta",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ acao: \"confirmar\", provider: \"evolution\", instancia_whatsapp: $('Buscar candidatos (RPC cappia_pos_consulta_candidatos)').item.json.instancia_whatsapp, agendamento_id: $('Buscar candidatos (RPC cappia_pos_consulta_candidatos)').item.json.agendamento_id, claim_token: $('Chamar iris-nova-pos-consulta (iniciar)').item.json.confirmacao.claimToken }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -160,
+        220
+      ],
+      "id": "http-confirmar-001",
+      "name": "Chamar iris-nova-pos-consulta (confirmar)",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "rMC2RuMcCeEcgrln",
+          "name": "Supabase Edge Functions (publishable key)"
+        }
+      },
+      "notes": "CORRECAO C1: esta chamada SO acontece depois do node anterior confirmar que a Evolution aceitou o envio de verdade (success+key.id), nunca antes, nunca incondicional. Mesma credencial de autenticacao do node 'iniciar'."
+    },
+    {
+      "parameters": {
+        "content": "## Setup necessario ANTES de importar (nao incluido neste JSON)\n\n1. Credencial n8n 'Supabase REST (service_role)' (tipo Header Auth): headers `apikey` e `Authorization: Bearer <service_role key>`.\n2. Credencial n8n 'Supabase Edge Functions (publishable key)' (tipo Header Auth): header `Authorization: Bearer <publishable key>` -- mesmo valor ja usado pelo node 'Chamar Iris Nova' do workflow 'Iris Oficial' em producao.\n3. Credencial n8n 'evolutionApi' -- mesma ja usada pelos workflows 'Iris Oficial' e 'Pos-Consulta - Avaliacao Google'.\n4. Variavel de ambiente `IRIS_NOVA_PROVIDER` (ex.: 'evolution').\n5. Migration `20260915120000_iris_nova_pos_consulta_v1.sql` APLICADA (tabela + 4 funcoes, incluindo `cappia_pos_consulta_candidatos`) -- nao aplicada nesta entrega.\n6. Edge Function `iris-nova-pos-consulta` DEPLOYADA -- nao deployada nesta entrega.\n\nSem os 6 itens acima, importar este workflow e seguro (fica inativo, `active:false`), mas EXECUTAR falha em todo node HTTP.",
+        "height": 340,
+        "width": 480,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1840,
+        520
+      ],
+      "id": "nota-setup-001",
+      "name": "Nota - Setup necessario"
+    }
+  ],
+  "connections": {
+    "A cada 15 minutos": {
+      "main": [
+        [
+          {
+            "node": "Buscar candidatos (RPC cappia_pos_consulta_candidatos)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar candidatos (RPC cappia_pos_consulta_candidatos)": {
+      "main": [
+        [
+          {
+            "node": "Chamar iris-nova-pos-consulta (iniciar)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chamar iris-nova-pos-consulta (iniciar)": {
+      "main": [
+        [
+          {
+            "node": "Ha entrega pendente?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ha entrega pendente?": {
+      "main": [
+        [
+          {
+            "node": "Enviar via Evolution",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Enviar via Evolution": {
+      "main": [
+        [
+          {
+            "node": "Classificar resultado Evolution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classificar resultado Evolution": {
+      "main": [
+        [
+          {
+            "node": "Evolution aceitou o envio?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evolution aceitou o envio?": {
+      "main": [
+        [
+          {
+            "node": "Chamar iris-nova-pos-consulta (confirmar)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": null,
+  "versionId": "1dd287e1-7dce-4f25-94c6-f405e50e70c7",
+  "activeVersionId": null,
+  "versionCounter": 1,
+  "triggerCount": 0,
+  "shared": [
+    {
+      "updatedAt": "2026-09-19T21:54:03.574Z",
+      "createdAt": "2026-09-19T21:54:03.574Z",
+      "role": "workflow:owner",
+      "workflowId": "Y6oMf0xBYWVi14Rh",
+      "projectId": "4GYloibuIHCEPct2",
+      "project": {
+        "updatedAt": "2026-04-26T11:53:35.308Z",
+        "createdAt": "2026-04-26T11:47:19.743Z",
+        "id": "4GYloibuIHCEPct2",
+        "name": "GABRIEL CAPPELLO <agentesia.cappello@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "d12afd30-9651-4d9b-8ea4-773be700b0ce"
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": null
+}

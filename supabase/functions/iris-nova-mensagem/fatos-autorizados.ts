@@ -343,6 +343,31 @@ export interface FatosAutorizados {
    * valor de um procedimento nao liberado nunca chega aqui.
    */
   precos?: PrecosClinica;
+  /**
+   * PROPOSTA C (2026-09-16, reviews/revisao-pos-consulta-conversacional-v1.md,
+   * segunda revisao, aprovada pelo Gabriel): fato ADITIVO de outro dominio
+   * (pos-consulta), anexado FORA do switch de `derivarFatosAutorizados` --
+   * mesma disciplina de `agendamentos_do_paciente`/`clinica_conhecida`. So
+   * chega aqui quando o turno TAMBEM tem uma jornada de pos-consulta aberta
+   * respondida na mesma mensagem que trouxe um pedido operacional real (ver
+   * pos-consulta-processar-mensagem-mista.ts) -- em qualquer outro turno,
+   * incluindo 100% do trafego anterior a esta data, este campo NUNCA e
+   * populado.
+   *
+   * Tipo inline (nao importa `ClassificacaoSatisfacao` de
+   * pos-consulta-tipos.ts) de proposito -- este arquivo permanece sem
+   * dependencia estrutural do dominio de pos-consulta, mesmo decisao ja
+   * registrada no cabecalho de pos-consulta-tipos.ts (isolamento nos dois
+   * sentidos).
+   */
+  pos_consulta_classificacao?: 'positiva' | 'nao_positiva' | 'incerta';
+  /**
+   * Presente SOMENTE quando o convite ao Google esta autorizado
+   * (classificacao positiva, modo 'ambos') -- mesma disciplina de nunca
+   * popular um campo de link sem autorizacao real ja aplicada em
+   * pos-consulta-fatos-autorizados.ts.
+   */
+  pos_consulta_link_avaliacao_google?: string;
 }
 
 /**
@@ -474,7 +499,15 @@ export function derivarFatosAutorizados(
    * presente. Quem restringe a `aguardando_procedimento` e o orquestrador,
    * nunca esta funcao.
    */
-  procedimentoAvaliacaoDisponivel?: string
+  procedimentoAvaliacaoDisponivel?: string,
+  /**
+   * PROPOSTA C (2026-09-16) -- fato aditivo de pos-consulta, ortogonal a
+   * decisao como os demais deste bloco. Adicionado ao FINAL da lista
+   * posicional (nunca no meio) de proposito: parametros sao posicionais
+   * neste projeto, e inserir no meio deslocaria silenciosamente todo
+   * chamador existente. Ver comentario do campo em `FatosAutorizados`.
+   */
+  posConsultaAditivo?: { classificacao: 'positiva' | 'nao_positiva' | 'incerta'; linkAvaliacaoGoogle?: string }
 ): FatosAutorizados {
   let fatos = derivarPorDecisao(decisao, dataHoje);
 
@@ -545,6 +578,21 @@ export function derivarFatosAutorizados(
 
   if (precos !== undefined) {
     fatos = { ...fatos, precos };
+  }
+
+  // PROPOSTA C -- fato aditivo de pos-consulta, mesmo padrao dos anteriores:
+  // ortogonal a decisao, anexado fora do switch, sem tocar `objetivo`. So
+  // chega preenchido quando o chamador (pos-consulta-processar-mensagem-
+  // mista.ts) ja reivindicou a entrega de pos-consulta para este mesmo
+  // turno -- esta funcao nao valida isso, so anexa o que recebeu.
+  if (posConsultaAditivo !== undefined) {
+    fatos = {
+      ...fatos,
+      pos_consulta_classificacao: posConsultaAditivo.classificacao,
+      ...(posConsultaAditivo.linkAvaliacaoGoogle !== undefined
+        ? { pos_consulta_link_avaliacao_google: posConsultaAditivo.linkAvaliacaoGoogle }
+        : {}),
+    };
   }
 
   // REMOVIDO em 2026-08-31: aqui `paciente_novo_na_clinica` era anexado aos

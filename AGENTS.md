@@ -94,6 +94,24 @@ perguntar ao Gabriel em uma linha, e seguir.
   explícita, específica, por ação: Iris atual, workflows existentes, Supabase atual,
   produção, Evolution, painel, credenciais, calendários.
 
+### Execução segura com credenciais
+
+Ao executar comandos, testes ou diagnósticos, cumprir a regra canônica de
+`docs/03-seguranca.md`: secrets nunca aparecem em saída, log ou mensagem.
+
+- Nunca imprimir, serializar ou inspecionar integralmente `process.env`, arquivos `.env`,
+  arquivos de cofre, cabeçalhos `Authorization`, chaves, tokens ou strings de conexão.
+- Nunca incluir um secret diretamente na linha de comando; carregar somente por arquivo
+  de cofre externo ao repositório ou mecanismo seguro equivalente.
+- Nunca registrar o objeto bruto de erro de SDK, HTTP, banco ou subprocesso quando ele
+  puder conter configuração, request, headers ou ambiente. Expor somente código/status
+  sanitizado e mensagem escrita explicitamente para esse fim.
+- Verificação de credencial informa apenas `presente`/`ausente` e o resultado funcional;
+  nunca valor, prefixo, sufixo, tamanho ou versão mascarada.
+- Se um secret aparecer acidentalmente em qualquer saída, interromper o trabalho, não o
+  repetir nem o citar, avisar o Gabriel e tratar a rotação da credencial como pendência
+  de segurança.
+
 ## Onde vive cada tipo de conteúdo
 
 - `docs/` — decisões arquiteturais e de produto já aprovadas (fonte canônica).

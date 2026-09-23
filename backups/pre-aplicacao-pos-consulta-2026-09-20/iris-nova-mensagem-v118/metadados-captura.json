@@ -1,0 +1,20 @@
+{
+  "slug": "iris-nova-mensagem",
+  "versao_esperada": 118,
+  "capturado_em": "2026-09-21T00:35:10.808Z",
+  "origem": "MCP get_edge_function (somente leitura)",
+  "meta": {
+    "id": "edbdd9dd-9639-4e62-bcf0-72dd5aaa1fb7",
+    "slug": "iris-nova-mensagem",
+    "name": "iris-nova-mensagem",
+    "status": "ACTIVE",
+    "version": 118,
+    "created_at": 1785875681234,
+    "updated_at": 1789853375624,
+    "verify_jwt": true,
+    "import_map": false,
+    "entrypoint_path": "/tmp/user_fn_udizowyfjnhuhgxkeayk_edbdd9dd-9639-4e62-bcf0-72dd5aaa1fb7_118/source/supabase/functions/iris-nova-mensagem/index.ts",
+    "ezbr_sha256": "9bd73dde7ff35fe58db0856282a6613dc759d87472edfa148edda2412dce7dac"
+  },
+  "total_arquivos": 76
+}

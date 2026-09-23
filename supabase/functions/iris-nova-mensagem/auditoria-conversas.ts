@@ -19,6 +19,18 @@
 
 import type { ClienteBancoDados } from './tipos.ts';
 import type { MotivoFallbackResposta } from './gerar-resposta-conversacional.ts';
+import type { MotivoFallbackRespostaPosConsulta } from './pos-consulta-gerar-resposta.ts';
+
+/**
+ * Motivos de fallback que a auditoria aceita: os da redatora PRINCIPAL e os
+ * do redator PROPRIO de pos-consulta (Proposta C, quando o turno e respondido
+ * por ele). Os dois vocabularios se sobrepoem so em parte -- 'link_nao_autorizado'
+ * e 'link_ausente' existem apenas no de pos-consulta. A coluna
+ * `conversas_auditoria.motivo_fallback` e `text` de vocabulario ABERTO por
+ * desenho (migration 20260905120000) e o /admin a exibe como texto; este tipo
+ * so acompanha o que o Core de fato produz.
+ */
+export type MotivoFallbackAuditavel = MotivoFallbackResposta | MotivoFallbackRespostaPosConsulta;
 
 /** Vocabulário fechado, mapeado 1:1 aos ramos de `tratarErroDoTurno` (index.ts). */
 export type ResultadoTurno =
@@ -33,7 +45,7 @@ export interface GravarAuditoriaSucessoEntrada {
   telefoneNormalizado: string;
   mensagemPaciente: string;
   respostaIris: string;
-  motivoFallback: MotivoFallbackResposta | null;
+  motivoFallback: MotivoFallbackAuditavel | null;
   /**
    * Texto original da redatora quando a guarda o reprovou por um motivo com
    * conteudo real -- `null` para texto_vazio ou qualquer outro desfecho

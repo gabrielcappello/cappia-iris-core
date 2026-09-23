@@ -73,3 +73,79 @@ afirmado como Dashboard, Management API ou CLI (`DA-P4-03`).
 estrutura apenas. Escrita e **nao aplicada**. Rollback correspondente em
 `src/supabase/rollbacks/`. Esta secao so recebe version, hashes e objetos
 materializados **depois** da aplicacao real, nunca antes.
+
+## Ambiente operacional - pos-consulta
+
+- **Projeto:** o unico Supabase ativo da Iris (`udizowyfjnhuhgxkeayk`).
+
+### Aplicada
+
+| Versao registrada | Nome remoto | Arquivo local | SHA-256 do arquivo local |
+|---|---|---|---|
+| `20260919204030` | `iris_nova_pos_consulta_v1` | `20260919204030_iris_nova_pos_consulta_v1.sql` | `2b089287d45fc4648c32bc259211c32b5edf7eafc49f9d011aa13fc8dd75427c` |
+
+**Reconciliacao nome x versao registrada (revisao final do Codex, bloqueador 4):**
+o arquivo se chamava `20260915120000_iris_nova_pos_consulta_v1.sql`, mas o banco
+registrou a migration com a versao do momento da aplicacao
+(`20260919204030`, via MCP `apply_migration`). O arquivo foi **apenas renomeado**
+para a versao registrada; o conteudo e **byte-identico** (mesmo SHA-256 antes e
+depois da renomeacao). **Nenhum SQL foi reaplicado e nenhum `migration repair`
+foi usado.** Referencias ao nome antigo em codigo, testes, runner e documentos
+foram atualizadas (o registro historico do Codex em `reviews/` mantem o nome
+da epoca).
+
+**Licao (e correcao do plano, sexta revisao do Codex, bloqueador 2):**
+`apply_migration` do MCP so aceita `name` e `query`; o **servidor gera a
+versao** (timestamp do momento). Aplicar por ali e "renomear depois" nao
+preserva a versao do arquivo no historico remoto, e o Codex recusou esse plano.
+**As migrations pendentes NAO serao aplicadas por `apply_migration`.**
+
+### Pendente de aplicacao (nenhuma aplicada; versoes = as dos ARQUIVOS)
+
+| Versao (nome do arquivo) | SHA-256 | Conteudo |
+|---|---|---|
+| `20260920230000_iris_nova_pos_consulta_google_so_apos_satisfacao_e_janela.sql` | `a82fbf9407a302f51d728260ca611fe11d22d511240112a762d32b9c3b69901f` | Google so apos satisfacao positiva; janela maxima de 48 h. 3 CHECKs; funcao da janela; `create or replace` das 4 funcoes. |
+| `20260921000000_iris_nova_pos_consulta_recuperacao_entrega_pendente.sql` | `975ccec19e6a1683f9d138d06f48d80367c23de35e4ea1292f1a42a6a54e4af9` | Recuperacao de entregas pendentes com lease vencido (as duas etapas): 2 colunas, 2 CHECKs, trigger; funcoes `recuperar_entrega` e do limite de tentativas; `candidatos` (drop+create) lista tambem as recuperacoes (`acao_edge`), partindo so da jornada (LEFT JOIN) e sem filtrar por automacao ligada (vinculo rompido e automacao desligada tambem sao encerrados); `encerrar_sem_resposta` (aguardando_satisfacao expira em silencio aos 7 dias) e sua funcao de prazo. |
+
+Aditivas sobre `20260919204030`. Testadas **so no ambiente local descartavel**
+(runner SQL `executar-teste-pos-consulta-v1.mjs`, com controle negativo).
+A edicao de comentario feita na primeira delas (plano de aplicacao) nao mudou o
+SQL executavel (hash das instrucoes sem comentarios identico: `3475de50…13af`).
+
+### Plano de aplicacao (a executar SO com autorizacao explicita, por acao)
+
+Mecanismo: **`supabase db push`** a partir de um workspace descartavel. A CLI
+registra no historico remoto **a versao do nome de cada arquivo** -- nada de
+versao gerada pelo servidor, nada de renomear depois, **nada de `migration
+repair`**. Ensaiado contra o Postgres local com a CLI real
+(`src/supabase/aplicacao/ensaio-local-db-push.mjs`): o historico ficou com
+exatamente as versoes dos arquivos, e o mesmo ensaio prova que **sem** os
+arquivos-marcador a CLI recusa e sugere `migration repair` (por isso o workspace
+os leva -- sao arquivos locais vazios, o historico remoto nao e tocado).
+
+1. **Pre-requisitos:** Gabriel autoriza a aplicacao; o n8n e a Edge Function ja
+   seguem a ordem de `reviews/correcoes-*` (n8n primeiro). Credencial de
+   banco NOVA (os tokens do E2E foram revogados): a senha do banco/URL do pooler
+   entra por prompt oculto, nunca no chat nem em arquivo versionado.
+2. **Preflight read-only** (cabecalho de cada migration): `pos_consulta_jornadas`
+   com 0 linhas; colunas/CHECKs/funcoes novas ausentes.
+3. **Historico remoto:** `list_migrations` (MCP, somente leitura) -> salvar o
+   array (`version`, `name`) num JSON local. Conferir que a maior versao remota e
+   MENOR que `20260920230000` (senao a CLI exigiria `--include-all`; o preparador
+   recusa por padrao).
+4. **Workspace:**
+   `node src/supabase/aplicacao/preparar-workspace-db-push.mjs --versoes-remotas=<json> --pendentes=<mig1.sql>,<mig2.sql> --destino=<dir novo>`
+   (monta marcadores para as versoes ja registradas + copias BYTE-IDENTICAS das
+   pendentes, com o SHA-256 de cada uma; nunca conecta a nada).
+5. **Dry-run obrigatorio:** `supabase db push --dry-run --workdir <dir> --db-url <url percent-encoded>`.
+   Tem que listar **exatamente** as duas migrations pendentes e nenhuma outra;
+   qualquer divergencia = PARAR.
+6. **Push real** (mesmos argumentos, sem `--dry-run`), so apos autorizacao.
+7. **Verificacao:** `list_migrations` mostra `20260920230000` e `20260921000000`
+   (as versoes dos arquivos); `supabase db push --dry-run` de novo nao lista
+   nada; os SHA-256 dos arquivos batem com a tabela acima; sem renomear nada.
+8. Deploy das funcoes e ativacao seguem em etapas separadas (Disparo A continua
+   inativo ate revisao).
+
+**Se o `db push` nao puder ser usado** (ex.: sem acesso direto ao banco), **nao
+improvisar** com `apply_migration` + renomear + `repair`: parar e pedir decisao.

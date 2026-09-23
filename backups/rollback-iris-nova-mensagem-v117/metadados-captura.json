@@ -1,0 +1,13 @@
+{
+  "id": "edbdd9dd-9639-4e62-bcf0-72dd5aaa1fb7",
+  "slug": "iris-nova-mensagem",
+  "name": "iris-nova-mensagem",
+  "status": "ACTIVE",
+  "version": 117,
+  "created_at": 1785875681234,
+  "updated_at": 1788903845902,
+  "verify_jwt": true,
+  "import_map": false,
+  "entrypoint_path": "/tmp/user_fn_udizowyfjnhuhgxkeayk_edbdd9dd-9639-4e62-bcf0-72dd5aaa1fb7_117/source/supabase/functions/iris-nova-mensagem/index.ts",
+  "ezbr_sha256": "fba9bfcb9786f17a47050e39ff13d867b8540f0c04f2c19bc66a93eeb5b7bfbb"
+}

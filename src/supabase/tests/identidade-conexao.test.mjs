@@ -77,6 +77,83 @@ test('URL malformada, protocolo errado e host nao-Supabase sao recusados', () =>
   }
 });
 
+// ── GUARDA 1b: ambiente LOCAL explicitamente autorizado (opt-in) ─────────
+// O modo local so existe com `{ permitirLocal: true }` -- sem isso, todo
+// loopback continua recusado (comportamento historico, do qual os outros
+// runners dependem). Mesmo com opt-in, so loopback ESTRITO e nada que possa
+// redirecionar o host, e o operacional nunca deixa de ser identificado.
+
+const LOCAL = { permitirLocal: true };
+
+test('SEM opt-in, todo loopback continua recusado (comportamento historico preservado)', () => {
+  for (const u of [
+    'postgresql://postgres:x@localhost:54322/postgres',
+    'postgresql://postgres:x@127.0.0.1:54322/postgres',
+    'postgresql://postgres:x@[::1]:54322/postgres',
+  ]) {
+    assert.equal(refsDaConexao(u).ok, false, `sem opt-in deveria recusar: ${u}`);
+    assert.equal(refsDaConexao(u, {}).ok, false);
+    assert.equal(refsDaConexao(u, { permitirLocal: false }).ok, false);
+  }
+});
+
+test('o opt-in e booleano ESTRITO: "true", 1 e {} nao habilitam o modo local', () => {
+  const u = 'postgresql://postgres:x@127.0.0.1:54322/postgres';
+  for (const valor of ['true', 1, {}, 'sim']) {
+    assert.equal(refsDaConexao(u, { permitirLocal: valor }).ok, false, `nao deveria habilitar com ${JSON.stringify(valor)}`);
+  }
+});
+
+test('COM opt-in, loopback estrito e identificado como "local" (nunca como um ref do Supabase)', () => {
+  for (const u of [
+    'postgresql://postgres:x@localhost:54329/iris_teste_local',
+    'postgresql://postgres:x@127.0.0.1:54329/iris_teste_local',
+    'postgresql://postgres:x@[::1]:54329/iris_teste_local',
+    'postgresql://postgres:x@LOCALHOST:54329/iris_teste_local',
+  ]) {
+    assert.deepEqual(refsDaConexao(u, LOCAL), { ok: true, refs: ['local'] }, `deveria identificar como local: ${u}`);
+  }
+});
+
+test('COM opt-in, hosts que so PARECEM loopback sao recusados (igualdade estrita)', () => {
+  for (const h of ['localhost.evil.com', 'evil-localhost', '127.0.0.1.evil.com', '127.0.0.2', '127.1', '0.0.0.0', '0x7f.0.0.1', 'lo.calhost']) {
+    const r = refsDaConexao(`postgresql://postgres:x@${h}:5432/postgres`, LOCAL);
+    assert.equal(r.ok, false, `nao deveria aceitar como local: ${h}`);
+  }
+});
+
+test('COM opt-in, parametro de query que sobrescreve o host e recusado (bypass por ?host=)', () => {
+  for (const q of [`host=db.${PROIBIDO}.supabase.co`, 'hostaddr=203.0.113.9', 'service=producao']) {
+    const r = refsDaConexao(`postgresql://postgres:x@localhost:54329/iris_teste_local?${q}`, LOCAL);
+    assert.equal(r.ok, false, `deveria recusar a query: ${q}`);
+    assert.match(r.erro, /redirecionar a conexao/);
+  }
+});
+
+test('COM opt-in, o OPERACIONAL continua identificado como operacional (o opt-in nao enfraquece nada)', () => {
+  assert.deepEqual(refsDaConexao(`postgresql://postgres:x@db.${PROIBIDO}.supabase.co:5432/postgres`, LOCAL), {
+    ok: true,
+    refs: [PROIBIDO],
+  });
+  assert.deepEqual(
+    refsDaConexao(`postgresql://postgres.${PROIBIDO}:x@aws-0-sa-east-1.pooler.supabase.com:6543/postgres`, LOCAL),
+    { ok: true, refs: [PROIBIDO] }
+  );
+});
+
+test('COM opt-in, o username NAO e consultado no loopback (identidade vem so do host)', () => {
+  // Um username `postgres.<operacional>` num host local nao vira "operacional"
+  // nem mascara nada: o destino da conexao e o hostname.
+  const r = refsDaConexao(`postgresql://postgres.${PROIBIDO}:x@localhost:54329/iris_teste_local`, LOCAL);
+  assert.deepEqual(r, { ok: true, refs: ['local'] });
+});
+
+test('COM opt-in, host externo continua exigindo identificacao normal (nao vira "local")', () => {
+  const r = refsDaConexao(`postgresql://postgres.${AUTORIZADO}:x@db.evil.com:5432/postgres`, LOCAL);
+  assert.equal(r.ok, false);
+  assert.match(r.erro, /nao foi possivel identificar o projeto/);
+});
+
 // ── GUARDA 2: telefone sintetico da fixture ─────────────────────────────
 // O CHECK `pacientes_telefone_formato` exige `^[0-9]+$`. Um telefone
 // derivado do marcador (uuid) carregaria a-f e violaria o CHECK na primeira

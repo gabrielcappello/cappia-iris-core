@@ -1,0 +1,17 @@
+92b8e826dc62b1f1df4fa777ac3096802112bbf817ff9f4f146f432d506ff6d4  iris-nova-pos-consulta/cliente-modelo-redator-pos-consulta-openai.ts
+46f959086bd40efc225b2414d389a7f420b5cdfc9a47a79a54309ab18fe80449  iris-nova-pos-consulta/erros.ts
+d58fe0ba8a40b93e1bfe332d725ac12aa9a6fefdd8da0fe56778f48ac74e0f53  iris-nova-pos-consulta/index.ts
+57081fce8affc00895e4b6b8e7f4651491a1ceaca62029e99d82ed6f4395b69c  iris-nova-pos-consulta/pos-consulta-avaliar-e-iniciar.ts
+80c029d9ffbfff215bcd60e2f210875a85bd434b585e655459330c2c09eee423  iris-nova-pos-consulta/pos-consulta-carregar-configuracao.ts
+56524eee3d1fe97bf80b364f925ec257a8fa2072de248bca2d9e362c8f6027b9  iris-nova-pos-consulta/pos-consulta-confirmar-entrega.ts
+58d67991b08035bef4b1ac9ea4774472ed0b50233129cef9b8f3b9aec405e728  iris-nova-pos-consulta/pos-consulta-elegibilidade.ts
+c1954179431b18ef21bbf9a1c4ebf075ee15e03ae4f303ba6079affc7dbbdaf8  iris-nova-pos-consulta/pos-consulta-fatos-autorizados.ts
+67f6f7351a0acdbdf1529c3e1b37a26f768dedd40721c4805ffaa3a377210f5c  iris-nova-pos-consulta/pos-consulta-gerar-resposta-fallback.ts
+4dd94301df4fdd5970e15eafc6319b6ceb610b10632a09add9285ea1dd927653  iris-nova-pos-consulta/pos-consulta-gerar-resposta.ts
+426d655567fa0794577aa54393ee110830d23a82ab2ba8f8b1f6245d2baaa806  iris-nova-pos-consulta/pos-consulta-guarda-redatora.ts
+5a59742978cf23c7f81e6977c1c81f33d24e3fa3157fd270df80d32885f09cde  iris-nova-pos-consulta/pos-consulta-iniciar-jornada.ts
+60eaad99080b9a64326329a7f48ee4bfdd246ab99a54b7c1138f03a894dc69c4  iris-nova-pos-consulta/pos-consulta-jornada.ts
+8649bfe2b6b3b9ecf81aa3bf4283f1a0cd57645838afe571d799e4544ceb36b5  iris-nova-pos-consulta/pos-consulta-processar-inicio.ts
+9f90f493c22dae61815f0f1df5df47d24e529e671ba50d8a8abe66a2bfc1d5aa  iris-nova-pos-consulta/pos-consulta-redator-instrucoes.ts
+e5d34bbec1540c229bfc0e106e0d343c5caa97777e6b2d90fbd3b54aa423eef4  iris-nova-pos-consulta/pos-consulta-reler-fatos-agendamento.ts
+d041f6c3932d26c2670ee85bd19501fbf5d4780d9d9097013c0bd7fab042dd5f  iris-nova-pos-consulta/pos-consulta-resolver-clinica.ts

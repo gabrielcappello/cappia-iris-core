@@ -13,11 +13,31 @@
 // Nenhum valor de credencial e impresso, logado ou persistido por este
 // modulo: ele so devolve os refs identificados.
 
+// Hosts de loopback aceitos SOMENTE em modo local explicito (ver `permitirLocal`
+// abaixo). Comparacao por IGUALDADE ESTRITA -- nunca `includes`/`startsWith`:
+// `localhost.evil.com`, `127.0.0.1.evil.com` e afins nao podem passar por
+// "local". Formas alternativas de escrever o loopback (127.1, 0x7f.0.0.1,
+// 127.0.0.2, 0.0.0.0) tambem NAO sao aceitas de proposito -- falha fechado.
+const HOSTS_LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+// Parametros de query do libpq/node-postgres que podem SOBRESCREVER o host
+// real da conexao. Numa URL "localhost" eles poderiam redirecionar a conexao
+// para outro lugar (inclusive o operacional) sem que o hostname mude.
+const PARAMETROS_QUE_SOBRESCREVEM_HOST = ['host', 'hostaddr', 'service'];
+
 /**
  * @param {string} bruta valor de DATABASE_URL
+ * @param {{ permitirLocal?: boolean }} [opcoes]
+ *   `permitirLocal === true` (booleano estrito) faz um host de loopback ser
+ *   identificado como o ambiente LOCAL descartavel (`refs: ['local']`). Sem
+ *   isso, loopback continua recusado como "nao identificavel" -- o
+ *   comportamento historico, do qual os outros runners dependem. O modulo e
+ *   PURO: quem exige a confirmacao explicita do operador e a marca gravada no
+ *   proprio banco e o runner, nao esta funcao. Nenhuma forma de "local" jamais
+ *   e resolvida para um project ref do Supabase hospedado.
  * @returns {{ok: true, refs: string[]} | {ok: false, erro: string}}
  */
-export function refsDaConexao(bruta) {
+export function refsDaConexao(bruta, opcoes = {}) {
   let u;
   try {
     u = new URL(bruta);
@@ -29,6 +49,21 @@ export function refsDaConexao(bruta) {
   }
 
   const achados = new Set();
+
+  // Ambiente LOCAL descartavel: so com opt-in explicito do chamador, so em
+  // loopback estrito, e nunca com parametro de query que possa redirecionar o
+  // host de verdade.
+  if (opcoes.permitirLocal === true && HOSTS_LOOPBACK.has(u.hostname.toLowerCase())) {
+    for (const chave of PARAMETROS_QUE_SOBRESCREVEM_HOST) {
+      if (u.searchParams.has(chave)) {
+        return {
+          ok: false,
+          erro: `DATABASE_URL local recusada: o parametro de query '${chave}' poderia redirecionar a conexao para outro host.`,
+        };
+      }
+    }
+    return { ok: true, refs: ['local'] };
+  }
 
   // Conexao direta: db.<ref>.supabase.co
   const host = u.hostname.match(/^db\.([a-z0-9]+)\.supabase\.(co|com)$/i);

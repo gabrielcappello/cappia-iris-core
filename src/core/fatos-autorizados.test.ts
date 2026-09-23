@@ -493,3 +493,51 @@ test('aguardando_data_horario, os OUTROS CINCO tipos: pedido_temporal_ja_passou 
     assert.equal('pedido_temporal_ja_passou' in fatos, false, `tipo "${caso.tipo}" NAO deveria ter o campo, nem ausente nem false`);
   }
 });
+
+// ── PROPOSTA C (2026-09-16) -- fato aditivo de pos-consulta ─────────────
+test('posConsultaAditivo: ausente por padrao, nunca aparece sem ser passado explicitamente', () => {
+  const fatos = derivarFatosAutorizados({ tipo: 'saudacao' }, HOJE);
+  assert.equal('pos_consulta_classificacao' in fatos, false);
+  assert.equal('pos_consulta_link_avaliacao_google' in fatos, false);
+});
+
+test('posConsultaAditivo: classificacao anexada sem tocar no objetivo da decisao principal', () => {
+  const fatos = derivarFatosAutorizados(
+    { tipo: 'aguardando_procedimento' },
+    HOJE,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    { classificacao: 'positiva' }
+  );
+  assert.equal(fatos.objetivo, 'pedir_procedimento'); // objetivo da decisao principal, intocado
+  assert.equal(fatos.pos_consulta_classificacao, 'positiva');
+  assert.equal(fatos.pos_consulta_link_avaliacao_google, undefined);
+});
+
+test('posConsultaAditivo: link SO aparece quando explicitamente fornecido (nunca inventado)', () => {
+  const fatos = derivarFatosAutorizados(
+    { tipo: 'saudacao' },
+    HOJE,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    { classificacao: 'positiva', linkAvaliacaoGoogle: 'https://g.page/r/exemplo/review' }
+  );
+  assert.equal(fatos.pos_consulta_classificacao, 'positiva');
+  assert.equal(fatos.pos_consulta_link_avaliacao_google, 'https://g.page/r/exemplo/review');
+});

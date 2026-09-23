@@ -127,6 +127,48 @@ test('gravarAuditoriaSucesso: motivo_fallback preservado quando o desfecho foi f
   assert.equal(cliente.linhasInseridas[0].resultado_turno, 'sucesso');
 });
 
+// ── Motivos do redator de POS-CONSULTA (Proposta C, 2026-09-16). O contrato
+// `GravarAuditoriaSucessoEntrada.motivoFallback` precisa aceitar, SEM cast, os
+// motivos que o redator proprio de pos-consulta devolve
+// (`MotivoFallbackRespostaPosConsulta`), que nao sao subconjunto dos da
+// redatora principal -- 'link_nao_autorizado' e 'link_ausente' so existem la.
+// A coluna `conversas_auditoria.motivo_fallback` e `text` de vocabulario
+// aberto por desenho e o /admin exibe o valor como texto, entao o valor deve
+// chegar ao banco exatamente como o Core o produziu.
+
+test('gravarAuditoriaSucesso: motivos exclusivos do redator de pos-consulta chegam ao banco inalterados', async () => {
+  for (const motivo of ['link_nao_autorizado', 'link_ausente'] as const) {
+    const cliente = new ClienteBancoDadosFalso();
+    await gravarAuditoriaSucesso(cliente, {
+      clinicaId: 'clinica-1',
+      telefoneNormalizado: '5521988046011',
+      mensagemPaciente: 'foi otimo!',
+      respostaIris: 'Que bom saber! Obrigada pelo retorno.',
+      motivoFallback: motivo,
+      respostaRejeitadaPeloFiscal: null,
+    });
+
+    assert.equal(cliente.linhasInseridas.length, 1);
+    assert.equal(cliente.linhasInseridas[0].motivo_fallback, motivo);
+    assert.equal(cliente.linhasInseridas[0].resultado_turno, 'sucesso');
+  }
+});
+
+test('gravarAuditoriaSucesso: motivos compartilhados entre os dois redatores continuam aceitos', async () => {
+  for (const motivo of ['redator_nao_configurado', 'falha_redatora', 'texto_vazio'] as const) {
+    const cliente = new ClienteBancoDadosFalso();
+    await gravarAuditoriaSucesso(cliente, {
+      clinicaId: 'clinica-1',
+      telefoneNormalizado: '5521988046011',
+      mensagemPaciente: 'oi',
+      respostaIris: 'Olá!',
+      motivoFallback: motivo,
+      respostaRejeitadaPeloFiscal: null,
+    });
+    assert.equal(cliente.linhasInseridas[0].motivo_fallback, motivo);
+  }
+});
+
 // ── CAMPO NOVO resposta_rejeitada_pelo_fiscal (2026-09-05/06,
 // specs/guarda-redatora-fiscal-conversa-v1.md secao 5) -- tres casos
 // distintos, nunca um teste generico (secao 7).

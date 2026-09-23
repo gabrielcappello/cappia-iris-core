@@ -1,0 +1,242 @@
+diff --git a/src/app/dashboard/page.tsx b/src/app/dashboard/page.tsx
+index d43bdf9..251b69f 100644
+--- a/src/app/dashboard/page.tsx
++++ b/src/app/dashboard/page.tsx
+@@ -14,6 +14,7 @@ import SeletorHorario from "@/components/SeletorHorario";
+ import { Cadeado } from "@/components/CadeadoProduto";
+ import { useProduto } from "@/lib/ProdutoContext";
+ import { ESPECIALIDADES, PROCEDIMENTO_ID_POR_NOME, PROCEDIMENTO_FIXO, catalogoDaClinica } from "@/lib/catalogo-procedimentos";
++import { lerEstadoPosConsulta, construirAutomatizacoesComPosConsulta, type ModoPosConsulta as ModoPosConsultaAuto } from "@/lib/pos-consulta-automatizacoes";
+ 
+ // ── Config ─────────────────────────────────────────────────────────────────────
+ // Preencher após criar o workflow no n8n:
+@@ -2385,18 +2386,20 @@ function AutomacoesSection({clinica,saving,onSave,t}:{clinica:Clinica;saving:boo
+   const a=(clinica as unknown as Record<string,Record<string,unknown>>).automatizacoes||{};
+   const [lem2h,setLem2h]=useState((a.lembrete_2h as boolean)??true);
+   const [lem24h,setLem24h]=useState((a.lembrete_24h as boolean)??false);
+-  const [posAtivo,setPosAtivo]=useState((a.pos_consulta_tipo as string||'nenhum')!=='nenhum');
+-  const [posTipo,setPosTipo]=useState((a.pos_consulta_tipo as string)==='nenhum'||!(a.pos_consulta_tipo)?'google':(a.pos_consulta_tipo as string));
+-  const [posLink,setPosLink]=useState((a.pos_consulta_google_link as string)||'');
+-  const [posTempo,setPosTempo]=useState((a.pos_consulta_tempo as string)||'2h');
+-  const [posMensagem,setPosMensagem]=useState((a.pos_consulta_mensagem as string)||'');
++  const estadoPosConsultaInicial=lerEstadoPosConsulta(a);
++  const [posAtivo,setPosAtivo]=useState(estadoPosConsultaInicial.posAtivo);
++  const [posTipo,setPosTipo]=useState<ModoPosConsultaAuto>(estadoPosConsultaInicial.posTipo);
++  const [posLink,setPosLink]=useState(estadoPosConsultaInicial.posLink);
++  const [posTempo,setPosTempo]=useState(estadoPosConsultaInicial.posTempo);
++  const [posMensagem,setPosMensagem]=useState(estadoPosConsultaInicial.posMensagem);
+   const [retorno,setRetorno]=useState((a.retorno as boolean)||false);
+   const [retMeses,setRetMeses]=useState((a.retorno_meses as number)||6);
+   const [espera,setEspera]=useState((a.lista_espera as boolean)||false);
+   const [aniv,setAniv]=useState((a.aniversario as boolean)||false);
+ 
+   function handleSave(){
+-    onSave({automatizacoes:{...a,lembrete_2h:lem2h,lembrete_24h:lem24h,pos_consulta_tipo:posAtivo?posTipo:'nenhum',pos_consulta_google_link:posLink,pos_consulta_tempo:posTempo,pos_consulta_mensagem:posMensagem,retorno,retorno_meses:retMeses,lista_espera:espera,aniversario:aniv}});
++    const automatizacoesPosConsulta=construirAutomatizacoesComPosConsulta(a,{posAtivo,posTipo,posLink,posTempo,posMensagem});
++    onSave({automatizacoes:{...automatizacoesPosConsulta,lembrete_2h:lem2h,lembrete_24h:lem24h,retorno,retorno_meses:retMeses,lista_espera:espera,aniversario:aniv}});
+   }
+ 
+   return(
+@@ -2421,7 +2424,7 @@ function AutomacoesSection({clinica,saving,onSave,t}:{clinica:Clinica;saving:boo
+           <div style={{flex:1}}>
+             <div style={{fontSize:14,fontWeight:600,color:'#1e293b',display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+               <span>{t("auto.post_consult")}</span>
+-              <select value={posTempo} onChange={e=>setPosTempo(e.target.value)}
++              <select value={posTempo} onChange={e=>setPosTempo(e.target.value as typeof posTempo)}
+                 style={{fontSize:13,fontWeight:600,color:'#2B7A78',border:'1px solid rgba(43,122,120,0.3)',borderRadius:6,padding:'2px 6px',background:'rgba(43,122,120,0.05)',cursor:'pointer',fontFamily:"'Sora',sans-serif",outline:'none'}}>
+                 <option value="2h">{t("auto.time_2h")}</option>
+                 <option value="4h">{t("auto.time_4h")}</option>
+@@ -2437,19 +2440,18 @@ function AutomacoesSection({clinica,saving,onSave,t}:{clinica:Clinica;saving:boo
+             <motion.div initial={{height:0,opacity:0}} animate={{height:'auto',opacity:1}} exit={{height:0,opacity:0}} transition={{duration:0.22,ease:[0.4,0,0.2,1]}} style={{overflow:'hidden'}}>
+               <div style={{marginTop:12,display:'flex',flexDirection:'column',gap:0}}>
+                 {[
+-                  {v:'satisfacao',icon:'⭐',label:t("auto.satisfaction"),desc:t("auto.satisfaction_desc"),wip:true},
+-                  {v:'google',icon:'📊',label:t("auto.google_review"),desc:t("auto.google_review_desc"),wip:false},
+-                  {v:'ambos',icon:'✨',label:t("auto.satisfaction_google"),desc:t("auto.satisfaction_google_desc"),wip:true},
++                  {v:'satisfacao' as const,icon:'⭐',label:t("auto.satisfaction"),desc:t("auto.satisfaction_desc")},
++                  {v:'google' as const,icon:'📊',label:t("auto.google_review"),desc:t("auto.google_review_desc")},
++                  {v:'ambos' as const,icon:'✨',label:t("auto.satisfaction_google"),desc:t("auto.satisfaction_google_desc")},
+                 ].map((opt,oi,arr)=>(
+-                  <button key={opt.v} onClick={()=>{if(!opt.wip)setPosTipo(opt.v);}} disabled={opt.wip}
+-                    style={{display:'flex',alignItems:'flex-start',gap:10,padding:'12px 0',borderBottom:oi<arr.length-1?'1px solid #f8fafc':'none',background:'transparent',border:'none',cursor:opt.wip?'not-allowed':'pointer',width:'100%',textAlign:'left',fontFamily:"'Sora',sans-serif",opacity:opt.wip?0.55:1}}>
++                  <button key={opt.v} onClick={()=>setPosTipo(opt.v)}
++                    style={{display:'flex',alignItems:'flex-start',gap:10,padding:'12px 0',borderBottom:oi<arr.length-1?'1px solid #f8fafc':'none',background:'transparent',border:'none',cursor:'pointer',width:'100%',textAlign:'left',fontFamily:"'Sora',sans-serif"}}>
+                     <div style={{width:17,height:17,borderRadius:'50%',border:`2px solid ${posTipo===opt.v?'#2B7A78':'#cbd5e1'}`,background:posTipo===opt.v?'#2B7A78':'transparent',flexShrink:0,marginTop:2,display:'flex',alignItems:'center',justifyContent:'center',transition:'all 0.15s'}}>
+                       {posTipo===opt.v&&<div style={{width:6,height:6,borderRadius:'50%',background:'#fff'}}/>}
+                     </div>
+                     <div>
+                       <div style={{fontSize:13,fontWeight:600,color:posTipo===opt.v?'#2B7A78':'#1e293b'}}>{opt.icon} {opt.label}</div>
+                       <div style={{fontSize:12,color:'#94a3b8',marginTop:2,lineHeight:1.4}}>{opt.desc}</div>
+-                      {opt.wip&&<div style={{fontSize:11,color:'#d97706',marginTop:4,fontWeight:600}}>{t("auto.waitlist_wip")}</div>}
+                     </div>
+                   </button>
+                 ))}
+@@ -2457,14 +2459,14 @@ function AutomacoesSection({clinica,saving,onSave,t}:{clinica:Clinica;saving:boo
+                   <div style={{marginTop:8}}>
+                     <label style={labelSt}>{t("auto.google_review_link")}</label>
+                     <input value={posLink} onChange={e=>setPosLink(e.target.value)} placeholder="https://g.page/r/..." style={inputSt}/>
+-                    <div style={{marginTop:10}}>
+-                      <label style={labelSt}>{t("auto.custom_message_label")}</label>
+-                      <textarea value={posMensagem} onChange={e=>setPosMensagem(e.target.value)} placeholder={t("auto.custom_message_placeholder")}
+-                        rows={3} style={{...inputSt,resize:'vertical',minHeight:64,lineHeight:1.4}}/>
+-                      <div style={{fontSize:11,color:'#94a3b8',marginTop:4,lineHeight:1.4}}>{t("auto.custom_message_hint")}</div>
+-                    </div>
+                   </div>
+                 )}
++                <div style={{marginTop:10}}>
++                  <label style={labelSt}>{t("auto.custom_message_label")}</label>
++                  <textarea value={posMensagem} onChange={e=>setPosMensagem(e.target.value)} placeholder={t("auto.custom_message_placeholder")}
++                    rows={3} style={{...inputSt,resize:'vertical',minHeight:64,lineHeight:1.4}}/>
++                  <div style={{fontSize:11,color:'#94a3b8',marginTop:4,lineHeight:1.4}}>{t("auto.custom_message_hint")}</div>
++                </div>
+               </div>
+             </motion.div>
+           )}
+diff --git a/src/lib/i18n/translations.ts b/src/lib/i18n/translations.ts
+index 32434b3..e7ee394 100644
+--- a/src/lib/i18n/translations.ts
++++ b/src/lib/i18n/translations.ts
+@@ -409,13 +409,13 @@ export const translations = {
+     'auto.satisfaction': 'Satisfação',
+     'auto.satisfaction_desc': 'Pergunta ao paciente como foi a consulta — se tudo correu bem e se ficou satisfeito com o atendimento.',
+     'auto.google_review': 'Avaliação Google',
+-    'auto.google_review_desc': 'Convida o paciente a deixar uma avaliação no Google da clínica, ajudando a construir a reputação online.',
++    'auto.google_review_desc': 'Pergunta primeiro como foi a experiência e, só se a resposta for positiva, convida o paciente a avaliar a clínica no Google.',
+     'auto.satisfaction_google': 'Satisfação + Google',
+     'auto.satisfaction_google_desc': 'Primeiro coleta a satisfação e, se a resposta for positiva, direciona para a avaliação no Google.',
+     'auto.google_review_link': 'Link Google Review',
+-    'auto.custom_message_label': 'Mensagem personalizada (opcional)',
+-    'auto.custom_message_placeholder': 'Ex.: Olá {nome}! Obrigado por visitar a {clinica}. Deixe sua avaliação: {link}',
+-    'auto.custom_message_hint': 'Deixe em branco pra usar a mensagem padrão. Use {nome}, {clinica} e {link} — são substituídos automaticamente. O link é sempre incluído.',
++    'auto.custom_message_label': 'Orientações para a Iris (opcional)',
++    'auto.custom_message_placeholder': 'Ex.: seja breve e use um tom caloroso',
++    'auto.custom_message_hint': 'A Iris usa isso como referência de tom e estilo ao escrever a mensagem — nunca copia ao pé da letra. Deixe em branco para ela redigir livremente.',
+     'auto.return_reminder': '🔄 Retorno automático',
+     'auto.return_reminder_sub': 'Lembra o paciente de agendar retorno após X meses',
+     'auto.months': 'meses',
+@@ -1240,13 +1240,13 @@ export const translations = {
+     'auto.satisfaction': 'Satisfacción',
+     'auto.satisfaction_desc': 'Pregunta al paciente cómo fue la consulta — si todo salió bien y si quedó satisfecho con la atención.',
+     'auto.google_review': 'Reseña en Google',
+-    'auto.google_review_desc': 'Invita al paciente a dejar una reseña en Google de la clínica, ayudando a construir la reputación en línea.',
++    'auto.google_review_desc': 'Pregunta primero cómo fue la experiencia y, solo si la respuesta es positiva, invita al paciente a reseñar la clínica en Google.',
+     'auto.satisfaction_google': 'Satisfacción + Google',
+     'auto.satisfaction_google_desc': 'Primero recopila la satisfacción y, si la respuesta es positiva, dirige a la reseña en Google.',
+     'auto.google_review_link': 'Enlace de reseña de Google',
+-    'auto.custom_message_label': 'Mensaje personalizado (opcional)',
+-    'auto.custom_message_placeholder': 'Ej.: ¡Hola {nome}! Gracias por visitar {clinica}. Deja tu reseña: {link}',
+-    'auto.custom_message_hint': 'Déjalo en blanco para usar el mensaje predeterminado. Usa {nome}, {clinica} y {link} — se reemplazan automáticamente. El enlace siempre se incluye.',
++    'auto.custom_message_label': 'Orientaciones para la Iris (opcional)',
++    'auto.custom_message_placeholder': 'Ej.: sé breve y usa un tono cálido',
++    'auto.custom_message_hint': 'La Iris usa esto como referencia de tono y estilo al escribir el mensaje — nunca lo copia literalmente. Déjalo en blanco para que redacte libremente.',
+     'auto.return_reminder': '🔄 Retorno automático',
+     'auto.return_reminder_sub': 'Recuerda al paciente programar su retorno después de X meses',
+     'auto.months': 'meses',
+@@ -2071,13 +2071,13 @@ export const translations = {
+     'auto.satisfaction': 'Satisfaction',
+     'auto.satisfaction_desc': 'Asks the patient how the appointment went — whether everything went well and if they were satisfied with the care.',
+     'auto.google_review': 'Google Review',
+-    'auto.google_review_desc': 'Invites the patient to leave a Google review for the clinic, helping build its online reputation.',
++    'auto.google_review_desc': 'Asks first about the experience and, only if the response is positive, invites the patient to review the clinic on Google.',
+     'auto.satisfaction_google': 'Satisfaction + Google',
+     'auto.satisfaction_google_desc': 'First collects satisfaction, and if the response is positive, directs to the Google review.',
+     'auto.google_review_link': 'Google Review Link',
+-    'auto.custom_message_label': 'Custom message (optional)',
+-    'auto.custom_message_placeholder': 'E.g.: Hi {nome}! Thanks for visiting {clinica}. Leave your review: {link}',
+-    'auto.custom_message_hint': 'Leave blank to use the default message. Use {nome}, {clinica} and {link} — they are replaced automatically. The link is always included.',
++    'auto.custom_message_label': 'Guidance for Iris (optional)',
++    'auto.custom_message_placeholder': 'E.g.: keep it brief and warm',
++    'auto.custom_message_hint': 'Iris uses this as a reference for tone and style when writing the message — it never copies it verbatim. Leave blank to let Iris write freely.',
+     'auto.return_reminder': '🔄 Automatic return reminder',
+     'auto.return_reminder_sub': 'Reminds the patient to schedule a return visit after X months',
+     'auto.months': 'months',
+@@ -2902,13 +2902,13 @@ export const translations = {
+     'auto.satisfaction': 'Satisfaction',
+     'auto.satisfaction_desc': 'Demande au patient comment s\'est déroulé le rendez-vous — si tout s\'est bien passé et s\'il était satisfait des soins.',
+     'auto.google_review': 'Avis Google',
+-    'auto.google_review_desc': 'Invite le patient à laisser un avis Google pour la clinique, aidant à construire sa réputation en ligne.',
++    'auto.google_review_desc': 'Demande d\'abord comment s\'est passée l\'expérience et, seulement si la réponse est positive, invite le patient à laisser un avis Google pour la clinique.',
+     'auto.satisfaction_google': 'Satisfaction + Google',
+     'auto.satisfaction_google_desc': 'Recueille d\'abord la satisfaction, et si la réponse est positive, dirige vers l\'avis Google.',
+     'auto.google_review_link': 'Lien d\'avis Google',
+-    'auto.custom_message_label': 'Message personnalisé (optionnel)',
+-    'auto.custom_message_placeholder': 'Ex. : Bonjour {nome} ! Merci d\'avoir visité {clinica}. Laissez votre avis : {link}',
+-    'auto.custom_message_hint': 'Laissez vide pour utiliser le message par défaut. Utilisez {nome}, {clinica} et {link} — ils sont remplacés automatiquement. Le lien est toujours inclus.',
++    'auto.custom_message_label': 'Orientations pour Iris (optionnel)',
++    'auto.custom_message_placeholder': 'Ex. : soyez bref et chaleureux',
++    'auto.custom_message_hint': 'Iris utilise ceci comme référence de ton et de style pour rédiger le message — elle ne le recopie jamais mot pour mot. Laissez vide pour qu\'elle rédige librement.',
+     'auto.return_reminder': '🔄 Rappel de retour automatique',
+     'auto.return_reminder_sub': 'Rappelle au patient de programmer un retour après X mois',
+     'auto.months': 'mois',
+@@ -3733,13 +3733,13 @@ export const translations = {
+     'auto.satisfaction': 'Zufriedenheit',
+     'auto.satisfaction_desc': 'Fragt den Patienten, wie der Termin verlaufen ist — ob alles gut lief und er mit der Betreuung zufrieden war.',
+     'auto.google_review': 'Google-Bewertung',
+-    'auto.google_review_desc': 'Lädt den Patienten ein, eine Google-Bewertung für die Klinik abzugeben und so den Online-Ruf zu stärken.',
++    'auto.google_review_desc': 'Fragt zuerst nach der Erfahrung und lädt den Patienten nur bei positiver Antwort ein, die Klinik bei Google zu bewerten.',
+     'auto.satisfaction_google': 'Zufriedenheit + Google',
+     'auto.satisfaction_google_desc': 'Erfasst zunächst die Zufriedenheit und leitet bei positiver Rückmeldung zur Google-Bewertung weiter.',
+     'auto.google_review_link': 'Google-Bewertungslink',
+-    'auto.custom_message_label': 'Eigene Nachricht (optional)',
+-    'auto.custom_message_placeholder': 'Z. B.: Hallo {nome}! Danke für Ihren Besuch bei {clinica}. Bewerten Sie uns: {link}',
+-    'auto.custom_message_hint': 'Leer lassen, um die Standardnachricht zu verwenden. Verwenden Sie {nome}, {clinica} und {link} — sie werden automatisch ersetzt. Der Link wird immer eingefügt.',
++    'auto.custom_message_label': 'Hinweise für Iris (optional)',
++    'auto.custom_message_placeholder': 'Z. B.: kurz und herzlich halten',
++    'auto.custom_message_hint': 'Iris nutzt dies als Referenz für Ton und Stil beim Verfassen der Nachricht — sie übernimmt es nie wörtlich. Leer lassen, damit Iris frei formuliert.',
+     'auto.return_reminder': '🔄 Automatische Rückkehrerinnerung',
+     'auto.return_reminder_sub': 'Erinnert den Patienten, nach X Monaten einen Folgetermin zu vereinbaren',
+     'auto.months': 'Monate',
+@@ -4564,13 +4564,13 @@ export const translations = {
+     'auto.satisfaction': 'Satisfazione',
+     'auto.satisfaction_desc': 'Chiede al paziente come è andato l\'appuntamento — se tutto è andato bene e se è rimasto satisfatto dell\'assistenza.',
+     'auto.google_review': 'Recensione Google',
+-    'auto.google_review_desc': 'Invita il paziente a lasciare una recensione Google per la clinica, contribuendo a costruire la reputazione online.',
++    'auto.google_review_desc': 'Chiede prima com\'è andata l\'esperienza e, solo se la risposta è positiva, invita il paziente a lasciare una recensione Google per la clinica.',
+     'auto.satisfaction_google': 'Satisfazione + Google',
+     'auto.satisfaction_google_desc': 'Raccoglie prima la satisfazione e, se la risposta è positiva, indirizza alla recensione Google.',
+     'auto.google_review_link': 'Link recensione Google',
+-    'auto.custom_message_label': 'Messaggio personalizzato (opzionale)',
+-    'auto.custom_message_placeholder': 'Es.: Ciao {nome}! Grazie per aver visitato {clinica}. Lascia la tua recensione: {link}',
+-    'auto.custom_message_hint': 'Lascia vuoto per usare il messaggio predefinito. Usa {nome}, {clinica} e {link} — vengono sostituiti automaticamente. Il link è sempre incluso.',
++    'auto.custom_message_label': 'Indicazioni per la Iris (opzionale)',
++    'auto.custom_message_placeholder': 'Es.: sii breve e caloroso',
++    'auto.custom_message_hint': 'La Iris usa questo come riferimento di tono e stile per scrivere il messaggio — non lo copia mai alla lettera. Lascia vuoto perché scriva liberamente.',
+     'auto.return_reminder': '🔄 Promemoria di ritorno automatico',
+     'auto.return_reminder_sub': 'Ricorda al paziente di programmare un ritorno dopo X mesi',
+     'auto.months': 'mesi',
+@@ -5395,13 +5395,13 @@ export const translations = {
+     'auto.satisfaction': 'Удовлетворённость',
+     'auto.satisfaction_desc': 'Спрашивает пациента, как прошёл приём — всё ли было хорошо и был ли он удовлетворён обслуживанием.',
+     'auto.google_review': 'Отзыв в Google',
+-    'auto.google_review_desc': 'Предлагает пациенту оставить отзыв о клинике в Google, помогая укрепить онлайн-репутацию.',
++    'auto.google_review_desc': 'Сначала спрашивает о впечатлениях от приёма и, только если ответ положительный, приглашает пациента оставить отзыв о клинике в Google.',
+     'auto.satisfaction_google': 'Удовлетворённость + Google',
+     'auto.satisfaction_google_desc': 'Сначала собирает удовлетворённость, и если ответ положительный, направляет к отзыву в Google.',
+     'auto.google_review_link': 'Ссылка для отзыва в Google',
+-    'auto.custom_message_label': 'Персональное сообщение (необязательно)',
+-    'auto.custom_message_placeholder': 'Напр.: Здравствуйте, {nome}! Спасибо за визит в {clinica}. Оставьте отзыв: {link}',
+-    'auto.custom_message_hint': 'Оставьте пустым, чтобы использовать сообщение по умолчанию. Используйте {nome}, {clinica} и {link} — они подставляются автоматически. Ссылка добавляется всегда.',
++    'auto.custom_message_label': 'Рекомендации для Iris (необязательно)',
++    'auto.custom_message_placeholder': 'Напр.: будь краткой и тёплой по тону',
++    'auto.custom_message_hint': 'Iris использует это как ориентир тона и стиля при написании сообщения — никогда не копирует дословно. Оставьте пустым, чтобы Iris писала свободно.',
+     'auto.return_reminder': '🔄 Автоматическое напоминание о повторном визите',
+     'auto.return_reminder_sub': 'Напоминает пациенту запланировать повторный визит через X месяцев',
+     'auto.months': 'месяцев',
+@@ -6226,13 +6226,13 @@ export const translations = {
+     'auto.satisfaction': 'الرضا',
+     'auto.satisfaction_desc': 'يسأل المريض عن كيفية سير الموعد — إذا سار كل شيء بشكل جيد وإذا كان راضيًا عن الرعاية.',
+     'auto.google_review': 'تقييم Google',
+-    'auto.google_review_desc': 'يدعو المريض لترك تقييم على Google للعيادة، مما يساعد في بناء سمعتها على الإنترنت.',
++    'auto.google_review_desc': 'تسأل أولاً عن التجربة، وفقط إذا كانت الإجابة إيجابية، تدعو المريض لتقييم العيادة على Google.',
+     'auto.satisfaction_google': 'الرضا + Google',
+     'auto.satisfaction_google_desc': 'يجمع الرضا أولاً، وإذا كانت الإجابة إيجابية، يوجه إلى تقييم Google.',
+     'auto.google_review_link': 'رابط تقييم Google',
+-    'auto.custom_message_label': 'رسالة مخصصة (اختياري)',
+-    'auto.custom_message_placeholder': 'مثال: مرحبا {nome}! شكرا لزيارتك {clinica}. اترك تقييمك: {link}',
+-    'auto.custom_message_hint': 'اتركه فارغا لاستخدام الرسالة الافتراضية. استخدم {nome} و{clinica} و{link} — يتم استبدالها تلقائيا. الرابط يُدرج دائما.',
++    'auto.custom_message_label': 'إرشادات لـ Iris (اختياري)',
++    'auto.custom_message_placeholder': 'مثال: كن موجزًا ودافئًا في النبرة',
++    'auto.custom_message_hint': 'تستخدم Iris هذا كمرجع للنبرة والأسلوب عند كتابة الرسالة — ولا تنسخه حرفيًا أبدًا. اتركه فارغًا لتكتب Iris بحرية.',
+     'auto.return_reminder': '🔄 تذكير العودة التلقائي',
+     'auto.return_reminder_sub': 'يذكّر المريض بجدولة زيارة عودة بعد X أشهر',
+     'auto.months': 'أشهر',

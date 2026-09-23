@@ -34,7 +34,9 @@ export type MotivoReprovacaoGuarda =
   | 'texto_vazio'
   | 'horario_nao_autorizado'
   | 'execucao_nao_autorizada'
-  | 'data_nao_autorizada';
+  | 'data_nao_autorizada'
+  // PROPOSTA C (2026-09-16) -- ver comentario junto da checagem, mais abaixo.
+  | 'link_pos_consulta_nao_autorizado';
 
 export type ResultadoGuarda = { aprovado: true } | { aprovado: false; motivo: MotivoReprovacaoGuarda };
 
@@ -45,6 +47,10 @@ export type ResultadoGuarda = { aprovado: true } | { aprovado: false; motivo: Mo
 const REGEX_DATA = /\b(0?[1-9]|[12][0-9]|3[01])\/(0?[1-9]|1[0-2])(\/[0-9]{2,4})?\b/g;
 const REGEX_HHMM = /\b([01]?[0-9]|2[0-3]):([0-5][0-9])\b/g;
 const REGEX_NH = /\b([01]?[0-9]|2[0-3])\s*h\b/gi;
+// Mesma regex de pos-consulta-guarda-redatora.ts, duplicada de proposito
+// (dominios sem acoplamento estrutural, ver fatos-autorizados.ts).
+const REGEX_URL = /\bhttps?:\/\/[^\s]+/gi;
+const PONTUACAO_FINAL_URL = /[).,;:!?\]}'"]+$/;
 const REGEX_N_HORAS = /\b([01]?[0-9]|2[0-3])\s*horas\b/gi;
 
 // ── AFIRMAÇÃO DE EXECUÇÃO ───────────────────────────────────────────────
@@ -105,6 +111,27 @@ export function verificarRespostaRedatora(texto: string, fatos: FatosAutorizados
   // fiscal-conversa-v1.md secao 3.1).
   if (!OBJETIVOS_EXECUTADOS.has(fatos.objetivo) && afirmaExecucao(texto, fatos)) {
     return { aprovado: false, motivo: 'execucao_nao_autorizada' };
+  }
+
+  // PROPOSTA C (2026-09-16, reviews/revisao-pos-consulta-conversacional-v1.md,
+  // segunda revisao) -- mesma correcao de B7 (pos-consulta-guarda-redatora.ts),
+  // aplicada aqui porque o redator PRINCIPAL agora pode receber fatos
+  // aditivos de pos-consulta no mesmo turno de um pedido operacional. So
+  // roda quando `pos_consulta_classificacao` esta presente -- AUSENTE em
+  // 100% do trafego que nao passa pela integracao de mensagem mista
+  // (pos-consulta-processar-mensagem-mista.ts), entao esta checagem nunca
+  // afeta nenhum objetivo/turno existente. Independente do objetivo, pelo
+  // mesmo motivo da checagem de execucao acima: um link do Google nunca
+  // deveria depender do objetivo estar ou nao na lista de horario/data.
+  if (fatos.pos_consulta_classificacao !== undefined) {
+    const urlsCitadas = extrairUrlsHttp(texto);
+    if (fatos.pos_consulta_link_avaliacao_google === undefined) {
+      if (urlsCitadas.length > 0) {
+        return { aprovado: false, motivo: 'link_pos_consulta_nao_autorizado' };
+      }
+    } else if (urlsCitadas.some((url) => url !== fatos.pos_consulta_link_avaliacao_google)) {
+      return { aprovado: false, motivo: 'link_pos_consulta_nao_autorizado' };
+    }
   }
 
   // CHECAGEM DE HORARIO/DATA -- so roda quando o objetivo afirma um fato
@@ -299,4 +326,13 @@ function extrairDatasCitadas(texto: string): string[] {
     achadas.push(`${String(m[1]).padStart(2, '0')}/${String(m[2]).padStart(2, '0')}`);
   }
   return achadas;
+}
+
+/**
+ * URLs http(s) citadas no texto, aparadas de pontuacao final de frase --
+ * mesma funcao de pos-consulta-guarda-redatora.ts, duplicada de proposito.
+ */
+function extrairUrlsHttp(texto: string): string[] {
+  const achadas = texto.match(REGEX_URL) ?? [];
+  return achadas.map((url) => url.replace(PONTUACAO_FINAL_URL, ''));
 }
