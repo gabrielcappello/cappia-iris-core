@@ -45,6 +45,8 @@ export interface CatalogoClinica {
    * afirmativa.
    */
   exigirEmail: boolean;
+  exigirCpf?: boolean;
+  exigirNascimento?: boolean;
   /**
    * Dados da propria clinica (nome, endereco, maps_link, telefone, horario) e
    * precos ja filtrados pelo consentimento -- 2026-08-17.

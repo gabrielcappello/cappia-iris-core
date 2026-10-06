@@ -422,7 +422,9 @@ export async function processarMensagem(
     // So enriquece `cadastro_necessario`: e a unica decisao em que o pedido
     // sera repetido ao paciente, entao e a unica em que a distincao entre
     // "nao informou" e "informou errado" muda o que ele ouve.
-    const invalidos = interpretacao.campos_cadastrais_invalidos;
+    const invalidos = interpretacao.campos_cadastrais_invalidos?.filter(campo =>
+      decisaoRecebida.tipo === 'cadastro_necessario' && decisaoRecebida.campos_faltantes.includes(campo)
+    );
     const decisao: DecisaoOrquestrador =
       decisaoRecebida.tipo === 'cadastro_necessario' && invalidos !== undefined && invalidos.length > 0
         ? {
@@ -431,7 +433,7 @@ export async function processarMensagem(
             // Valor cru do CPF rejeitado (2026-08-31), quando houver. Segue
             // o mesmo caminho e o mesmo escopo do nome do campo: so
             // `cadastro_necessario`, so este turno.
-            ...(interpretacao.cpf_rejeitado !== undefined
+            ...(invalidos.includes('cpf') && interpretacao.cpf_rejeitado !== undefined
               ? { cpf_rejeitado: interpretacao.cpf_rejeitado }
               : {}),
           }
@@ -1888,7 +1890,8 @@ async function decidir(
             cadastroFicha,
             comporVisaoEfetivaCadastro(cadastroFicha, dados),
             catalogo.exigirEmail,
-            respostaTrocaTelefone
+            respostaTrocaTelefone,
+            catalogo
           )
         );
       }
@@ -1954,7 +1957,8 @@ async function decidirConfirmacaoOuReserva(
   cadastroFicha: CadastroPaciente,
   visaoEfetiva: CadastroPaciente,
   exigirEmail: boolean,
-  respostaTrocaTelefone: RespostaTrocaTelefone | null
+  respostaTrocaTelefone: RespostaTrocaTelefone | null,
+  preferencias: { exigirCpf?: boolean; exigirNascimento?: boolean }
 ): Promise<DecisaoOrquestrador> {
   // Regra absoluta: nunca reservar sem confirmacao explicita ('sim',
   // vocabulario fechado ja validado por aplicar-dados.ts). Ausencia ou
@@ -1969,7 +1973,7 @@ async function decidirConfirmacaoOuReserva(
   // O gatilho e "falta dado", nao "nao ha paciente": um paciente existente com
   // cadastro incompleto tambem para aqui, e um paciente existente e completo
   // nunca e interrompido.
-  const faltantes = calcularCadastroFaltante(visaoEfetiva, exigirEmail);
+  const faltantes = calcularCadastroFaltante(visaoEfetiva, exigirEmail, preferencias);
   if (faltantes.length > 0) {
     return { tipo: 'cadastro_necessario', campos_faltantes: faltantes };
   }
@@ -1997,6 +2001,8 @@ async function decidirConfirmacaoOuReserva(
   }
 
   if (respostaTrocaTelefone === 'sim') {
+    // Uma pergunta antiga de troca nunca autoriza localizar uma ficha sem CPF.
+    if (!visaoEfetiva.cpf) return { tipo: 'cpf_ja_cadastrado' };
     // `cpf` esta necessariamente presente: `calcularCadastroFaltante` acabou
     // de garantir que nenhum obrigatorio falta, e o CPF e obrigatorio sempre.
     const troca = await trocarTelefonePaciente(clienteRpc, {
@@ -2156,13 +2162,9 @@ async function reservar(
     data: entrada.opcao.data,
     horario,
     telefone_normalizado: entrada.telefoneNormalizado,
-    // `nome`/`cpf` estao necessariamente preenchidos aqui: o fluxo so alcanca
-    // a reserva depois de `calcularCadastroFaltante` confirmar que nenhum
-    // obrigatorio falta. As asercoes documentam essa garantia -- se ela deixar
-    // de valer, `validarEntrada` falha fechado em vez de gravar linha
-    // incompleta.
+    // Nome sempre preenchido; CPF ausente e enviado como null quando opcional.
     paciente_nome: entrada.visaoEfetiva.nome as string,
-    paciente_documento: entrada.visaoEfetiva.cpf as string,
+    paciente_documento: entrada.visaoEfetiva.cpf ?? null,
     procedimento_nome: entrada.procedimentoNome,
   });
 

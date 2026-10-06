@@ -68,7 +68,8 @@ function normalizar(valor: string | undefined): string | undefined {
  * Campos cadastrais OBRIGATORIOS que ainda faltam, na ordem canonica
  * (specs/cadastro-conversacional-v1.md secao 2).
  *
- * Brasil V1: `nome`, `cpf` e `data_nascimento` sao sempre obrigatorios;
+ * Nome e obrigatorio; CPF e nascimento seguem as preferencias da clinica,
+ * ligados por padrao quando a configuracao ainda nao existe.
  * `email` so quando a clinica exige (`clinicas.automatizacoes.solicitar_email`).
  *
  * Opera sobre a VISAO EFETIVA, entao campo ja conhecido nunca e pedido de
@@ -86,11 +87,13 @@ function normalizar(valor: string | undefined): string | undefined {
  */
 export function calcularCadastroFaltante(
   visaoEfetiva: CadastroPaciente,
-  exigirEmail: boolean
+  exigirEmail: boolean,
+  preferencias: { exigirCpf?: boolean; exigirNascimento?: boolean } = {}
 ): CampoCadastralInterpretacao[] {
-  const obrigatorios: CampoCadastralInterpretacao[] = exigirEmail
-    ? ['nome', 'cpf', 'data_nascimento', 'email']
-    : ['nome', 'cpf', 'data_nascimento'];
+  const obrigatorios: CampoCadastralInterpretacao[] = ['nome'];
+  if (preferencias.exigirCpf !== false) obrigatorios.push('cpf');
+  if (preferencias.exigirNascimento !== false) obrigatorios.push('data_nascimento');
+  if (exigirEmail) obrigatorios.push('email');
 
   return obrigatorios.filter((campo) => normalizar(visaoEfetiva[campo]) === undefined);
 }

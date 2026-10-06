@@ -62,7 +62,7 @@ export interface ReservarAgendamentoEntrada {
    *   uma eventual substituicao por Consulta/Avaliacao).
    */
   paciente_nome: string;
-  paciente_documento: string;
+  paciente_documento: string | null;
   procedimento_nome: string;
 }
 
@@ -121,12 +121,12 @@ function validarEntrada(entrada: ReservarAgendamentoEntrada): void {
   if (typeof entrada.telefone_normalizado !== 'string' || entrada.telefone_normalizado.trim() === '') {
     throw new EntradaInvalidaError('telefone_normalizado', 'telefone_normalizado deve ser uma string nao vazia');
   }
-  // FALHA FECHADO, como os demais: chegar aqui sem estes tres seria gravar de
-  // novo uma linha incompleta em silencio -- exatamente o defeito corrigido.
-  // Nenhum deles e opcional no fluxo real: a reserva so acontece depois de
-  // `calcularCadastroFaltante` garantir nome e CPF, e o procedimento efetivo
-  // sempre existe no catalogo (o Core acabou de resolve-lo).
-  for (const campo of ['paciente_nome', 'paciente_documento', 'procedimento_nome'] as const) {
+  // Nome e procedimento continuam obrigatorios. Documento pode ser null
+  // quando a clinica desliga sua coleta; string vazia continua sendo erro.
+  if (entrada.paciente_documento !== null && (typeof entrada.paciente_documento !== 'string' || entrada.paciente_documento.trim() === '')) {
+    throw new EntradaInvalidaError('paciente_documento', 'documento deve ser preenchido ou null');
+  }
+  for (const campo of ['paciente_nome', 'procedimento_nome'] as const) {
     if (typeof entrada[campo] !== 'string' || entrada[campo].trim() === '') {
       throw new EntradaInvalidaError(campo, `${campo} deve ser uma string nao vazia`);
     }

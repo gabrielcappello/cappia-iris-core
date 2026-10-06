@@ -79,6 +79,8 @@ export async function carregarCatalogo(
       vinculos,
       configuracoesDuracao,
       exigirEmail: derivarExigirEmail(clinica.automatizacoes),
+      exigirCpf: derivarColetaPadrao(clinica.automatizacoes, 'solicitar_cpf'),
+      exigirNascimento: derivarColetaPadrao(clinica.automatizacoes, 'solicitar_nascimento'),
       // `undefined` quando a clinica nao preencheu nada -- fato ausente e
       // melhor que fato vazio: a Iris se cala em vez de anunciar um endereco
       // em branco ou um preco que ninguem liberou.
@@ -165,6 +167,11 @@ async function buscarClinicaComDentistas(
  * significa "e-mail nao exigido". A obrigacao precisa ser AFIRMATIVA -- uma
  * clinica nunca passa a exigir e-mail por causa de um jsonb corrompido.
  */
+function derivarColetaPadrao(automatizacoes: unknown, campo: string): boolean {
+  if (!automatizacoes || typeof automatizacoes !== 'object' || Array.isArray(automatizacoes)) return true;
+  return (automatizacoes as Record<string, unknown>)[campo] !== false;
+}
+
 function derivarExigirEmail(automatizacoes: unknown): boolean {
   if (automatizacoes === null || typeof automatizacoes !== 'object' || Array.isArray(automatizacoes)) {
     return false;

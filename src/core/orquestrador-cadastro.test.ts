@@ -143,6 +143,70 @@ async function processar(
 
 // --- Quais campos faltam ---
 
+test('CPF opcional invalido nao e gravado nem exigido enquanto nascimento falta', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const { procedimentoId } = montarCenario(tabelas, { solicitar_cpf: false, solicitar_nascimento: true });
+  const rpc = new ClienteRpcFalso({});
+  const resultado = await processar(tabelas, clienteModelo(procedimentoId, { nome: NOME_SINTETICO, cpf: '12345678900' }), rpc, 'Meu nome e Gabriel Cappello, CPF 12345678900.');
+  assert.deepEqual(resultado.decisao, { tipo: 'cadastro_necessario', campos_faltantes: ['data_nascimento'] });
+  assert.equal(rpc.chamadas.length, 0);
+});
+
+test('desligar CPF e nascimento nao desliga exigencia de email', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const { procedimentoId } = montarCenario(tabelas, { solicitar_cpf: false, solicitar_nascimento: false, solicitar_email: true });
+  const rpc = new ClienteRpcFalso({});
+  const resultado = await processar(tabelas, clienteModelo(procedimentoId, { nome: NOME_SINTETICO }), rpc, 'Pode marcar, meu nome e Gabriel Cappello.');
+  assert.deepEqual(resultado.decisao, { tipo: 'cadastro_necessario', campos_faltantes: ['email'] });
+  assert.equal(rpc.chamadas.length, 0);
+});
+
+test('CPF fornecido com coleta desligada ainda protege contra duplicidade', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const { procedimentoId } = montarCenario(tabelas, { solicitar_cpf: false, solicitar_nascimento: false });
+  const rpc = new ClienteRpcFalso({ cappia_persistir_paciente: { data: { sucesso: false, motivo: 'cpf_ja_cadastrado' }, error: null } });
+  const resultado = await processar(tabelas, clienteModelo(procedimentoId, { nome: NOME_SINTETICO, cpf: CPF_SINTETICO_VALIDO }), rpc, 'Meu nome e Gabriel Cappello, CPF 52998224725.');
+  assert.equal(resultado.decisao.tipo, 'troca_telefone_pendente');
+  assert.deepEqual(rpc.chamadas.map(c => c.nome), ['cappia_persistir_paciente']);
+});
+
+for (const solicitar_cpf of [true, false]) {
+  for (const solicitar_nascimento of [true, false]) {
+    test(`coleta configuravel: CPF=${solicitar_cpf}, nascimento=${solicitar_nascimento}`, async () => {
+      const tabelas = criarTabelasFalsasVazias();
+      const { procedimentoId, dentistaId } = montarCenario(tabelas, { solicitar_cpf, solicitar_nascimento });
+      const pacienteId = crypto.randomUUID();
+      const rpc = new ClienteRpcFalso({
+        cappia_persistir_paciente: { data: { sucesso: true, paciente_id: pacienteId }, error: null },
+        cappia_reservar_agendamento: respostaReservaOk(dentistaId, crypto.randomUUID()),
+      });
+      const resultado = await processar(tabelas, clienteModelo(procedimentoId, { nome: NOME_SINTETICO }), rpc, 'Pode marcar. Meu nome e Gabriel Cappello.');
+      if (solicitar_cpf || solicitar_nascimento) {
+        assert.deepEqual(resultado.decisao, { tipo: 'cadastro_necessario', campos_faltantes: [
+          ...(solicitar_cpf ? ['cpf'] : []), ...(solicitar_nascimento ? ['data_nascimento'] : []),
+        ] });
+        assert.equal(rpc.chamadas.length, 0);
+      } else {
+        assert.equal(resultado.decisao.tipo, 'reserva_criada');
+        assert.deepEqual(rpc.chamadas.map(c => c.nome), ['cappia_persistir_paciente', 'cappia_reservar_agendamento']);
+        assert.equal(rpc.chamadas[1].parametros.p_documento, null);
+        assert.equal(rpc.chamadas[1].parametros.p_paciente_id, pacienteId);
+      }
+    });
+  }
+}
+
+test('coleta desligada preserva CPF e nascimento existentes sem reescrever ficha', async () => {
+  const tabelas = criarTabelasFalsasVazias();
+  const { clinicaId, procedimentoId, dentistaId } = montarCenario(tabelas, { solicitar_cpf: false, solicitar_nascimento: false });
+  semearPaciente(tabelas, clinicaId, { nome: NOME_SINTETICO, documento: CPF_SINTETICO_VALIDO, data_nascimento: NASCIMENTO_SINTETICO });
+  const rpc = new ClienteRpcFalso({ cappia_reservar_agendamento: respostaReservaOk(dentistaId, crypto.randomUUID()) });
+  const resultado = await processar(tabelas, clienteModelo(procedimentoId), rpc, 'Sim, confirmo.');
+  assert.equal(resultado.decisao.tipo, 'reserva_criada');
+  assert.equal(rpc.chamadas.length, 1);
+  assert.equal(rpc.chamadas[0].parametros.p_documento, CPF_SINTETICO_VALIDO);
+});
+
 test('paciente NOVO: pede os tres obrigatorios, nunca persiste nem reserva', async () => {
   const tabelas = criarTabelasFalsasVazias();
   const { procedimentoId } = montarCenario(tabelas);
